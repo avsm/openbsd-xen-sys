@@ -1,4 +1,4 @@
-/*	$Id: pcmciareg.h,v 1.1 1996/04/29 14:17:35 hvozda Exp $	*/
+/*	$OpenBSD: pcmciareg.h,v 1.1 1996/04/29 14:17:35 hvozda Exp $	*/
 /*
  * This file was apparently first written by Stefan Grefen, although it
  * contained no copyright notice at the time.
