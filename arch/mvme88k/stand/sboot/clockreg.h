@@ -1,4 +1,4 @@
-/*	$Id: clockreg.h,v 1.1 1997/03/03 19:30:41 rahnds Exp $ */
+/*	$OpenBSD: clockreg.h,v 1.1.1.1 1997/03/03 19:30:41 rahnds Exp $ */
 
 /*
  * Copyright (c) 1992, 1993

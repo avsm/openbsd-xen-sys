@@ -1,4 +1,4 @@
-/*	$Id: if_le.c,v 1.2 1999/01/11 05:11:31 millert Exp $ */
+/*	$OpenBSD: if_le.c,v 1.2 1999/01/11 05:11:31 millert Exp $ */
 
 /*
  * Copyright (c) 1995 Theo de Raadt

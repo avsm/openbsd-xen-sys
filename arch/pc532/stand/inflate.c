@@ -1,3 +1,4 @@
+/*	$OpenBSD: inflate.c,v 1.2 1999/01/11 05:11:48 millert Exp $	*/
 /*
  * Copyright (c) 1995 Matthias Pfaller.
  *
@@ -31,7 +32,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
- *	$Id: inflate.c,v 1.2 1999/01/11 05:11:48 millert Exp $
  */
 
 #include <sys/param.h>
