@@ -1,7 +1,8 @@
-/*	$NetBSD: scsi_conf.h,v 1.2 1996/02/18 20:32:41 mycroft Exp $	*/
+/*	$OpenBSD$	*/
+/*	$NetBSD: svr4_socket.h,v 1.1 1996/04/11 12:43:31 christos Exp $	*/
 
 /*
- * Copyright (c) 1995 Christos Zoulas.  All rights reserved.
+ * Copyright (c) 1996 Christos Zoulas.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,22 +30,16 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/conf.h>
+#ifndef _SVR4_SOCKET_H_
+#define _SVR4_SOCKET_H_
 
-#include "ch.h"
-cdev_decl(ch);
+struct sockaddr_un;
+struct proc;
+struct file;
 
-#include "ss.h"
-cdev_decl(ss);
+struct sockaddr_un *svr4_find_socket __P((struct proc *, struct file *,
+    dev_t, ino_t));
+void svr4_delete_socket __P((struct proc *, struct file *));
+int svr4_add_socket __P((struct proc *, const char *, struct stat *));
 
-#include "sd.h"
-bdev_decl(sd);
-cdev_decl(sd);
-
-#include "st.h"
-bdev_decl(st);
-cdev_decl(st);
-
-#include "cd.h"
-bdev_decl(cd);
-cdev_decl(cd);
+#endif /* _SVR4_SOCKET_H_ */
