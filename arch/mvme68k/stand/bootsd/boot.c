@@ -1,4 +1,4 @@
-/*	$Id: boot.c,v 1.6 1996/02/16 00:13:18 rahnds Exp $ */
+/*	$OpenBSD$ */
 
 /*-
  * Copyright (c) 1995 Theo de Raadt

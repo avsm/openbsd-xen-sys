@@ -1,5 +1,5 @@
 #	from: @(#)Makefile	8.1 (Berkeley) 6/10/93
-#	     $Id: Makefile,v 1.2 1995/10/23 03:38:29 deraadt Exp $
+#	$OpenBSD$
 
 RELOC=0x3F0000 
 

@@ -1,4 +1,4 @@
-#	$Id: Makefile,v 1.7 1995/12/26 17:46:28 deraadt Exp $
+#	$OpenBSD$
 
 LIB=sa
 
