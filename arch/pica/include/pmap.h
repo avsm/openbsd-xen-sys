@@ -1,3 +1,5 @@
+/*      $OpenBSD: param.h,v 1.3 1996/05/02 07:59:39 pefo Exp $ */
+
 /* 
  * Copyright (c) 1987 Carnegie-Mellon University
  * Copyright (c) 1992, 1993
@@ -35,7 +37,6 @@
  * SUCH DAMAGE.
  *
  *	from: @(#)pmap.h	8.1 (Berkeley) 6/10/93
- *      $Id: pmap.h,v 1.2 1996/05/01 18:23:46 pefo Exp $
  */
 
 #ifndef	_PMAP_MACHINE_
