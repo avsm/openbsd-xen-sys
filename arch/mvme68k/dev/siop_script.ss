@@ -1,4 +1,4 @@
-;	$Id: siop_script.ss,v 1.2 1995/11/07 08:49:32 deraadt Exp $
+;	$OpenBSD$
 
 ;
 ; Copyright (c) 1995 Michael L. Hitch
