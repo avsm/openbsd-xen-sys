@@ -1,5 +1,5 @@
-/*	$OpenBSD: data.h,v 1.4 1995/09/16 15:58:57 ragge Exp $ */
-/*	$NetBSD: data.h,v 1.4 1995/09/16 15:58:57 ragge Exp $ */
+/*	$OpenBSD: romread.s,v 1.3 1997/05/29 00:04:24 niklas Exp $ */
+/*	$NetBSD: romread.s,v 1.4 1996/08/02 11:22:24 ragge Exp $ */
 /*
  * Copyright (c) 1995 Ludd, University of Lule}, Sweden.
  * All rights reserved.
@@ -38,38 +38,57 @@
 		
 
 
-extern unsigned *bootregs;
+#include "../include/asm.h"
 
 /*
- * rpb->iovec gives pointer to this structure.
- *
- * bqo->unit_init() is used to initialize the controller,
- * bqo->qio() is used to read from boot-device
+ * read750 (int block, int *regs)
  */
+ENTRY(read750, 0xFFE)
+	movl	8(ap), r8
+	movl	4(r8), r1
+	movl	8(r8), r2
+	movl	12(r8), r3
+	movl	24(r8), r6
+	clrl	r5
+	movl	4(ap), r8
+	pushl	$0
+	movl	$0, 4(sp)
+	movl    fp, 0xf0000	# ragge ???
+	jsb	(r6)
+	movl    0xf0000, fp	
+	ret
 
-struct bqo {
-	long  qio;            /*  4  QIO entry  */
-	long  map;            /*  4  Mapping entry  */
-	long  select;         /*  4  Selection entry  */
-	long  drivrname;      /*  4  Offset to driver name  */
-	short version;        /*  2  Version number of VMB  */
-	short vercheck;       /*  2  Check field  */
-	/* offset: 20 */
-	long  reselect;       /*  4  Reselection entry  */
-	long  move;           /*  4  Move driver entry  */
-	long  unit_init;      /*  4  Unit initialization entry  */
-	long  auxdrname;      /*  4  Offset to auxiliary driver name  */
-	long  umr_dis;        /*  4  UNIBUS Map Registers to disable  */
-	/* offset: 40 */
-	long  ucode;          /*  4  Absolute address of booting microcode  */
-	long  unit_disc;      /*  4  Unit disconnecting entry */
-	long  devname;        /*  4  Offset to boot device name */
-	long  umr_tmpl;       /*  4  UNIBUS map register template */
-	/* offset: 60 */
-	/*
-	 * the rest is unknown / unneccessary ...
-	 */
-	long  xxx[6];		/* 24 --	total: 84 bytes */
-};
-      
-extern struct bqo *bqo;
+/*
+ * romread_uvax (int lbn, int size, void *buf, int *regs)
+ */
+ENTRY(romread_uvax, 0xFFE)
+	movl	16(ap), r11	# array of bootregs
+	movl	44(r11), r11	# restore boot-contents of r11 (rpb)
+	movl    52(r11), r7     # load iovec/bqo into r7
+	addl3   (r7), r7, r6	# load qio into r6
+	pushl	r11			# base of rpb
+	pushl	$0			# virtual-flag 
+	pushl	$33			# read-logical-block
+	pushl	4(ap)			# lbn to start reading
+	pushl	8(ap)			# number of bytes to read
+	pushl	12(ap)			# buffer-address 
+	calls	$6, (r6)	# call the qio-routine
+	ret			# r0 holds the result
+
+/*
+ * romwrite_uvax (int lbn, int size, void *buf, int *regs)
+ */
+ENTRY(romwrite_uvax, 0xFFE)
+	movl    16(ap), r11     # array of bootregs
+	movl    44(r11), r11    # restore boot-contents of r11 (rpb)
+	movl    52(r11), r7     # load iovec/bqo into r7
+	addl3   (r7), r7, r6    # load qio into r6
+	pushl   r11                     # base of rpb
+	pushl   $0                      # virtual-flag 
+	pushl   $32                     # write-logical-block
+	pushl   4(ap)                   # lbn to start reading
+	pushl   8(ap)                   # number of bytes to read
+	pushl   12(ap)                  # buffer-address 
+	calls   $6, (r6)        # call the qio-routine
+	ret                     # r0 holds the result
+

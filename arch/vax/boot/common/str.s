@@ -1,5 +1,5 @@
-/*	$OpenBSD: str.s,v 1.3 1998/02/03 11:48:29 maja Exp $ */
-/*	$NetBSD: str.s,v 1.3 1997/03/15 13:04:30 ragge Exp $ */
+/*	$OpenBSD: str.s,v 1.4 1998/05/11 07:37:39 niklas Exp $ */
+/*	$NetBSD: str.s,v 1.1 1999/03/06 16:36:06 ragge Exp $ */
 /*
  * Copyright (c) 1996 Ludd, University of Lule}, Sweden.
  * All rights reserved.
@@ -36,7 +36,7 @@
  * emulated instructions.
  */
 
-#include "../include/asm.h"
+#include "asm.h"
 
 /*
  * atoi() used in devopen.
@@ -86,16 +86,11 @@ ENTRY(bcmp, 0);
  * Is movc3/movc5 emulated on any CPU? I dont think so; use them here.
  */
 ENTRY(bzero,0);
-	movl	4(ap), r0
-	movl	8(ap), r1
-	movc5	$0,(r0),$0,r1,(r0)
+	movc5	$0,*4(ap),$0,8(ap),*4(ap)
 	ret
 
 ENTRY(bcopy,0);
-	movl	4(ap), r0
-	movl	8(ap), r1
-	movl	12(ap), r2
-	movc3	r2, (r0), (r1)
+	movc3	12(ap), *4(ap), *8(ap)
 	ret
 
 ENTRY(strlen, 0);
@@ -106,7 +101,6 @@ ENTRY(strlen, 0);
 	subl2	4(ap), r0
 	ret
 
-#if 0
 ENTRY(strncmp, 0)
 	movl	12(ap), r3
 	brb	5f
@@ -130,4 +124,24 @@ ENTRY(strcmp, 0)
 1:	bgtr	3f
 	mnegl	r0, r0
 3:	ret
-#endif
+
+ENTRY(strncpy, 0)
+	movl	4(ap), r1
+	movl	8(ap), r2
+	movl	12(ap), r3
+	bleq	2f
+
+1:	movb	(r2)+, (r1)+
+	beql	2f
+	decl	r3
+	bneq	1b
+2:	ret
+
+ENTRY(strcat, 0)
+	pushl	4(ap)
+	calls	$1,_strlen
+	addl2	4(ap),r0
+	movl	8(ap),r1
+1:	movb	(r1)+,(r0)+
+	bneq	1b
+	ret

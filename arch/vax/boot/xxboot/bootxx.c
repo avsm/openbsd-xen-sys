@@ -1,5 +1,5 @@
-/* $OpenBSD: bootxx.c,v 1.7 1998/05/11 07:36:27 niklas Exp $ */
-/* $NetBSD: bootxx.c,v 1.11 1997/06/08 17:49:17 ragge Exp $ */
+/* $OpenBSD: bootxx.c,v 1.8 1998/05/13 07:30:21 niklas Exp $ */
+/* $NetBSD: bootxx.c,v 1.2 1999/10/23 14:40:38 ragge Exp $ */
 /*-
  * Copyright (c) 1982, 1986 The Regents of the University of California.
  * All rights reserved.
@@ -54,30 +54,39 @@
 #define NRSP 1 /* Kludge */
 #define NCMD 1 /* Kludge */
 
-#include "../uba/ubareg.h"
-#include "../uba/udareg.h"
-
 #include "../mscp/mscp.h"
 #include "../mscp/mscpreg.h"
 
-#include "data.h"
 #include "vaxstand.h"
 
-#include <sys/exec.h>
 
-int     romstrategy(), romopen();
-int	command(int, int);
+int	romstrategy __P((void *, int, daddr_t, size_t, void *, size_t *));
+
+struct fs_ops	file_system[] = {
+	{ ufs_open, ufs_close, ufs_read, ufs_write, ufs_seek, ufs_stat }
+};
+
+struct devsw	devsw[] = {
+	SADEV("rom", romstrategy, nullsys, nullsys, noioctl),
+};
+
+int	nfsys = (sizeof(file_system) / sizeof(struct fs_ops));
+
+int	command __P((int cmd, int arg));
 
 /*
  * Boot program... argume passed in r10 and r11 determine whether boot
  * stops to ask for system name and which device boot comes from.
  */
 
-volatile u_int  devtype, bootdev;
+volatile dev_t	devtype, bootdev;
 unsigned        opendev, boothowto, bootset, memsz;
 
-extern unsigned *bootregs;
-extern struct	rpb *rpb;
+struct open_file file;
+
+unsigned *bootregs;
+struct	rpb *rpb;
+int	vax_cputype;
 
 /*
  * The boot block are used by 11/750, 8200, MicroVAX II/III, VS2000,
@@ -87,13 +96,16 @@ Xmain()
 {
 	int io;
 	char *scbb;
-	char *new;
+	char *new, *bqo;
 	char *hej = "/boot";
 
-        switch (vax_cputype) {
+	vax_cputype = (mfpr(PR_SID) >> 24) & 0xFF;
 
-        case VAX_TYP_UV2:
-        case VAX_TYP_CVAX:
+	/*
+	 */ 
+	switch (vax_cputype) {
+	case VAX_TYP_UV2:
+	case VAX_TYP_CVAX:
 	case VAX_TYP_RIGEL:
 	case VAX_TYP_NVAX:
 	case VAX_TYP_SOC:
@@ -109,71 +121,24 @@ Xmain()
 		bootregs[11] = (int)rpb;
 		bootdev = rpb->devtyp;
 		memsz = rpb->pfncnt << 9;
-
-                break;
+		break;
 	case VAX_8200:
         case VAX_750:
 		bootdev = bootregs[10];
 		memsz = 0;
-
-                break;
+		break;
 	default:
-		printf("unknown cpu type %d\nRegister dump:\n", vax_cputype);
-		for (io = 0; io < 16; io++)
-			printf("r%d 0x%x\n", io, bootregs[io]);
 		asm("halt");
-        }
+	}
 
 	bootset = getbootdev();
 
-	printf("\nhowto 0x%x, bdev 0x%x, booting...", boothowto, bootdev);
 	io = open(hej, 0);
 
-	if (io >= 0 && io < SOPEN_MAX) {
-		copyunix(io);
-	} else {
-		printf("Boot failed, saerrno %d\n", errno);
-	}
-}
-
-/* ARGSUSED */
-copyunix(aio)
-{
-	struct exec     x;
-	register int    io = aio, i;
-	char           *addr;
-
-	i = read(io, (char *) &x, sizeof(x));
-	if (i != sizeof(x) || N_BADMAG(x)) {
-		printf("Bad format\n");
-		return;
-	}
-
-	if (N_GETMAGIC(x) == ZMAGIC && lseek(io, N_TXTADDR(x), SEEK_SET) == -1)
-		goto shread;
-	if (read(io, (char *) 0x10000, x.a_text) != x.a_text)
-		goto shread;
-	addr = (char *) x.a_text;
-	if (N_GETMAGIC(x) == ZMAGIC || N_GETMAGIC(x) == NMAGIC)
-		while ((int) addr & CLOFSET)
-			*addr++ = 0;
-
-	if (read(io, addr + 0x10000, x.a_data) != x.a_data)
-		goto shread;
-	addr += x.a_data;
-	bcopy((void *) 0x10000, 0, (int) addr);
-
-	for (i = 0; i < x.a_bss; i++)
-		*addr++ = 0;
-	for (i = 0; i < 128 * 512; i++)	/* slop */
-		*addr++ = 0;
-	printf("done. (%d+%d)\n", x.a_text + x.a_data, x.a_bss);
-	hoppabort(x.a_entry, boothowto, bootset);
-	(*((int (*) ()) x.a_entry)) ();
-	return;
-shread:
-	printf("Short read\n");
-	return;
+	read(io, (void *)0x10000, 0x10000);
+	bcopy((void *) 0x10000, 0, 0xffff);
+	hoppabort(32, boothowto, bootset);
+	asm("halt");
 }
 
 getbootdev()
@@ -185,22 +150,19 @@ getbootdev()
 	switch (vax_cputype) {
 	case VAX_TYP_UV2:
 	case VAX_TYP_CVAX:
-		adaptor = 0;
-		controller = ((rpb->csrphy & 017777) == 0xDC)?1:0;
-		unit = rpb->unit;			/* DUC, DUD? */
-		
-		break;
-
 	case VAX_TYP_RIGEL:
-		unit = rpb->unit;
-		if (unit > 99)
-			unit /= 100;		/* DKB300 is target 3 */
+		if (rpb->devtyp == BDEV_SD) {
+			unit = rpb->unit / 100;
+			controller = (rpb->csrphy & 0x100 ? 1 : 0);
+		} else {
+			controller = ((rpb->csrphy & 017777) == 0xDC)?1:0;
+			unit = rpb->unit;			/* DUC, DUD? */
+		}
 		break;
-
 
 	case VAX_TYP_8SS:
 	case VAX_TYP_750:
-		controller = 0;	/* XXX Actually massbuss can be on 3 ctlr's */
+		controller = bootregs[1];
 		unit = bootregs[3];
 		break;
 	}
@@ -218,43 +180,63 @@ getbootdev()
 	case BDEV_TK:		/* TK50 boot */
 	case BDEV_CNSL:		/* Console storage boot */
 	case BDEV_RD:		/* RD/RX on HDC9224 (MV2000) */
-		controller = 0; /* They are always on ctlr 0 */
-		break;
-
 	case BDEV_ST:		/* SCSI-tape on NCR5380 (MV2000) */
 	case BDEV_SD:		/* SCSI-disk on NCR5380 (3100/76) */
-		/*
-		 * No standalone routines for SCSI support yet.
-		 * Use rom-routines instead!
-		 */
+		break;
+
+	case BDEV_KDB:		/* DSA disk on KDB50 (VAXBI VAXen) */
+		bootdev = (bootdev & ~B_TYPEMASK) | BDEV_UDA;
 		break;
 
 	default:
-		printf("Unsupported boot device %d, trying anyway.\n", bootdev);
 		boothowto |= (RB_SINGLE | RB_ASKNAME);
 	}
 	return MAKEBOOTDEV(bootdev, adaptor, controller, unit, partition);
 }
 
-struct devsw    devsw[] = {
-	SADEV("rom", romstrategy,nullsys,nullsys, noioctl),
-};
+/*
+ * Write an extremely limited version of a (us)tar filesystem, suitable
+ * for loading secondary-stage boot loader.
+ * - Can only load file "boot".
+ * - Must be the first file on tape.
+ */
+int tar_open(char *path, struct open_file *f);
+ssize_t tar_read(struct open_file *f, void *buf, size_t size, size_t *resid);
 
-int             ndevs = (sizeof(devsw) / sizeof(devsw[0]));
+int
+tar_open(path, f)
+	char *path;
+	struct open_file *f;
+{
+	char *buf = alloc(512);
 
-struct fs_ops   file_system[] = {
-	{ufs_open, ufs_close, ufs_read, ufs_write, ufs_seek, ufs_stat}
-};
+	bzero(buf, 512);
+	romstrategy(0, 0, 8192, 512, buf, 0);
+	if (bcmp(buf, "boot", 5) || bcmp(&buf[257], "ustar", 5))
+		return EINVAL; /* Not a ustarfs with "boot" first */
+	return 0;
+}
 
-int             nfsys = (sizeof(file_system) / sizeof(struct fs_ops));
+ssize_t
+tar_read(f, buf, size, resid)
+	struct open_file *f;
+	void *buf;
+	size_t size;
+	size_t *resid;
+{
+	romstrategy(0, 0, (8192+512), size, buf, 0);
+	*resid = size;
+}
 
 struct disklabel lp;
 int part_off = 0;		/* offset into partition holding /boot */
+char io_buf[DEV_BSIZE];
 volatile struct uda {
 	struct  mscp_1ca uda_ca;           /* communications area */
 	struct  mscp uda_rsp;     /* response packets */
 	struct  mscp uda_cmd;     /* command packets */
 } uda;
+struct udadevice {u_short udaip;u_short udasa;};
 volatile struct udadevice *csr;
 
 devopen(f, fname, file)
@@ -262,6 +244,7 @@ devopen(f, fname, file)
 	const char    *fname;
 	char          **file;
 {
+	extern char	start;
 	char           *msg;
 	int		i, err, off;
 	char		line[64];
@@ -306,11 +289,7 @@ devopen(f, fname, file)
 	 * Actually disklabel is only needed when using hp disks,
 	 * but it doesn't hurt to always get it.
 	 */
-	if ((bootdev != BDEV_TK) && (bootdev != BDEV_CNSL)) {
-		msg = getdisklabel((void *)LABELOFFSET + RELOC, &lp);
-		if (msg)
-			printf("getdisklabel: %s\n", msg);
-	}
+	getdisklabel(LABELOFFSET + &start, &lp);
 	return 0;
 }
 
@@ -336,8 +315,9 @@ romstrategy(sc, func, dblk, size, buf, rsize)
 	void    *sc;
 	int     func;
 	daddr_t dblk;
-	char    *buf;
-	int     size, *rsize;
+	size_t	size;
+	void    *buf;
+	size_t	*rsize;
 {
 	int i;
 	int	block = dblk;
@@ -395,8 +375,8 @@ romstrategy(sc, func, dblk, size, buf, rsize)
 	case VAX_750:
 		if (bootdev != BDEV_HP) {
 			while (size > 0) {
-				while ((read750(block, bootregs) & 0x01) == 0)
-					printf("Retrying read bn# %d\n", block);
+				while ((read750(block, bootregs) & 0x01) == 0){
+				}
 				bcopy(0, buf, 512);
 				size -= 512;
 				buf += 512;
@@ -407,7 +387,8 @@ romstrategy(sc, func, dblk, size, buf, rsize)
 		break;
 	}
 
-	*rsize = nsize;
+	if (rsize)
+		*rsize = nsize;
 	return 0;
 }
 
@@ -437,5 +418,31 @@ hpread(block, size, buf)
 	if (mr->mba_sr & MBACR_ABORT){
 		return 1;
 	}
+	return 0;
+}
+
+extern char end[];
+static char *top = (char*)end;
+
+void *
+alloc(size)
+        unsigned size;
+{
+	void *ut = top;
+	top += size;
+	return ut;
+}
+
+void
+free(ptr, size)
+        void *ptr;
+        unsigned size;
+{
+}
+
+int
+romclose(f)
+	struct open_file *f;
+{
 	return 0;
 }

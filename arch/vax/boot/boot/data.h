@@ -1,8 +1,11 @@
-/*	$OpenBSD: vaxstand.h,v 1.5 1998/02/03 11:48:30 maja Exp $ */
-/*	$NetBSD: vaxstand.h,v 1.6 1997/03/15 13:04:31 ragge Exp $ */
+/*	$OpenBSD: data.h,v 1.2 1997/05/29 00:04:21 niklas Exp $ */
+/*	$NetBSD: data.h,v 1.4 1995/09/16 15:58:57 ragge Exp $ */
 /*
- * Copyright (c) 1994 Ludd, University of Lule}, Sweden.
+ * Copyright (c) 1995 Ludd, University of Lule}, Sweden.
  * All rights reserved.
+ *
+ * This code is derived from software contributed to Ludd by
+ * Bertram Barth.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -14,7 +17,8 @@
  *    documentation and/or other materials provided with the distribution.
  * 3. All advertising materials mentioning features or use of this software
  *    must display the following acknowledgement:
- *     This product includes software developed at Ludd, University of Lule}.
+ *      This product includes software developed at Ludd, University of 
+ *      Lule}, Sweden and its contributors.
  * 4. The name of the author may not be used to endorse or promote products
  *    derived from this software without specific prior written permission
  *
@@ -33,21 +37,39 @@
  /* All bugs are subject to removal without further notice */
 		
 
-#define MAXNMBA 8 /* Massbussadapters */
-#define MAXNUBA 8 /* Unibusadapters */
-#define	MAXMBAU	8 /* Units on an mba */
 
-/* Variables used in autoconf */
-extern int nmba, nuba, nbi, nsbi, nuda;
-extern int *ubaaddr, *mbaaddr, *udaaddr, *uioaddr, *biaddr;
-extern int cpunumber;
+extern unsigned *bootregs;
 
-/* devsw type definitions, used in bootxx and conf */
-#define SADEV(name,strategy,open,close,ioctl) \
-        { (char *)name, \
-         (int(*)(void *, int ,daddr_t , size_t, void *, size_t *))strategy, \
-         (int(*)(struct open_file *, ...))open, \
-         (int(*)(struct open_file *))close, \
-         (int(*)(struct open_file *,u_long, void *))ioctl}
+/*
+ * rpb->iovec gives pointer to this structure.
+ *
+ * bqo->unit_init() is used to initialize the controller,
+ * bqo->qio() is used to read from boot-device
+ */
 
-char *index();
+struct bqo {
+	long  qio;            /*  4  QIO entry  */
+	long  map;            /*  4  Mapping entry  */
+	long  select;         /*  4  Selection entry  */
+	long  drivrname;      /*  4  Offset to driver name  */
+	short version;        /*  2  Version number of VMB  */
+	short vercheck;       /*  2  Check field  */
+	/* offset: 20 */
+	long  reselect;       /*  4  Reselection entry  */
+	long  move;           /*  4  Move driver entry  */
+	long  unit_init;      /*  4  Unit initialization entry  */
+	long  auxdrname;      /*  4  Offset to auxiliary driver name  */
+	long  umr_dis;        /*  4  UNIBUS Map Registers to disable  */
+	/* offset: 40 */
+	long  ucode;          /*  4  Absolute address of booting microcode  */
+	long  unit_disc;      /*  4  Unit disconnecting entry */
+	long  devname;        /*  4  Offset to boot device name */
+	long  umr_tmpl;       /*  4  UNIBUS map register template */
+	/* offset: 60 */
+	/*
+	 * the rest is unknown / unneccessary ...
+	 */
+	long  xxx[6];		/* 24 --	total: 84 bytes */
+};
+      
+extern struct bqo *bqo;

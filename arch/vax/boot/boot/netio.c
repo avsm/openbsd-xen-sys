@@ -1,8 +1,43 @@
-/*	$OpenBSD$ */
-/*	$NetBSD: netio.c,v 1.1 1997/03/15 13:04:29 ragge Exp $	*/
+/*	$OpenBSD: netio.c,v 1.1 1998/02/03 11:48:28 maja Exp $ */
+/*	$NetBSD: netio.c,v 1.4 1999/06/30 18:38:03 ragge Exp $	*/
+
+/*-
+ * Copyright (c) 1996, 1997 The NetBSD Foundation, Inc.
+ * All rights reserved.
+ *
+ * This code is derived from software contributed to The NetBSD Foundation
+ * by Jason R. Thorpe.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgement:
+ *	This product includes software developed by the NetBSD
+ *	Foundation, Inc. and its contributors.
+ * 4. Neither the name of The NetBSD Foundation nor the names of its
+ *    contributors may be used to endorse or promote products derived
+ *    from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
 
 /*
- * Copyright (c) 1995, 1996 Jason R. Thorpe
  * Copyright (c) 1995 Gordon W. Ross
  * All rights reserved.
  *
@@ -57,12 +92,11 @@
 #include <netinet/if_ether.h>
 #include <netinet/in_systm.h>
 
-#include "stand.h"
-#include "samachdep.h"
-#include "net.h"
-#include "netif.h"
-#include "bootparam.h"
-#include "nfs.h"
+#include "lib/libsa/stand.h"
+#include "lib/libsa/net.h"
+#include "lib/libsa/netif.h"
+#include "lib/libsa/bootparam.h"
+#include "lib/libsa/nfs.h"
 
 extern int nfs_root_node[];	/* XXX - get from nfs_mount() */
 
@@ -76,9 +110,6 @@ static int open_count;
 int netio_ask = 0;		/* default to bootparam, can override */
 
 static	char input_line[100];
-
-/* Why be any different? */
-#define SUN_BOOTPARAMS
 
 /*
  * Called by devopen after it sets f->f_dev to our devsw entry.
@@ -108,10 +139,7 @@ int
 netclose(f)
 	struct open_file *f;
 {
-	/* On last close, do netif close, etc. */
-	if (open_count > 0)
-		if (--open_count == 0)
-			netif_close(netdev_sock);
+	netif_close(netdev_sock);
 	f->f_devdata = NULL;
 }
 
@@ -200,41 +228,46 @@ netmountroot(f, devname)
 	 * and the more modern, BOOTP way. (RFC951, RFC1048)
 	 */
 
-#ifdef	SUN_BOOTPARAMS
-	/* Get boot info using RARP and Sun bootparams. */
-
-	/* Get our IP address.  (rarp.c) */
-	if (rarp_getipaddress(netdev_sock) == -1)
-		return (errno);
-
-	printf("boot: client IP address: %s\n", inet_ntoa(myip));
-
-	/* Get our hostname, server IP address. */
-	if (bp_whoami(netdev_sock))
-		return (errno);
-
-	printf("boot: client name: %s\n", hostname);
-
-	/* Get the root pathname. */
-	if (bp_getfile(netdev_sock, "root", &rootip, rootpath))
-		return (errno);
-
-#else
+#ifdef SUPPORT_BOOTP
 
 	/* Get boot info using BOOTP way. (RFC951, RFC1048) */
+	printf("Trying BOOTP\n");
 	bootp(netdev_sock);
 
-	printf("Using IP address: %s\n", inet_ntoa(myip));
+	if (myip.s_addr) {
+		printf("Using IP address: %s\n", inet_ntoa(myip));
 
-	printf("myip: %s (%s)", hostname, inet_ntoa(myip));
-	if (gateip)
-		printf(", gateip: %s", inet_ntoa(gateip));
-	if (mask)
-		printf(", mask: %s", intoa(netmask));
-	printf("\n");
+		printf("myip: %s (%s)", hostname, inet_ntoa(myip));
+		if (gateip.s_addr)
+			printf(", gateip: %s", inet_ntoa(gateip));
+		if (netmask)
+			printf(", mask: %s", intoa(netmask));
+		printf("\n");
+	} else
 
-#endif /* SUN_BOOTPARAMS */
+#endif /* SUPPORT_BOOTP */
+	{
+#ifdef	SUPPORT_BOOTPARAMS
+		/* Get boot info using RARP and Sun bootparams. */
 
+		printf("Trying BOOTPARAMS\n");
+		/* Get our IP address.  (rarp.c) */
+		if (rarp_getipaddress(netdev_sock) == -1)
+			return (errno);
+
+		printf("boot: client IP address: %s\n", inet_ntoa(myip));
+
+		/* Get our hostname, server IP address. */
+		if (bp_whoami(netdev_sock))
+			return (errno);
+
+		printf("boot: client name: %s\n", hostname);
+
+		/* Get the root pathname. */
+		if (bp_getfile(netdev_sock, "root", &rootip, rootpath))
+			return (errno);
+#endif
+	}
 	printf("root addr=%s path=%s\n", inet_ntoa(rootip), rootpath);
 
  do_nfs_mount:

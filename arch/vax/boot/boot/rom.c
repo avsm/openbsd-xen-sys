@@ -1,4 +1,4 @@
-/*	$OpenBSD: rom.c,v 1.2 1997/05/29 00:04:24 niklas Exp $ */
+/*	$OpenBSD: rom.c,v 1.3 1998/05/13 07:30:26 niklas Exp $ */
 /*	$NetBSD: rom.c,v 1.1 1996/08/02 11:22:21 ragge Exp $ */
 /*
  * Copyright (c) 1996 Ludd, University of Lule}, Sweden.

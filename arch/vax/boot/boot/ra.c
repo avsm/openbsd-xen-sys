@@ -1,5 +1,5 @@
-/*	$OpenBSD: ra.c,v 1.4 1997/05/29 00:04:24 niklas Exp $ */
-/*	$NetBSD: ra.c,v 1.5 1996/08/02 11:22:18 ragge Exp $ */
+/*	$OpenBSD: ra.c,v 1.5 1998/05/13 07:30:24 niklas Exp $ */
+/*	$NetBSD: ra.c,v 1.4 1999/08/07 11:19:04 ragge Exp $ */
 /*
  * Copyright (c) 1995 Ludd, University of Lule}, Sweden.
  * All rights reserved.
@@ -41,21 +41,19 @@
 #include "lib/libsa/stand.h"
 
 #include "../include/pte.h"
-#include "../include/macros.h"
 #include "../include/sid.h"
 
-#include "../uba/ubareg.h"
-#include "../uba/udareg.h"
+#include "arch/vax/mscp/mscp.h"
+#include "arch/vax/mscp/mscpreg.h"
 
-#include "../mscp/mscp.h"
-#include "../mscp/mscpreg.h"
-
-#include "../bi/bireg.h"
-#include "../bi/kdbreg.h"
+#include "arch/vax/bi/bireg.h"
+#include "arch/vax/bi/kdbreg.h"
 
 #include "vaxstand.h"
 
 static command(int);
+
+
 
 /*
  * These routines for RA disk standalone boot is wery simple,
@@ -82,7 +80,6 @@ volatile struct uda {
 } uda;
 
 volatile struct uda *ubauda;
-volatile struct udadevice *udacsr;
 struct	disklabel ralabel;
 struct ra_softc ra_softc;
 char io_buf[DEV_BSIZE];
@@ -94,11 +91,14 @@ raopen(f, adapt, ctlr, unit, part)
 	char *msg;
 	struct disklabel *lp = &ralabel;
 	volatile struct ra_softc *ra = &ra_softc;
-	volatile struct uba_regs *mr = (void *)ubaaddr[adapt];
 	volatile u_int *nisse;
 	unsigned short johan, johan2;
-	int i,err;
+	int i,err, udacsr;
 
+#ifdef DEV_DEBUG
+	printf("raopen: adapter %d ctlr %d unit %d part %d\n", 
+	    adapt, ctlr, unit, part);
+#endif
 	bzero(lp, sizeof(struct disklabel));
 	ra->unit = unit;
 	ra->part = part;
@@ -107,50 +107,63 @@ raopen(f, adapt, ctlr, unit, part)
 			return(EADAPT);
 		if (ctlr > nuda)
 			return(ECTLR);
-		nisse = (u_int *)&mr->uba_map[0];
+		nisse = ((u_int *)ubaaddr[adapt]) + 512;
 		nisse[494] = PG_V | (((u_int)&uda) >> 9);
 		nisse[495] = nisse[494] + 1;
-		udacsr = (void*)uioaddr[adapt] + udaaddr[ctlr];
+		udacsr = (int)uioaddr[adapt] + udaaddr[ctlr];
 		ubauda = (void*)0x3dc00 + (((u_int)(&uda))&0x1ff);
 		johan = (((u_int)ubauda) & 0xffff) + 8;
 		johan2 = 3;
-		ra->ra_ip = (short *)&udacsr->udaip;
-		ra->ra_sa = ra->ra_sw = (short *)&udacsr->udasa;
+		ra->ra_ip = (short *)udacsr;
+		ra->ra_sa = ra->ra_sw = (short *)udacsr + 1;
 		ra->udaddr = uioaddr[adapt] + udaaddr[ctlr];
-		ra->ubaddr = (int)mr;
+		ra->ubaddr = (int)ubaaddr[adapt];
 		*ra->ra_ip = 0; /* Start init */
 	} else {
-		struct bi_node *bi = (void *)biaddr[adapt];
-		struct kdb_regs *kb = (void *)&bi[ctlr];
+		paddr_t kdaddr = (paddr_t)biaddr[adapt] + BI_NODE(ctlr);
+		volatile int *w;
 		volatile int i = 10000;
 
-		ra->ra_ip = &kb->kdb_ip;
-		ra->ra_sa = &kb->kdb_sa;
-		ra->ra_sw = &kb->kdb_sw;
+		ra->ra_ip = (short *)(kdaddr + KDB_IP);
+		ra->ra_sa = (short *)(kdaddr + KDB_SA);
+		ra->ra_sw = (short *)(kdaddr + KDB_SW);
 		johan = ((u_int)&uda.uda_ca.ca_rspdsc) & 0xffff;
 		johan2 = (((u_int)&uda.uda_ca.ca_rspdsc) & 0xffff0000) >> 16;
-		kb->kdb_bi.bi_csr |= BICSR_NRST;
+		w = (int *)(kdaddr + BIREG_VAXBICSR);
+		*w = *w | BICSR_NRST;
 		while (i--) /* Need delay??? */
 			;
-		kb->kdb_bi.bi_ber = ~(BIBER_MBZ|BIBER_NMR|BIBER_UPEN);/* ??? */
+		w = (int *)(kdaddr + BIREG_BER);
+		*w = ~(BIBER_MBZ|BIBER_NMR|BIBER_UPEN);/* ??? */
 		ubauda = &uda;
 	}
 
 	/* Init of this uda */
 	while ((*ra->ra_sa & MP_STEP1) == 0)
 		;
-
+#ifdef DEV_DEBUG
+	printf("MP_STEP1...");
+#endif
 	*ra->ra_sw = 0x8000;
 	while ((*ra->ra_sa & MP_STEP2) == 0)
 		;
+#ifdef DEV_DEBUG
+	printf("MP_STEP2...");
+#endif
 
 	*ra->ra_sw = johan;
 	while ((*ra->ra_sa & MP_STEP3) == 0)
 		;
+#ifdef DEV_DEBUG
+	printf("MP_STEP3...");
+#endif
 
 	*ra->ra_sw = johan2;
 	while ((*ra->ra_sa & MP_STEP4) == 0)
 		;
+#ifdef DEV_DEBUG
+	printf("MP_STEP4\n");
+#endif
 
 	*ra->ra_sw = 0x0001;
 	uda.uda_ca.ca_rspdsc = (int)&ubauda->uda_rsp.mscp_cmdref;
@@ -160,12 +173,18 @@ raopen(f, adapt, ctlr, unit, part)
 	uda.uda_cmd.mscp_unit = ra->unit;
 	command(M_OP_ONLINE);
 
+#ifdef DEV_DEBUG
+	printf("reading disklabel\n");
+#endif
 	err = rastrategy(ra,F_READ, LABELSECTOR, DEV_BSIZE, io_buf, &i);
 	if(err){
 		printf("reading disklabel: %s\n",strerror(err));
 		return 0;
 	}
 
+#ifdef DEV_DEBUG
+	printf("getting disklabel\n");
+#endif
 	msg = getdisklabel(io_buf+LABELOFFSET, lp);
 	if (msg)
 		printf("getdisklabel: %s\n", msg);
@@ -183,10 +202,15 @@ command(cmd)
 	uda.uda_rsp.mscp_msglen = MSCP_MSGLEN;
 	uda.uda_ca.ca_rspdsc |= MSCP_OWN|MSCP_INT;
 	uda.uda_ca.ca_cmddsc |= MSCP_OWN|MSCP_INT;
+#ifdef DEV_DEBUG
+	printf("sending cmd %x...", cmd);
+#endif
 	hej = *ra_softc.ra_ip;
 	while(uda.uda_ca.ca_rspdsc<0)
 		;
-
+#ifdef DEV_DEBUG
+	printf("sent.\n");
+#endif
 }
 
 rastrategy(ra, func, dblk, size, buf, rsize)
@@ -196,22 +220,18 @@ rastrategy(ra, func, dblk, size, buf, rsize)
 	char	*buf;
 	u_int	size, *rsize;
 {
-	volatile struct uba_regs *ur;
-	volatile struct udadevice *udadev;
 	volatile u_int *ptmapp;
 	struct	disklabel *lp;
 	u_int	i, j, pfnum, mapnr, nsize;
 	volatile int hej;
 
-
 	if (vax_cputype != VAX_8200) {
-		ur = (void *)ra->ubaddr;
-		udadev = (void*)ra->udaddr;
-		ptmapp = (u_int *)&ur->uba_map[0];
+		ptmapp = ((u_int *)ra->ubaddr) + 512;
 
-		pfnum = (u_int)buf >> PGSHIFT;
+		pfnum = (u_int)buf >> VAX_PGSHIFT;
 
-		for(mapnr = 0, nsize = size; (nsize + NBPG) > 0; nsize -= NBPG)
+		for(mapnr = 0, nsize = size; (nsize + VAX_NBPG) > 0;
+		    nsize -= VAX_NBPG)
 			ptmapp[mapnr++] = PG_V | pfnum++;
 		uda.uda_cmd.mscp_seq.seq_buffer = ((u_int)buf) & 0x1ff;
 	} else
@@ -222,6 +242,10 @@ rastrategy(ra, func, dblk, size, buf, rsize)
 	    dblk + lp->d_partitions[ra->part].p_offset;
 	uda.uda_cmd.mscp_seq.seq_bytecount = size;
 	uda.uda_cmd.mscp_unit = ra->unit;
+#ifdef DEV_DEBUG
+	printf("rastrategy: blk 0x%lx count %lx unit %lx\n", 
+	    uda.uda_cmd.mscp_seq.seq_lbn, size, ra->unit);
+#endif
 	if (func == F_WRITE)
 		command(M_OP_WRITE);
 	else

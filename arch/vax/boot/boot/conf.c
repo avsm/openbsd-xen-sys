@@ -1,5 +1,5 @@
-/*	$OpenBSD: conf.c,v 1.4 1997/05/29 00:04:19 niklas Exp $ */
-/*	$NetBSD: conf.c,v 1.8 1997/04/10 21:25:21 ragge Exp $ */
+/*	$OpenBSD: conf.c,v 1.5 1998/02/03 11:48:25 maja Exp $ */
+/*	$NetBSD: conf.c,v 1.3 1999/10/23 14:42:21 ragge Exp $ */
 /*
  * Copyright (c) 1994 Ludd, University of Lule}, Sweden.
  * All rights reserved.
@@ -36,7 +36,7 @@
 
 #include <netinet/in.h>
 
-#include <machine/rpb.h>
+#include "../../include/rpb.h"
 
 #include "lib/libsa/stand.h"
 #include "lib/libsa/ufs.h"
@@ -61,9 +61,10 @@ struct	devsw devsw[]={
 	SADEV("mt",tmscpstrategy, tmscpopen, nullsys, noioctl),
         SADEV("rom",romstrategy, romopen, nullsys, noioctl),
         SADEV("rd",mfmstrategy, mfmopen, nullsys, noioctl),
-        SADEV("sd",sdstrategy, sdopen, nullsys, noioctl),
-	SADEV("st",sdstrategy, sdopen, nullsys, noioctl),
+        SADEV("sd",romstrategy, romopen, nullsys, noioctl),
+	SADEV("st",nullsys, nullsys, nullsys, noioctl),
 	SADEV("le",netstrategy, netopen, netclose, noioctl), /* LANCE */
+        SADEV("ze",netstrategy, netopen, netclose, noioctl), /* SGEC */
 };
 
 int	cnvtab[] = {
@@ -77,15 +78,13 @@ int	cnvtab[] = {
 	BDEV_SD,
 	BDEV_ST,
 	BDEV_LE,
+	BDEV_ZE,
 };
 
 int     ndevs = (sizeof(devsw)/sizeof(devsw[0]));
 
 struct fs_ops file_system[] = {
-	{ ufs_open, ufs_close, ufs_read, ufs_write, ufs_seek, ufs_stat }
-};
-
-struct fs_ops nfs_system[] = {
+	{ ufs_open, ufs_close, ufs_read, ufs_write, ufs_seek, ufs_stat },
 	{ nfs_open, nfs_close, nfs_read, nfs_write, nfs_seek, nfs_stat },
 };
 
@@ -93,10 +92,12 @@ int nfsys = (sizeof(file_system) / sizeof(struct fs_ops));
 
 extern struct netif_driver qe_driver;
 extern struct netif_driver le_driver;
+extern struct netif_driver ze_driver;
  
 struct netif_driver *netif_drivers[] = {
-/*	&qe_driver,  */
+	&qe_driver,
 	&le_driver,
+	&ze_driver,
 }; 
 int     n_netif_drivers = (sizeof(netif_drivers) / sizeof(netif_drivers[0]));
 

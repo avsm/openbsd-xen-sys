@@ -1,5 +1,5 @@
-/*	$OpenBSD: start.s,v 1.5 1997/05/29 00:04:27 niklas Exp $ */
-/*	$NetBSD: start.s,v 1.10 1997/03/22 12:47:32 ragge Exp $ */
+/*	$OpenBSD: start.s,v 1.6 1998/02/03 11:48:29 maja Exp $ */
+/*	$NetBSD: start.s,v 1.2 1999/10/23 14:40:38 ragge Exp $ */
 /*
  * Copyright (c) 1995 Ludd, University of Lule}, Sweden.
  * All rights reserved.
@@ -173,7 +173,6 @@ start_all:
 relocated:				# now relocation is done !!!
 	movl	sp, _bootregs
 	movl	ap, _boothowto
-	calls	$0, _setup
 	calls	$0, _Xmain		# call Xmain (gcc workaround)which is 
 	halt				# not intended to return ...
 
@@ -188,4 +187,14 @@ ENTRY(hoppabort, 0)
 	mnegl	$1, ap		# Hack to figure out boot device.
 	jmp	2(r6)
 #	calls   $0,(r6)
+	halt
+
+# A bunch of functions unwanted in boot blocks.
+ENTRY(getchar, 0)
+	halt
+
+ENTRY(putchar, 0)
+	ret
+
+ENTRY(panic, 0)
 	halt

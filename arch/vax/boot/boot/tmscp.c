@@ -1,5 +1,5 @@
-/*	$OpenBSD: tmscp.c,v 1.4 1997/05/29 00:04:28 niklas Exp $ */
-/*	$NetBSD: tmscp.c,v 1.4 1997/03/15 13:04:31 ragge Exp $ */
+/*	$OpenBSD: tmscp.c,v 1.5 1998/02/03 11:48:30 maja Exp $ */
+/*	$NetBSD: tmscp.c,v 1.3 1999/06/30 18:19:26 ragge Exp $ */
 /*
  * Copyright (c) 1995 Ludd, University of Lule}, Sweden.
  * All rights reserved.
@@ -41,11 +41,8 @@
 #include "lib/libsa/stand.h"
 
 #include "../include/pte.h"
-#include "../include/macros.h"
-#include "../uba/ubareg.h"
-#include "../uba/udareg.h"
-#include "../mscp/mscp.h"
-#include "../mscp/mscpreg.h"
+#include "arch/vax/mscp/mscp.h"
+#include "arch/vax/mscp/mscpreg.h"
 
 #include "vaxstand.h"
 
@@ -70,9 +67,16 @@ static volatile struct uda {
         struct  mscp uda_cmd;     /* command packets */
 } uda;
 
+struct  udadevice {
+	short udaip;
+	short udasa;
+};
+
 static volatile struct uda *ubauda;
 static volatile struct udadevice *udacsr;
 static struct ra_softc ra_softc;
+static int curblock;
+
 
 tmscpopen(f, adapt, ctlr, unit, part)
 	struct open_file *f;
@@ -81,18 +85,18 @@ tmscpopen(f, adapt, ctlr, unit, part)
 	char *msg;
 	extern u_int tmsaddr;
 	volatile struct ra_softc *ra=&ra_softc;
-	volatile struct uba_regs *mr=(void *)ubaaddr[adapt];
 	volatile u_int *nisse;
 	unsigned short johan;
 	int i,err;
 
+	curblock = 0;
 	if(adapt>nuba) return(EADAPT);
 	if(ctlr>nuda) return(ECTLR);
 	ra->udaddr=uioaddr[adapt]+tmsaddr;
-	ra->ubaddr=(int)mr;
+	ra->ubaddr=(int)ubaaddr[adapt];
 	ra->unit=unit;
 	udacsr=(void*)ra->udaddr;
-	nisse=(u_int *)&mr->uba_map[0];
+	nisse=((u_int *)ubaaddr[adapt]) + 512;
 	nisse[494]=PG_V|(((u_int)&uda)>>9);
 	nisse[495]=nisse[494]+1;
 	ubauda=(void*)0x3dc00+(((u_int)(&uda))&0x1ff);
@@ -153,8 +157,6 @@ command(cmd, arg)
 
 }
 
-static int curblock = 0;
-
 tmscpstrategy(ra, func, dblk, size, buf, rsize)
 	struct ra_softc *ra;
 	int func;
@@ -163,14 +165,13 @@ tmscpstrategy(ra, func, dblk, size, buf, rsize)
 	u_int size, *rsize;
 {
 	u_int i,j,pfnum, mapnr, nsize, bn, cn, sn, tn;
-	volatile struct uba_regs *ur=(void *)ra->ubaddr;
 	volatile struct udadevice *udadev=(void*)ra->udaddr;
-	volatile u_int *ptmapp = (u_int *)&ur->uba_map[0];
+	volatile u_int *ptmapp = (u_int *)ra->ubaddr + 512;
 	volatile int hej;
 
-	pfnum=(u_int)buf>>PGSHIFT;
+	pfnum=(u_int)buf>>VAX_PGSHIFT;
 
-	for(mapnr=0, nsize=size;(nsize+NBPG)>0;nsize-=NBPG)
+	for(mapnr=0, nsize=size;(nsize+VAX_NBPG)>0;nsize-=VAX_NBPG)
 		ptmapp[mapnr++]=PG_V|pfnum++;
 
 	/*

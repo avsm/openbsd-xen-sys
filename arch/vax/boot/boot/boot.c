@@ -1,5 +1,5 @@
-/*	$OpenBSD: boot.c,v 1.4 1998/02/03 11:48:24 maja Exp $ */
-/*	$NetBSD: boot.c,v 1.7 1997/06/08 17:49:16 ragge Exp $ */
+/*	$OpenBSD: boot.c,v 1.5 1998/05/11 07:36:26 niklas Exp $ */
+/*	$NetBSD: boot.c,v 1.4 1999/10/23 14:42:22 ragge Exp $ */
 /*-
  * Copyright (c) 1982, 1986 The Regents of the University of California.
  * All rights reserved.
@@ -41,7 +41,7 @@
 
 #define V750UCODE(x)    ((x>>8)&255)
 
-#include <sys/exec.h>
+#include "vaxstand.h"
 
 /*
  * Boot program... arguments passed in r10 and r11 determine
@@ -50,112 +50,148 @@
  */
 
 char line[100];
-volatile int devtype, bootdev;
+int	devtype, bootdev, howto, debug;
 extern	unsigned opendev;
 extern  unsigned *bootregs;
 
+void	usage(), boot(), halt();
+
+struct vals {
+	char	*namn;
+	void	(*func)();
+	char	*info;
+} val[] = {
+	{"?", usage, "Show this help menu"},
+	{"help", usage, "Same as '?'"},
+	{"boot", boot, "Load and execute file"},
+	{"halt", halt, "Halts the system"},
+	{0, 0},
+};
+
+char *filer[] = {
+	"bsd",
+	"bsd.gz",
+	"bsd.old",
+	0,
+};
+
 Xmain()
 {
-	register howto asm("r11");
-	register bdev  asm("r10");
-	int io, retry, type;
-	extern	char vers[];
+	int io, type, sluttid, askname, filindex = 0;
+	int j, senast = 0, nu;
 
 	io=0;
-	bootdev=bdev;
 	autoconf();
 
-	if ((howto & RB_ASKNAME) == 0) {
+	askname = howto & RB_ASKNAME;
+	printf("\n\r>> OpenBSD/vax boot [%s %s] <<\n", __DATE__, __TIME__);
+	printf(">> Press any key to abort autoboot  ");
+	sluttid = getsecs() + 5;
+	for (;;) {
+		nu = sluttid - getsecs();
+		if (senast != nu)
+			printf("%c%d", 8, nu);
+		if (nu <= 0)
+			break;
+		senast = nu;
+		if ((j = (testkey() & 0177))) {
+			if (j != 10 && j != 13) {
+				printf("\nPress '?' for help");
+				askname = 1;
+			}
+			break;
+		}
+	}
+	printf("\n");
+
+	/* First try to autoboot */
+	if (askname == 0) {
 		type = (devtype >> B_TYPESHIFT) & B_TYPEMASK;
 		if ((unsigned)type < ndevs && devsw[type].dv_name)
-			strcpy(line, "/bsd");
-		else
-			howto |= RB_SINGLE|RB_ASKNAME;
+			while (filer[filindex]) {
+				errno = 0;
+				printf("> boot %s\n", filer[filindex]);
+				exec(filer[filindex++], 0, 0);
+				printf("boot failed: %s\n", strerror(errno));
+				if (testkey())
+					break;
+			}
 	}
 
-	for (retry = 0;;) {
-		if (io >= 0)
-			printf("\n%s\n", vers);
-		if (howto & RB_ASKNAME) {
-			printf(": ");
-			gets(line);
-			if (line[0] == 0) {
-				strcpy(line, "/bsd");
-				printf(": %s\n", line);
-			}
-		} else
-			printf(": %s\n", line);
-		io = open(line, 0);
-		if (io >= 0) {
-			loadpcs();
-			copyunix(howto, opendev, io);
-			close(io);
-			howto |= RB_SINGLE|RB_ASKNAME;
-		} else {
-			printf("%s\n",strerror(errno));
+	/* If any key pressed, go to conversational boot */
+	for (;;) {
+		struct vals *v = &val[0];
+		char *c, *d;
+
+		printf("> ");
+		gets(line);
+
+		c = line;
+		while (*c == ' ')
+			c++;
+
+		if (c[0] == 0)
+			continue;
+
+		if ((d = index(c, ' ')))
+			*d++ = 0;
+
+		while (v->namn) {
+			if (strcmp(v->namn, c) == 0)
+				break;
+			v++;
 		}
-		if (++retry > 2)
-			howto |= RB_SINGLE|RB_ASKNAME;
+		if (v->namn)
+			(*v->func)(d);
+		else
+			printf("Unknown command: %s\n", c);
+			
 	}
 }
 
-/*ARGSUSED*/
-copyunix(howto, devtype, aio)
-	register howto, devtype;	/* howto=r11, devtype=r10 */
-	int aio;
+void
+halt()
 {
-	register int esym;		/* must be r9 */
-	struct exec x;
-	register int io = aio, i;
-	char *addr;
+	asm("halt");
+}
 
-	if (read(io, (char *)&x, sizeof(x)) != sizeof(x) || N_BADMAG(x)) {
-		printf("Bad format\n");
-		return;
+void
+boot(arg)
+	char *arg;
+{
+	char *fn = "bsd";
+
+	if (arg) {
+		while (*arg == ' ')
+			arg++;
+
+		if (*arg != '-') {
+			fn = arg;
+			if ((arg = index(arg, ' '))) {
+				*arg++ = 0;
+				while (*arg == ' ')
+					arg++;
+			} else
+				goto load;
+		}
+		if (*arg != '-') {
+fail:			printf("usage: boot [filename] [-asd]\n");
+			return;
+		}
+
+		while (*++arg) {
+			if (*arg == 'a')
+				howto |= RB_ASKNAME;
+			else if (*arg == 'd')
+				howto |= RB_KDB;
+			else if (*arg == 's')
+				howto |= RB_SINGLE;
+			else
+				goto fail;
+		}
 	}
-	printf("%d", x.a_text);
-	if (N_GETMAGIC(x) == ZMAGIC && lseek(io, 0x400, SEEK_SET) == -1)
-		goto shread;
-	if (read(io, (char *)0, x.a_text) != x.a_text)
-		goto shread;
-	addr = (char *)x.a_text;
-	if (N_GETMAGIC(x) == ZMAGIC || N_GETMAGIC(x) == NMAGIC)
-		while ((int)addr & CLOFSET)
-			*addr++ = 0;
-	printf("+%d", x.a_data);
-	if (read(io, addr, x.a_data) != x.a_data)
-		goto shread;
-	addr += x.a_data;
-	printf("+%d", x.a_bss);
-	for (i = 0; i < x.a_bss; i++)
-		*addr++ = 0;
-	if (howto & RB_KDB && x.a_syms) {
-		*(int *)addr = x.a_syms;		/* symbol table size */
-		addr += sizeof (int);
-		printf("[+%d", x.a_syms);
-		if (read(io, addr, x.a_syms) != x.a_syms)
-			goto shread;
-		addr += x.a_syms;
-		if (read(io, addr, sizeof (int)) != sizeof (int))
-			goto shread;
-		i = *(int *)addr - sizeof (int);	/* string table size */
-		addr += sizeof (int);
-		printf("+%d]", i);
-		if (read(io, addr, i) != i)
-			goto shread;
-		addr += i;
-		esym = roundup((int)addr, sizeof (int));
-		x.a_bss = 0;
-	} else
-		howto &= ~RB_KDB;
-	for (i = 0; i < 128*512; i++)	/* slop */
-		*addr++ = 0;
-	printf(" start 0x%x\n", (x.a_entry&0x7fffffff));
-	hoppabort((x.a_entry&0x7fffffff),howto, devtype, esym);
-	return;
-shread:
-	printf("\nShort read\n\n");
-	return;
+load:	exec(fn, 0, 0);
+	printf("Boot failed: %s\n", strerror(errno));
 }
 
 /* 750 Patchable Control Store magic */
@@ -180,12 +216,9 @@ shread:
 
 loadpcs()
 {
-	register int *ip;	/* known to be r11 below */
-	register int i;		/* known to be r10 below */
-	register int *jp;	/* known to be r9 below */
-	register int j;
 	static int pcsdone = 0;
 	int mid = mfpr(PR_SID);
+	int i, j, *ip, *jp;
 	char pcs[100];
 	char *cp;
 
@@ -251,4 +284,16 @@ loadpcs()
 	mid = mfpr(PR_SID);
 	printf("new rev level=%d\n", V750UCODE(mid));
 	pcsdone = 1;
+}
+
+void
+usage()
+{
+	struct vals *v = &val[0];
+
+	printf("Commands:\n");
+	while (v->namn) {
+		printf("%s\t%s\n", v->namn, v->info);
+		v++;
+	}
 }

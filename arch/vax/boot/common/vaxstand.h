@@ -1,5 +1,5 @@
-/*	$OpenBSD: srt0.s,v 1.5 1998/02/03 11:48:28 maja Exp $ */
-/*	$NetBSD: srt0.s,v 1.9 1997/03/22 12:47:32 ragge Exp $ */
+/*	$OpenBSD: vaxstand.h,v 1.6 1998/05/11 07:35:24 niklas Exp $ */
+/*	$NetBSD: vaxstand.h,v 1.1 1999/03/06 16:36:05 ragge Exp $ */
 /*
  * Copyright (c) 1994 Ludd, University of Lule}, Sweden.
  * All rights reserved.
@@ -31,55 +31,29 @@
  */
 
  /* All bugs are subject to removal without further notice */
+		
 
+#define MAXNMBA 8 /* Massbussadapters */
+#define MAXNUBA 8 /* Unibusadapters */
+#define	MAXMBAU	8 /* Units on an mba */
 
+/* Variables used in autoconf */
+extern int nmba, nuba, nbi, nsbi, nuda;
+extern int *ubaaddr, *mbaaddr, *udaaddr, *uioaddr, *biaddr;
+extern int cpunumber, howto;
+extern dev_t bootdev;
+
+/* devsw type definitions, used in bootxx and conf */
+#define SADEV(name,strategy,open,close,ioctl) \
+        { (char *)name, \
+         (int(*)(void *, int ,daddr_t , size_t, void *, size_t *))strategy, \
+         (int(*)(struct open_file *, ...))open, \
+         (int(*)(struct open_file *))close, \
+         (int(*)(struct open_file *,u_long, void *))ioctl}
+
+#define	SDELAY(count) {volatile int i; for (i = count; i; i--);}
 /*
- * Auto-moving startup code for standalone programs. Can be loaded
- * (almost) anywhere in memory but moves itself to the position
- * it is linked for. Must be started at first position, recommended
- * is phys addr 0 (boot loads programs at 0, but starts them at the
- * position set in a.out header.
+ * Easy-to-use definitions
  */
 
-start0:	.set	start0,0	# passing -e start0 to ld gives OK start addr
-	.globl	start0
-
-_start:	.globl	_start
-	nop;nop;		# If we get called by calls, or something
-
-	movl	r8, _memsz	# If we come from disk, save memsize
-	cmpl	ap, $-1		# Check if we are net-booted. XXX - kludge
-	beql	2f		# jump if not
-	ashl	$9,76(r11),_memsz # got memsize from rpb
-	movzbl	102(r11), r10	# Get bootdev from rpb.
-	movzwl	48(r11), r11	# Get howto
-
-2:	movl	$_start, sp	# Probably safe place for stack
-	subl2	$52, sp		# do not overwrite saved boot-registers
-
-	subl3	$_start, $_edata, r0
-	moval	_start, r1
-	subl3	$_start, $_end, r2
-	movl	$_start, r3
-	movc5	r0, (r1), $0, r2, (r3)
-	jsb	1f
-1:	movl    $relocated, (sp)   # return-address on top of stack
-	rsb                        # can be replaced with new address
-relocated:	                   # now relocation is done !!!
-	movl	sp, _bootregs
-	calls	$0, _setup
-	calls	$0, _Xmain	# Were here!
-	halt			# no return
-
-	
-        .globl _hoppabort
-_hoppabort: .word 0x0
-        movl    4(ap), r6
-        movl    8(ap), r11
-        movl    0xc(ap), r10
-	movl	16(ap), r9
-	movl	_memsz,r8
-        calls   $0,(r6)
-
-	.globl	_memsz
-_memsz:	.long	0x0
+char *index();

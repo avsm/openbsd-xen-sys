@@ -1,5 +1,5 @@
-/*	$OpenBSD: devopen.c,v 1.4 1997/05/29 00:04:21 niklas Exp $ */
-/*	$NetBSD: devopen.c,v 1.8 1997/06/08 17:49:19 ragge Exp $ */
+/*  $OpenBSD: devopen.c,v 1.5 1998/02/03 11:48:26 maja Exp $ */
+/*	$NetBSD: devopen.c,v 1.2 1999/06/30 18:30:42 ragge Exp $ */
 /*
  * Copyright (c) 1997 Ludd, University of Lule}, Sweden.
  * All rights reserved.
@@ -34,7 +34,6 @@
 #include <sys/reboot.h>
 
 #include "lib/libsa/stand.h"
-#include "samachdep.h"
 #include "vaxstand.h"
 
 unsigned int opendev;
@@ -47,9 +46,8 @@ devopen(f, fname, file)
 {
 	int dev, ctlr, unit, part, adapt, i, a[4], x;
 	struct devsw *dp;
-	extern struct fs_ops nfs_system[];
 	extern int cnvtab[];
-	char *s, *c;
+	char *s, *c, *u;
 
 	dev   = B_TYPE(bootdev);
 	ctlr  = B_CONTROLLER(bootdev);
@@ -101,29 +99,10 @@ devopen(f, fname, file)
 		if (x > 3)
 			adapt = a[0];
 		*file = c;
-	} else
+	} else {
 		*file = (char *)fname;
-
-#ifdef notyet
-	if ((u = index(s, ' '))) {
-		*u++ = 0;
-
-		if (*u != '-')
-			goto usage;
-
-		while (*++u) {
-			if (*u == 'a')
-				bdev |= RB_ASKNAME;
-			else if (*u == 'd')
-				bdev |= RB_DEBUG;
-			else if (*u == 's')
-				bdev |= RB_SINGLE;
-			else
-				goto usage;
-		}
-
+		c = (char *)fname;
 	}
-#endif
 
 	if (!dp->dv_open)
 		return(ENODEV);
@@ -132,7 +111,6 @@ devopen(f, fname, file)
 	opendev = MAKEBOOTDEV(dev, adapt, ctlr, unit, part);
 
 	if (dev > 95) { /* MOP boot over network, root & swap over NFS */
-		bcopy(nfs_system, file_system, sizeof(struct fs_ops));
 		i = (*dp->dv_open)(f, dp->dv_name);
 	} else
 		i = (*dp->dv_open)(f, adapt, ctlr, unit, part);
