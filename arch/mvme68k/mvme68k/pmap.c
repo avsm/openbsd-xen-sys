@@ -1,4 +1,4 @@
-/*	$Id: pmap.c,v 1.4 1995/12/15 02:25:39 deraadt Exp $ */
+/*	$OpenBSD$ */
 
 /* 
  * Copyright (c) 1995 Theo de Raadt

@@ -1,4 +1,4 @@
-/*	$Id: trap.c,v 1.5 1996/01/12 16:45:14 deraadt Exp $ */
+/*	$OpenBSD$ */
 
 /*
  * Copyright (c) 1995 Theo de Raadt

@@ -1,4 +1,4 @@
-/*	$Id: float.h,v 1.2 1995/11/07 08:49:50 deraadt Exp $ */
+/*	$OpenBSD$ */
 
 #ifndef _MACHINE_FLOAT_H_
 #define _MACHINE_FLOAT_H_

@@ -1,4 +1,4 @@
-/*	$Id: reg.h,v 1.2 1995/11/07 08:50:02 deraadt Exp $ */
+/*	$OpenBSD$ */
 
 #ifndef _MACHINE_REG_H_
 #define	_MACHINE_REG_H_

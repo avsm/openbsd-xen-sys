@@ -1,4 +1,4 @@
-/*	$Id: swapgeneric.c,v 1.3 1995/11/30 22:53:00 deraadt Exp $ */
+/*	$OpenBSD$ */
 
 /*-
  * Copyright (c) 1994

@@ -1,4 +1,4 @@
-/*	$Id: db_machdep.h,v 1.2 1995/11/07 08:49:48 deraadt Exp $ */
+/*	$OpenBSD$ */
 
 #define DB_MACHINE_COMMANDS
 

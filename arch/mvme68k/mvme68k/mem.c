@@ -1,4 +1,4 @@
-/*	$Id: mem.c,v 1.3 1995/11/30 22:52:05 deraadt Exp $ */
+/*	$OpenBSD$ */
 
 /*
  * Copyright (c) 1995 Theo de Raadt
