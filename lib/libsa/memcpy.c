@@ -1,4 +1,4 @@
-/*	$Id: memcpy.c,v 1.1 1995/12/26 17:37:00 deraadt Exp $ */
+/*	$OpenBSD$	*/
 
 /*-
  * Copyright (c) 1993
