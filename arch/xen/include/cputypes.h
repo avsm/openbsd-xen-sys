@@ -28,54 +28,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-/*
- *	Classes of Processor
- */
-
-#define	CPUCLASS_386	0
-#define	CPUCLASS_486	1
-#define	CPUCLASS_586	2
-#define	CPUCLASS_686	3
-
-/*
- *	Kinds of Processor. Only the first 7 are used, as they are processors
- * that might not have a cpuid instruction.
- */
-
-#define	CPU_386SX	0	/* Intel 80386SX */
-#define	CPU_386		1	/* Intel 80386DX */
-#define	CPU_486SX	2	/* Intel 80486SX */
-#define	CPU_486		3	/* Intel 80486DX */
-#define	CPU_486DLC	4	/* Cyrix 486DLC */
-#define CPU_6x86	5	/* Cyrix/IBM 6x86 */
-#define CPU_NX586	6	/* NexGen 586 */
-#define	CPU_586		7	/* Intel P.....m (I hate lawyers; it's TM) */
-#define CPU_AM586	8	/* AMD Am486 and Am5x86 */
-#define CPU_K5		9	/* AMD K5 */
-#define CPU_K6		10	/* NexGen 686 aka AMD K6 */
-#define	CPU_686		11	/* Intel P.....m Pro */
-
-/*
- * CPU vendors
- */
-
-#define CPUVENDOR_UNKNOWN	-1
-#define CPUVENDOR_INTEL		0
-#define CPUVENDOR_CYRIX		1
-#define CPUVENDOR_NEXGEN	2
-#define CPUVENDOR_AMD		3
-#define CPUVENDOR_IDT		4
-#define CPUVENDOR_RISE		5
-#define CPUVENDOR_TRANSMETA	6
-#define CPUVENDOR_NS		7
-#define CPUVENDOR_VIA		8
-#define CPUVENDOR_SIS		9
-
-/*
- * Some other defines, dealing with values returned by cpuid.
- */
-
-#define CPU_MAXMODEL	15	/* Models within family range 0-15 */
-#define CPU_DEFMODEL	16	/* Value for unknown model -> default  */
-#define CPU_MINFAMILY	 4	/* Lowest that cpuid can return (486) */
-#define CPU_MAXFAMILY  0xf	/* Highest we know (686) */
+#ifdef I686_CPU
+#include <machine/i386/cputypes.h>
+#endif

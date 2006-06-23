@@ -71,38 +71,7 @@
  * SUCH DAMAGE.
  */
 
-struct cpu_functions {
-    int (*start)(struct cpu_info *);
-    int (*stop)(struct cpu_info *);
-    void (*cleanup)(struct cpu_info *);
-};
-
-extern struct cpu_functions mp_cpu_funcs;
-
-#define CPU_ROLE_SP	0
-#define CPU_ROLE_BP	1
-#define CPU_ROLE_AP	2
-
-struct cpu_attach_args {
-	const char *caa_name;
-	int cpu_number;
-	int cpu_role;
-	struct cpu_functions *cpu_func;
-	int cpu_signature;
-	int feature_flags;
-};
-
-#define MP_PICMODE	0x00000001      /* System booted in picmode */
-
-#ifdef _KERNEL
-
-int i386_ipi(int,int,int);
-void i386_self_ipi(int);
-int i386_ipi_init(int);
-
-void identifycpu(struct cpu_info *);
-void cpu_init(struct cpu_info *);
-void cpu_init_first(void);
-
+#ifdef I686_CPU
+#include <machine/i386/cpuvar.h>
 #endif
 

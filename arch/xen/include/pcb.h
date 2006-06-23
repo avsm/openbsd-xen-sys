@@ -36,55 +36,6 @@
  *	@(#)pcb.h	5.10 (Berkeley) 5/12/91
  */
 
-/*
- * Intel 386 process control block
- */
-
-#ifndef _I386_PCB_H_
-#define _I386_PCB_H_
-
-#include <sys/signal.h>
-
-#include <machine/segments.h>
-#include <machine/tss.h>
-#include <machine/npx.h>
-#include <machine/sysarch.h>
-
-#define	NIOPORTS	1024		/* # of ports we allow to be mapped */
-
-struct pcb {
-	struct	i386tss pcb_tss;
-#define	pcb_cr3	pcb_tss.tss_cr3
-#define	pcb_esp	pcb_tss.tss_esp
-#define	pcb_ebp	pcb_tss.tss_ebp
-#define	pcb_cs	pcb_tss.tss_cs
-#define	pcb_ldt_sel	pcb_tss.tss_ldt
-	int	pcb_tss_sel;
-	union	descriptor *pcb_ldt;	/* per process (user) LDT */
-	int	pcb_ldt_len;		/*      number of LDT entries */
-	int	pcb_cr0;		/* saved image of CR0 */
-	int	pcb_pad[2];		/* savefpu on 16-byte boundary */
-	union	savefpu pcb_savefpu;	/* floating point state for FPU */
-	struct	emcsts pcb_saveemc;	/* Cyrix EMC state */
-/*
- * Software pcb (extension)
- */
-	caddr_t	pcb_onfault;		/* copyin/out fault recovery */
-	int	vm86_eflags;		/* virtual eflags for vm86 mode */
-	int	vm86_flagmask;		/* flag mask for vm86 mode */
-	void	*vm86_userp;		/* XXX performance hack */
-	struct  pmap *pcb_pmap;         /* back pointer to our pmap */
-	struct	cpu_info *pcb_fpcpu;	/* cpu holding our fpu state */
-	u_long	pcb_iomap[NIOPORTS/32];	/* I/O bitmap */
-	u_char	pcb_iomap_pad;	/* required; must be 0xff, says intel */
-};
-
-/*
- * The pcb is augmented with machine-dependent additional data for
- * core dumps. For the i386, there is nothing to add.
- */
-struct md_coredump {
-	long	md_pad[8];
-};
-
-#endif /* _I386_PCB_H_ */
+#ifdef I686_CPU
+#include <machine/i386/pcb.h>
+#endif

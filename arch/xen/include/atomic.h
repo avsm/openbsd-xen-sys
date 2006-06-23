@@ -39,41 +39,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _ATOMIC_H_
-#define _ATOMIC_H_
-
-#ifndef _LOCORE
-
-static __inline u_int64_t
-i386_atomic_testset_uq (volatile u_int64_t *ptr, u_int64_t val) {
-    __asm__ volatile ("\n1:\tlock; cmpxchg8b (%1); jnz 1b" : "+A" (val) :
-	"r" (ptr), "b" ((u_int32_t)val), "c" ((u_int32_t)(val >> 32)));
-    return val;
-}
-
-static __inline u_int32_t
-i386_atomic_testset_ul (volatile u_int32_t *ptr, unsigned long val) {
-    __asm__ volatile ("xchgl %0,(%2)" :"=r" (val):"0" (val),"r" (ptr));
-    return val;
-}
-
-static __inline int
-i386_atomic_testset_i (volatile int *ptr, unsigned long val) {
-    __asm__ volatile ("xchgl %0,(%2)" :"=r" (val):"0" (val),"r" (ptr));
-    return val;
-}
-
-static __inline void 
-i386_atomic_setbits_l (volatile u_int32_t *ptr, unsigned long bits) {
-    __asm __volatile("lock ; orl %1,%0" :  "=m" (*ptr) : "ir" (bits));
-}
-
-static __inline void 
-i386_atomic_clearbits_l (volatile u_int32_t *ptr, unsigned long bits) {
-    bits = ~bits;
-    __asm __volatile("lock ; and %1,%0" :  "=m" (*ptr) : "ir" (bits));
-}
-
+#ifdef I686_CPU
+#include <machine/i386/atomic.h>
 #endif
-#endif
-

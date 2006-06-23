@@ -29,4 +29,6 @@
  *
  */
 
-#include <i386/include/apmvar.h>
+#ifdef I686_CPU
+#include <machine/i386/apmvar.h>
+#endif

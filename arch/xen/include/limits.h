@@ -32,27 +32,6 @@
  *	@(#)limits.h	7.2 (Berkeley) 6/28/90
  */
 
-#ifndef _MACHINE_LIMITS_H_
-#define _MACHINE_LIMITS_H_
-
-#include <sys/cdefs.h>
-
-#define	MB_LEN_MAX	1		/* no multibyte characters */
-
-#if __POSIX_VISIBLE || __XPG_VISIBLE
-#ifndef	SIZE_MAX
-#define	SIZE_MAX	UINT_MAX	/* max value for a size_t */
+#ifdef I686_CPU
+#include <machine/i386/limits.h>
 #endif
-#define	SSIZE_MAX	INT_MAX		/* max value for a ssize_t */
-#endif
-
-#if __BSD_VISIBLE
-#define	SIZE_T_MAX	UINT_MAX	/* max value for a size_t (historic) */
-
-#define	UQUAD_MAX	0xffffffffffffffffULL		/* max unsigned quad */
-#define	QUAD_MAX	0x7fffffffffffffffLL		/* max signed quad */
-#define	QUAD_MIN	(-0x7fffffffffffffffLL-1)	/* min signed quad */
-
-#endif /* __BSD_VISIBLE */
-
-#endif /* _MACHINE_LIMITS_H_ */

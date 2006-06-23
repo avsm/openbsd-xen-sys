@@ -26,4 +26,6 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <i386/include/biosvar.h>
+#ifdef I686_CPU
+#include <machine/i386/biosvar.h>
+#endif

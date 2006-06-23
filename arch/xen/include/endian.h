@@ -24,47 +24,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _I386_ENDIAN_H_
-#define _I386_ENDIAN_H_
-
-#ifdef __GNUC__
-
-#if defined(_KERNEL) && !defined(I386_CPU)
-#define	__swap32md(x) ({						\
-	u_int32_t __swap32md_x = (x);					\
-									\
-	__asm ("bswap %1" : "+r" (__swap32md_x));			\
-	__swap32md_x;							\
-})
-#else
-#define	__swap32md(x) ({						\
-	u_int32_t __swap32md_x = (x);					\
-									\
-	__asm ("rorw $8, %w1; rorl $16, %1; rorw $8, %w1" :		\
-	    "+r" (__swap32md_x));					\
-	__swap32md_x;							\
-})
-#endif	/* _KERNEL && !I386_CPU */
-
-#define	__swap64md(x) ({						\
-	u_int64_t __swap64md_x = (x);					\
-									\
-	(u_int64_t)__swap32md(__swap64md_x >> 32) |			\
-	    (u_int64_t)__swap32md(__swap64md_x & 0xffffffff) << 32;	\
-})
-#define	__swap16md(x) ({						\
-	u_int16_t __swap16md_x = (x);					\
-									\
-	__asm ("rorw $8, %w1" : "+r" (__swap16md_x));			\
-	__swap16md_x;							\
-})
-
-/* Tell sys/endian.h we have MD variants of the swap macros.  */
-#define MD_SWAP
-
-#endif	/* __GNUC__ */
-
-#define _BYTE_ORDER _LITTLE_ENDIAN
-#include <sys/endian.h>
-
-#endif /* _I386_ENDIAN_H_ */
+#ifdef I686_CPU
+#include <machine/i386/endian.h>
+#endif

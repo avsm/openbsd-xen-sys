@@ -36,31 +36,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _I386_CPU_COUNTER_H_
-#define _I386_CPU_COUNTER_H_
-
-/*
- * Machine-specific support for CPU counter.
- */
-
-#include <machine/cpu.h>
-#include <machine/cpufunc.h>
-#include <machine/specialreg.h>
-
-#ifdef _KERNEL
-
-static __inline uint64_t
-cpu_counter(void)
-{
-	return (xrdtsc());
-}
-
-static __inline uint32_t
-cpu_counter32(void)
-{
-	return (xrdtsc() & 0xffffffffUL);
-}
-
-#endif /* _KERNEL */
-
-#endif /* !_I386_CPU_COUNTER_H_ */
+#ifdef I686_CPU
+#include <machine/i386/cpu_counter.h>
+#endif

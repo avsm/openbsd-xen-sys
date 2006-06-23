@@ -66,24 +66,6 @@
  *      @(#)npx.c       7.2 (Berkeley) 5/12/91
  */
 
-enum npx_type {
-	NPX_NONE = 0,
-	NPX_INTERRUPT,
-	NPX_EXCEPTION,
-	NPX_BROKEN,
-};
-
-struct npx_softc {
-	struct device sc_dev;
-
-	bus_space_tag_t sc_iot;
-	bus_space_handle_t sc_ioh;
-
-	enum npx_type sc_type;
-
-	void *sc_ih;
-};
-
-enum npx_type npxprobe1(bus_space_tag_t, bus_space_handle_t, int);
-void npxattach(struct npx_softc *);
-int npxintr(void *);
+#ifdef I686_CPU
+#include <machine/i386/npxvar.h>
+#endif

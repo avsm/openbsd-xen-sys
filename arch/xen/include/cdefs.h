@@ -6,4 +6,6 @@
  * Public domain.
  */
 
-#include <i386/include/cdefs.h>
+#ifdef I686_CPU
+#include <machine/i386/cdefs.h>
+#endif

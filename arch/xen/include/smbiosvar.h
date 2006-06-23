@@ -25,4 +25,6 @@
  * SUCH DAMAGE.
  */
 
-#include <i386/include/smbiosvar.h>
+#ifdef I686_CPU
+#include <machine/i386/smbiosvar.h>
+#endif

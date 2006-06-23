@@ -37,35 +37,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _LOCORE
 
-struct cpu_info;
-struct pcb;
-struct pmap;
-union descriptor;
-
-void gdt_alloc_cpu(struct cpu_info *);
-int gdt_get_slot(void);
-void gdt_init(void);
-void gdt_init_cpu(struct cpu_info *);
-void gdt_reload_cpu(/* XXX struct cpu_info * */ void);
-void ldt_alloc(struct pmap *, union descriptor *, size_t);
-void ldt_free(struct pmap *);
-int tss_alloc(struct pcb *);
-void tss_free(int);
-void setgdt(int, void *, size_t, int, int, int, int);
+#ifdef I686_CPU
+#include <machine/i386/gdt.h>
 #endif
-
-/*
- * The initial GDT size (as a descriptor count), and the maximum
- * GDT size possible.
- *
- * These are actually not arbitrary.  To start with, they have to be
- * multiples of 512 and at least 512, in order to work with the
- * allocation strategy set forth by gdt_init and gdt_grow.  Then, the
- * max cannot exceed 65536 since the selector field of a descriptor is
- * just 16 bits, and used as free list link.
- */
-
-#define MINGDTSIZ 512
-#define MAXGDTSIZ 8192

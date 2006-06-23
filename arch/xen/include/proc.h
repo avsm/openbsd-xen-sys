@@ -32,14 +32,6 @@
  *	@(#)proc.h	7.1 (Berkeley) 5/15/91
  */
 
-/*
- * Machine-dependent part of the proc structure for i386.
- */
-struct mdproc {
-	struct	trapframe *md_regs;	/* registers on current frame */
-	int	md_flags;		/* machine-dependent flags */
-	int	md_tss_sel;		/* TSS selector */
-};
-
-/* md_flags */
-#define	MDP_USEDFPU	0x0001	/* has used the FPU */
+#ifdef I686_CPU
+#include <machine/i386/proc.h>
+#endif

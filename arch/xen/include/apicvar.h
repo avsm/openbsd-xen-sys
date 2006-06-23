@@ -39,4 +39,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <i386/include/apicvar.h>
+#ifdef I686_CPU
+#include <machine/i386/apicvar.h>
+#endif

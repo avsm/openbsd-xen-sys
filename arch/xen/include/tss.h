@@ -35,40 +35,6 @@
  *	@(#)tss.h	5.4 (Berkeley) 1/18/91
  */
 
-#ifndef _I386_TSS_H_
-#define _I386_TSS_H_
-
-/*
- * Intel 386 Context Data Type
- */
-
-struct i386tss {
-	int	__tss_link;
-	int	tss_esp0; 	/* kernel stack pointer at privilege level 0 */
-	int	tss_ss0;	/* kernel stack segment at privilege level 0 */
-	int	__tss_esp1;
-	int	__tss_ss1;
-	int	__tss_esp2;
-	int	__tss_ss2;
-	int	tss_cr3;	/* page directory paddr */
-	int	__tss_eip;
-	int	__tss_eflags;
-	int	__tss_eax;
-	int	__tss_ecx;
-	int	__tss_edx;
-	int	__tss_ebx;
-	int	tss_esp;	/* saved stack pointer */
-	int	tss_ebp;	/* saved frame pointer */
-	int	__tss_esi;
-	int	__tss_edi;
-	int	__tss_es;
-	int	tss_cs;
-	int	__tss_ss;
-	int	__tss_ds;
-	int	tss_fs;		/* saved segment register */
-	int	tss_gs;		/* saved segment register */
-	int	tss_ldt;	/* LDT selector */
-	int	tss_ioopt;	/* options and I/O permission map offset */
-};
-
-#endif /* _I386_TSS_H_ */
+#ifdef I686_CPU
+#include <machine/i386/tss.h>
+#endif

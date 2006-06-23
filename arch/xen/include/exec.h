@@ -28,24 +28,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _I386_EXEC_H_
-#define _I386_EXEC_H_
-
-#define __LDPGSZ	4096
-
-#define NATIVE_EXEC_ELF
-
-#define ARCH_ELFSIZE		32
-
-#define ELF_TARG_CLASS		ELFCLASS32
-#define ELF_TARG_DATA		ELFDATA2LSB
-#define ELF_TARG_MACH		EM_386 /* XXX - EM_486 is currently unused
-					  by all OSs/compilers/linkers */
-
-#define _NLIST_DO_AOUT
-#define _NLIST_DO_ELF
-
-#define _KERN_DO_AOUT
-#define _KERN_DO_ELF
-
-#endif  /* _I386_EXEC_H_ */
+#ifdef I686_CPU
+#include <machine/i386/exec.h>
+#endif
