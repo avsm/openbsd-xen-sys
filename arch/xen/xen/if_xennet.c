@@ -174,7 +174,7 @@ static void xennet_ctrlif_rx(ctrl_msg_t *, unsigned long);
 static int xennet_driver_count_connected(void);
 static void xennet_driver_status_change(netif_fe_driver_status_t *);
 static void xennet_interface_status_change(netif_fe_interface_status_t *);
-static void xennet_rx_mbuf_free(caddr_t, size_t, void *);
+static void xennet_rx_mbuf_free(caddr_t, u_int, void *);
 static int xen_network_handler(void *);
 static void network_tx_buf_gc(struct xennet_softc *);
 static void network_alloc_rx_buffers(struct xennet_softc *);
@@ -664,7 +664,7 @@ xennet_rx_push_buffer(struct xennet_softc *sc, int id)
 }
 
 static void
-xennet_rx_mbuf_free(caddr_t buf, size_t size, void *arg)
+xennet_rx_mbuf_free(caddr_t buf, u_int size, void *arg)
 {
 	union xennet_bufarray *xb = (union xennet_bufarray *)arg;
 	struct xennet_softc *sc = xb->xb_rx.xbrx_sc;
@@ -774,9 +774,9 @@ xen_network_handler(void *arg)
 		m->m_pkthdr.rcvif = ifp;
 		if (sc->sc_rx->req_prod != sc->sc_rx->resp_prod) {
 			m->m_len = m->m_pkthdr.len = rx->status;
-			MEXTADD(m, pktp, rx->status,
+			MEXTADD(m, (caddr_t)pktp, rx->status,
 			    M_DEVBUF, xennet_rx_mbuf_free,
-			    &sc->sc_rx_bufa[rx->id]);
+			    (void *)&sc->sc_rx_bufa[rx->id]);
 		} else {
 			/*
 			 * This was our last receive buffer, allocate

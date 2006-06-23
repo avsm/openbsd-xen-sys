@@ -95,7 +95,7 @@ typedef int			__clock_t;
 typedef int			__clockid_t;
 typedef long long		__off_t;
 typedef long			__ptrdiff_t;
-#if 0	/* Enable this, when you have a fresh gcc from OpenBSD-current (Jan 16, 2006) */
+#if 1	/* Enable this, when you have a fresh gcc from OpenBSD-current (Jan 16, 2006) */
 typedef	unsigned long		__size_t;
 #else
 typedef	unsigned int		__size_t;

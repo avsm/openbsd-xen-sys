@@ -93,7 +93,6 @@
 #endif
 #include <dev/pci/pcivar.h>
 
-
 #if NXENNET > 0
 #include <sys/socket.h>
 #include <net/if.h>
@@ -106,6 +105,10 @@
 #include <scsi/scsi_all.h>
 #include <scsi/scsiconf.h>
 #include <machine/xbcvar.h>
+#endif
+
+#if NPCI > 0
+extern u_int32_t pci_bus_attached[];
 #endif
 
 #if !defined(DOM0OPS) && NXENCONS == 0
