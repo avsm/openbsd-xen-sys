@@ -40,3 +40,7 @@
 #ifdef I686_CPU
 #include <machine/i386/lock.h>
 #endif
+
+#ifdef amd64
+#include <machine/amd64/lock.h>
+#endif

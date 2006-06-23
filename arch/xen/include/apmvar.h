@@ -32,3 +32,7 @@
 #ifdef I686_CPU
 #include <machine/i386/apmvar.h>
 #endif
+
+#ifdef amd64
+#include <machine/amd64/apmvar.h>
+#endif

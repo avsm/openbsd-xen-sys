@@ -29,3 +29,7 @@
 #ifdef I686_CPU
 #include <machine/i386/biosvar.h>
 #endif
+
+#ifdef amd64
+#include <machine/amd64/biosvar.h>
+#endif

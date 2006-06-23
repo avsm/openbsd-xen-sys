@@ -75,3 +75,6 @@
 #include <machine/i386/cpuvar.h>
 #endif
 
+#ifdef amd64
+#include <machine/amd64/cpuvar.h>
+#endif

@@ -29,3 +29,7 @@
 #ifdef I686_CPU
 #include <machine/i386/hypervisor.h>
 #endif
+
+#ifdef amd64
+#include <machine/amd64/hypervisor.h>
+#endif

@@ -4,3 +4,7 @@
 #ifdef I686_CPU
 #include <machine/i386/intrdefs.h>
 #endif
+
+#ifdef amd64
+#include <machine/amd64/intrdefs.h>
+#endif

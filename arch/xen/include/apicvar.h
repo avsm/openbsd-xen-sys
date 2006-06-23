@@ -42,3 +42,7 @@
 #ifdef I686_CPU
 #include <machine/i386/apicvar.h>
 #endif
+
+#ifdef amd64
+#include <machine/amd64/apicvar.h>
+#endif

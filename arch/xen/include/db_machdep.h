@@ -30,3 +30,7 @@
 #ifdef I686_CPU
 #include <machine/i386/db_machdep.h>
 #endif
+
+#ifdef amd64
+#include <machine/amd64/db_machdep.h>
+#endif

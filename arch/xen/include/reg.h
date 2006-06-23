@@ -38,3 +38,7 @@
 #ifdef I686_CPU
 #include <machine/i386/reg.h>
 #endif
+
+#ifdef amd64
+#include <machine/amd64/reg.h>
+#endif

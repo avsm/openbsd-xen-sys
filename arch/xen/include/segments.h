@@ -45,3 +45,7 @@
 #ifdef I686_CPU
 #include <machine/i386/segments.h>
 #endif
+
+#ifdef amd64
+#include <machine/amd64/segments.h>
+#endif

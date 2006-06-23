@@ -42,3 +42,7 @@
 #ifdef I686_CPU
 #include <machine/i386/atomic.h>
 #endif
+
+#ifdef amd64
+#include <machine/amd64/atomic.h>
+#endif

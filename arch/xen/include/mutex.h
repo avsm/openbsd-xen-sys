@@ -28,3 +28,7 @@
 #ifdef I686_CPU
 #include <machine/i386/mutex.h>
 #endif
+
+#ifdef amd64
+#include <machine/amd64/mutex.h>
+#endif

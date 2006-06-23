@@ -3,3 +3,7 @@
 #ifdef I686_CPU
 #include <machine/i386/spinlock.h>
 #endif
+
+#ifdef amd64
+#include <machine/amd64/spinlock.h>
+#endif

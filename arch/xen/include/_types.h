@@ -36,3 +36,6 @@
 #include <machine/i386/_types.h>
 #endif
 
+#ifdef amd64
+#include <machine/amd64/_types.h>
+#endif
