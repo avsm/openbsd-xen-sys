@@ -163,7 +163,6 @@ cpu_exit(register struct proc *p)
 		npxsave_proc(p, 0);
 #endif
 
-	uvmexp.swtch++;
 	switch_exit(p);
 }
 
