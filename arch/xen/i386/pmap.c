@@ -830,6 +830,25 @@ pte_atomic_update_ma(pt_entry_t *pte, pt_entry_t *mapte, pt_entry_t npte)
 	return opte;
 }
 
+static inline int
+pte_atomic_update_ma_domid(pt_entry_t *pte, pt_entry_t npte, pt_entry_t *opte,
+    int domid)
+{
+	pt_entry_t *maptp = (pt_entry_t *)vtomach((vaddr_t)pte);
+	int error;
+
+	if (domid == DOMID_SELF) {
+		*opte = pte_atomic_update_ma(pte, maptp, npte);
+		error = 0;
+	} else {
+		/* XXX */
+		*opte = PTE_GET_MA(pte);
+		error = xpq_update_foreign(maptp, npte, domid);
+	}
+
+	return error;
+}
+
 pt_entry_t
 pte_atomic_update(pt_entry_t *pte, pt_entry_t *mapte, pt_entry_t npte)
 {
@@ -2361,8 +2380,6 @@ pmap_extract(struct pmap *pmap, vaddr_t va, paddr_t *pap)
  */
 
 
-boolean_t pmap_extract_ma(struct pmap *, vaddr_t, paddr_t *);
-
 boolean_t
 pmap_extract_ma(struct pmap *pmap, vaddr_t va, paddr_t *pap)
 {
@@ -3395,8 +3412,6 @@ pmap_collect(struct pmap *pmap)
  * => we set pmap => pv_head locking
  */
 
-int pmap_enter_ma(struct pmap *, vaddr_t, paddr_t, paddr_t, vm_prot_t, int);
-
 int
 pmap_enter(struct pmap *pmap, vaddr_t va, paddr_t pa, vm_prot_t prot, int flags)
 {
@@ -3408,7 +3423,7 @@ pmap_enter(struct pmap *pmap, vaddr_t va, paddr_t pa, vm_prot_t prot, int flags)
 		ma = xpmap_ptom(pa);
 	}
 
-	return pmap_enter_ma(pmap, va, ma, pa, prot, flags);
+	return pmap_enter_ma(pmap, va, ma, pa, prot, flags, DOMID_SELF);
 }
 
 /*
@@ -3420,7 +3435,7 @@ pmap_enter(struct pmap *pmap, vaddr_t va, paddr_t pa, vm_prot_t prot, int flags)
 
 int
 pmap_enter_ma(struct pmap *pmap, vaddr_t va, paddr_t ma, paddr_t pa,
-	vm_prot_t prot, int flags)
+	vm_prot_t prot, int flags, int domid)
 {
 	pt_entry_t *ptes, opte, npte;
 	pt_entry_t *maptp;
@@ -3434,6 +3449,7 @@ pmap_enter_ma(struct pmap *pmap, vaddr_t va, paddr_t ma, paddr_t pa,
 	 * with XENDEBUG */
 	XENPRINTK(("pmap_enter_ma(%p, %p %p %p, %08x, %08x)\n",
 		pmap, (void *)va, (void *)ma, (void *)pa, prot, flags));
+	KASSERT(domid == DOMID_SELF || pa == 0);
 
 #ifdef DIAGNOSTIC
 	/* sanity check: totally out of range? */
@@ -3502,6 +3518,7 @@ pmap_enter_ma(struct pmap *pmap, vaddr_t va, paddr_t ma, paddr_t pa,
 
 			/* if this is on the PVLIST, sync R/M bit */
 			if (opte & PG_PVLIST) {
+				KASSERT(domid == DOMID_SELF);
 				bank = vm_physseg_find(atop(pa), &off);
 #ifdef DIAGNOSTIC
 				if (bank == -1)
@@ -3530,7 +3547,9 @@ pmap_enter_ma(struct pmap *pmap, vaddr_t va, paddr_t ma, paddr_t pa,
 		 */
 
 		if (opte & PG_PVLIST) {
-			paddr_t opa = xpmap_mtop(opte & PG_FRAME);
+			paddr_t opa;
+			KASSERT(domid == DOMID_SELF);
+			opa = xpmap_mtop(opte & PG_FRAME);
 			bank = vm_physseg_find(atop(opa), &off);
 #ifdef DIAGNOSTIC
 			if (bank == -1)
@@ -3563,7 +3582,13 @@ pmap_enter_ma(struct pmap *pmap, vaddr_t va, paddr_t ma, paddr_t pa,
 	 * if this entry is to be on a pvlist, enter it now.
 	 */
 
-	bank = vm_physseg_find(atop(pa), &off);
+	if (domid == DOMID_SELF) {
+		bank = vm_physseg_find(atop(pa), &off);
+	} else {
+		bank = -1;
+	}
+	XENPRINTK(("pg %p from %p, init %d\n", pg, (void *) pa,
+		pmap_initialized));
 	if (pmap_initialized && bank != -1) {
 		pvh = &vm_physmem[bank].pmseg.pvhead[off];
 		if (pve == NULL) {
@@ -3616,7 +3641,11 @@ enter_now:
 
 	/* zap! */
 	maptp = (pt_entry_t *)vtomach((vaddr_t)&ptes[i386_btop(va)]);
-	opte = pte_atomic_update_ma(&ptes[i386_btop(va)], maptp, npte);
+	error = pte_atomic_update_ma_domid(&ptes[i386_btop(va)], npte,
+	   &opte, domid);
+	if (error) {
+		goto out;
+	}
 
 	if ((opte & ~(PG_M|PG_U)) != npte) {
 #ifdef MULTIPROCESSOR

@@ -404,6 +404,9 @@ void		pmap_write_protect(struct pmap *, vaddr_t,
 int		pmap_exec_fixup(struct vm_map *, struct trapframe *,
 		    struct pcb *);
 void		pmap_kenter_ma(vaddr_t, paddr_t, vm_prot_t);
+int		pmap_enter_ma(struct pmap *, vaddr_t, paddr_t, paddr_t,
+		      vm_prot_t, int, int);
+boolean_t	pmap_extract_ma(struct pmap *, vaddr_t, paddr_t *);
 
 vaddr_t reserve_dumppages(vaddr_t); /* XXX: not a pmap fn */
 
