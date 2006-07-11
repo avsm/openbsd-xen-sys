@@ -562,7 +562,6 @@ i386_init_pcb_tss_ldt(struct cpu_info *ci)
 void
 i386_switch_context(struct pcb *new)
 {
-	dom0_op_t op;
 #if NNPX > 0
 	struct cpu_info *ci;
 
@@ -576,10 +575,10 @@ i386_switch_context(struct pcb *new)
 	HYPERVISOR_stack_switch(new->pcb_tss.tss_ss0, new->pcb_tss.tss_esp0);
 
 	if (xen_start_info.flags & SIF_PRIVILEGED) {
-		op.cmd = DOM0_IOPL;
-		op.u.iopl.domain = DOMID_SELF;
-		op.u.iopl.iopl = new->pcb_tss.tss_ioopt & SEL_RPL; /* i/o pl */
-		HYPERVISOR_dom0_op(&op);
+		struct physdev_op physop;
+		physop.cmd = PHYSDEVOP_SET_IOPL;
+		physop.u.set_iopl.iopl = new->pcb_tss.tss_ioopt & SEL_RPL;
+		HYPERVISOR_physdev_op(&physop);
 	}
 }
 
@@ -1857,7 +1856,16 @@ identifycpu(struct cpu_info *ci)
 #if defined(I586_CPU) || defined(I686_CPU)
 	if (ci->ci_feature_flags && (ci->ci_feature_flags & CPUID_TSC)) {
 		/* Has TSC */
-		calibrate_cyclecounter();
+		const volatile vcpu_time_info_t *tinfo;
+		uint64_t freq = 1000000000ULL << 32;
+
+		tinfo = &HYPERVISOR_shared_info->vcpu_info[0].time;
+		freq = freq / (uint64_t)tinfo->tsc_to_system_mul;
+		if (tinfo->tsc_shift < 0)
+			freq = freq << -tinfo->tsc_shift;
+		else
+			freq = freq >> tinfo->tsc_shift;
+		calibrate_cyclecounter(freq);
 		if (pentium_mhz > 994) {
 			int ghz, fr;
 
@@ -2980,9 +2988,11 @@ init386(paddr_t first_avail)
 
 	frames[0] = xpmap_ptom((u_int32_t)gdt - KERNBASE) >> PAGE_SHIFT;
 	pmap_kenter_pa((vaddr_t)gdt, (u_int32_t)gdt - KERNBASE, VM_PROT_READ);
+
 	XENPRINTK(("init386: loading gdt %08x, %d entries\n", frames[0] <<
-	    PAGE_SHIFT, LAST_RESERVED_GDT_ENTRY + 1));
-	if (HYPERVISOR_set_gdt(frames, LAST_RESERVED_GDT_ENTRY + 1)) {
+	    PAGE_SHIFT, NGDT));
+
+	if (HYPERVISOR_set_gdt(frames, NGDT /* XXX is this right? */ )) {
 		XENPRINTK(("HYPERVSIOR_set_gdt failed\n"));
 		panic("HYPERVISOR_set_gdt failed!\n");
 	}
@@ -3284,11 +3294,10 @@ bus_space_init(void)
 
 	/* We are privileged guest os - should have IO privileges. */
 	if (xen_start_info.flags & SIF_PRIVILEGED) {
-		dom0_op_t op;
-		op.cmd = DOM0_IOPL;
-		op.u.iopl.domain = DOMID_SELF;
-		op.u.iopl.iopl = 1;
-		if (HYPERVISOR_dom0_op(&op) != 0)
+		struct physdev_op physop;
+		physop.cmd = PHYSDEVOP_SET_IOPL;
+		physop.u.set_iopl.iopl = 1;
+		if (HYPERVISOR_physdev_op(&physop) != 0)
 			panic("Unable to obtain IOPL, "
 			    "despite being SIF_PRIVILEGED");
 	}

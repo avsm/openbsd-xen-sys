@@ -52,7 +52,7 @@ include <machine/pmap.h>
 include <machine/vmparam.h>
 include <machine/mutex.h>
 
-include <machine/xen-public/xen.h>
+include <machine/xen-public/sched.h>
 
 if COMPAT_SVR4 > 0
 include <compat/svr4/svr4_ucontext.h>
@@ -261,8 +261,8 @@ define START_INFO_SHARED_INFO	offsetof(start_info_t, shared_info)
 
 define SIF_INITDOMAIN		SIF_INITDOMAIN
 
-define EVTCHN_UPCALL_PENDING	offsetof(struct shared_info_st, vcpu_data[0].evtchn_upcall_pending)
-define EVTCHN_UPCALL_MASK	offsetof(struct shared_info_st, vcpu_data[0].evtchn_upcall_mask)
+define EVTCHN_UPCALL_PENDING	offsetof(struct shared_info, vcpu_data[0].evtchn_upcall_pending)
+define EVTCHN_UPCALL_MASK	offsetof(struct shared_info, vcpu_data[0].evtchn_upcall_mask)
 
 define HYPERVISOR_sched_op	__HYPERVISOR_sched_op
 define SCHEDOP_yield		SCHEDOP_yield

@@ -1,46 +1,37 @@
-/* $NetBSD: blkif.h,v 1.2 2005/03/09 22:39:20 bouyer Exp $ */
-
-/*
- * Copyright (c) 2003-2004, Keir Fraser
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to
- * deal in the Software without restriction, including without limitation the
- * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
- * sell copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE.
- */
-
+/* $NetBSD: blkif.h,v 1.2 2006/04/04 20:30:31 bouyer Exp $ */
 /******************************************************************************
  * blkif.h
- *
+ * 
  * Unified block-device I/O interface for Xen guest OSes.
- *
+ * 
+ * Copyright (c) 2003-2004, Keir Fraser
  */
 
 #ifndef __XEN_PUBLIC_IO_BLKIF_H__
 #define __XEN_PUBLIC_IO_BLKIF_H__
 
-#define blkif_vdev_t   u16
-#define blkif_sector_t u64
+#include "ring.h"
+#include "../grant_table.h"
+
+/*
+ * Front->back notifications: When enqueuing a new request, sending a
+ * notification can be made conditional on req_event (i.e., the generic
+ * hold-off mechanism provided by the ring macros). Backends must set
+ * req_event appropriately (e.g., using RING_FINAL_CHECK_FOR_REQUESTS()).
+ * 
+ * Back->front notifications: When enqueuing a new response, sending a
+ * notification can be made conditional on rsp_event (i.e., the generic
+ * hold-off mechanism provided by the ring macros). Frontends must set
+ * rsp_event appropriately (e.g., using RING_FINAL_CHECK_FOR_RESPONSES()).
+ */
+
+#ifndef blkif_vdev_t
+#define blkif_vdev_t   uint16_t
+#endif
+#define blkif_sector_t uint64_t
 
 #define BLKIF_OP_READ      0
 #define BLKIF_OP_WRITE     1
-#define BLKIF_OP_PROBE     2
-
-/* NB. Ring size must be small enough for sizeof(blkif_ring_t) <= PAGE_SIZE. */
-#define BLKIF_RING_SIZE        64
 
 /*
  * Maximum scatter/gather segments per request.
@@ -49,90 +40,47 @@
  */
 #define BLKIF_MAX_SEGMENTS_PER_REQUEST 11
 
-typedef struct {
-    u8             operation;    /*  0: BLKIF_OP_???                         */
-    u8             nr_segments;  /*  1: number of segments                   */
-    blkif_vdev_t   device;       /*  2: only for read/write requests         */
-    unsigned long  id;           /*  4: private guest value, echoed in resp  */
-    blkif_sector_t sector_number;    /* start sector idx on disk (r/w only)  */
-    /* @f_a_s[2:0]=last_sect ; @f_a_s[5:3]=first_sect ; @f_a_s[:12]=frame.   */
-    /* @first_sect: first sector in frame to transfer (inclusive).           */
-    /* @last_sect: last sector in frame to transfer (inclusive).             */
-    /* @frame: machine page frame number.                                    */
-    unsigned long  frame_and_sects[BLKIF_MAX_SEGMENTS_PER_REQUEST];
-} PACKED blkif_request_t;
+typedef struct blkif_request {
+    uint8_t        operation;    /* BLKIF_OP_???                         */
+    uint8_t        nr_segments;  /* number of segments                   */
+    blkif_vdev_t   handle;       /* only for read/write requests         */
+    uint64_t       id;           /* private guest value, echoed in resp  */
+    blkif_sector_t sector_number;/* start sector idx on disk (r/w only)  */
+    struct blkif_request_segment {
+        grant_ref_t gref;        /* reference to I/O buffer frame        */
+        /* @first_sect: first sector in frame to transfer (inclusive).   */
+        /* @last_sect: last sector in frame to transfer (inclusive).     */
+        uint8_t     first_sect, last_sect;
+    } seg[BLKIF_MAX_SEGMENTS_PER_REQUEST];
+} blkif_request_t;
 
-#define blkif_first_sect(_fas) (((_fas)>>3)&7)
-#define blkif_last_sect(_fas)  ((_fas)&7)
-
-typedef struct {
-    unsigned long   id;              /* copied from request */
-    u8              operation;       /* copied from request */
-    s16             status;          /* BLKIF_RSP_???       */
-} PACKED blkif_response_t;
+typedef struct blkif_response {
+    uint64_t        id;              /* copied from request */
+    uint8_t         operation;       /* copied from request */
+    int16_t         status;          /* BLKIF_RSP_???       */
+} blkif_response_t;
 
 #define BLKIF_RSP_ERROR  -1 /* non-specific 'error' */
 #define BLKIF_RSP_OKAY    0 /* non-specific 'okay'  */
 
 /*
- * We use a special capitalised type name because it is _essential_ that all
- * arithmetic on indexes is done on an integer type of the correct size.
- */
-typedef u32 BLKIF_RING_IDX;
-
-/*
- * Ring indexes are 'free running'. That is, they are not stored modulo the
- * size of the ring buffer. The following macro converts a free-running counter
- * into a value that can directly index a ring-buffer array.
- */
-#define MASK_BLKIF_IDX(_i) ((_i)&(BLKIF_RING_SIZE-1))
-
-typedef struct {
-    BLKIF_RING_IDX req_prod;  /*  0: Request producer. Updated by front-end. */
-    BLKIF_RING_IDX resp_prod; /*  4: Response producer. Updated by back-end. */
-    union {                   /*  8 */
-	blkif_request_t  req;
-	blkif_response_t resp;
-    } PACKED ring[BLKIF_RING_SIZE];
-} PACKED blkif_ring_t;
-
-
-/*
- * BLKIF_OP_PROBE:
- * The request format for a probe request is constrained as follows:
- *  @operation   == BLKIF_OP_PROBE
- *  @nr_segments == size of probe buffer in pages
- *  @device      == unused (zero)
- *  @id          == any value (echoed in response message)
- *  @sector_num  == unused (zero)
- *  @frame_and_sects == list of page-sized buffers.
- *                       (i.e., @first_sect == 0, @last_sect == 7).
- *
- * The response is a list of vdisk_t elements copied into the out-of-band
- * probe buffer. On success the response status field contains the number
- * of vdisk_t elements.
+ * Generate blkif ring structures and types.
  */
 
-/* XXX SMH: Type values below are chosen to match ide_xxx in Linux ide.h. */
-#define VDISK_TYPE_FLOPPY  0x00
-#define VDISK_TYPE_TAPE    0x01
-#define VDISK_TYPE_CDROM   0x05
-#define VDISK_TYPE_OPTICAL 0x07
-#define VDISK_TYPE_DISK    0x20
+DEFINE_RING_TYPES(blkif, blkif_request_t, blkif_response_t);
 
-#define VDISK_TYPE_MASK    0x3F
-#define VDISK_TYPE(_x)     ((_x) & VDISK_TYPE_MASK)
-
-/* The top two bits of the type field encode various flags. */
-#define VDISK_FLAG_RO      0x40
-#define VDISK_FLAG_VIRT    0x80
-#define VDISK_READONLY(_x) ((_x) & VDISK_FLAG_RO)
-#define VDISK_VIRTUAL(_x)  ((_x) & VDISK_FLAG_VIRT)
-
-typedef struct {
-    blkif_sector_t capacity;     /*  0: Size in terms of 512-byte sectors.   */
-    blkif_vdev_t   device;       /*  8: Device number (opaque 16 bit value). */
-    u16            info;         /* 10: Device type and flags (VDISK_*).     */
-} PACKED vdisk_t; /* 12 bytes */
+#define VDISK_CDROM        0x1
+#define VDISK_REMOVABLE    0x2
+#define VDISK_READONLY     0x4
 
 #endif /* __XEN_PUBLIC_IO_BLKIF_H__ */
+
+/*
+ * Local variables:
+ * mode: C
+ * c-set-style: "BSD"
+ * c-basic-offset: 4
+ * tab-width: 4
+ * indent-tabs-mode: nil
+ * End:
+ */

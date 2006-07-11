@@ -37,18 +37,18 @@ hypervisor*	at mainbus?	# Xen hypervisor
 npx0		at hypervisor?	# x86 math coprocessor
 
 xencons*	at hypervisor?	# Xen virtual console
-xennet*		at hypervisor?	# Xen virtual network interface
+#xennet*		at hypervisor?	# Xen virtual network interface
 
-xbc*		at hypervisor?  # Xen virtual block controller (SCSI)
-scsibus*	at xbc?
-sd*		at scsibus?	# SCSI disk drives
-st*		at scsibus?	# SCSI tape drives
-cd*		at scsibus?	# SCSI CD-ROM drives
-ch*		at scsibus?	# SCSI autochangers
-ss*		at scsibus?	# SCSI scanners
-safte*		at scsibus?	# SCSI accessed fault-tolerant enclosures
-ses*		at scsibus?	# SCSI enclosure services
-uk*		at scsibus?	# unknown SCSI
+#xbc*		at hypervisor?  # Xen virtual block controller (SCSI)
+#scsibus*	at xbc?
+#sd*		at scsibus?	# SCSI disk drives
+#st*		at scsibus?	# SCSI tape drives
+#cd*		at scsibus?	# SCSI CD-ROM drives
+#ch*		at scsibus?	# SCSI autochangers
+#ss*		at scsibus?	# SCSI scanners
+#safte*		at scsibus?	# SCSI accessed fault-tolerant enclosures
+#ses*		at scsibus?	# SCSI enclosure services
+#uk*		at scsibus?	# unknown SCSI
 
 
 # PCI bus support

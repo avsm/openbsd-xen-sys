@@ -51,7 +51,6 @@ int xen_timer_handler(void *, struct intrframe *);
 /* These are peridically updated in shared_info, and then copied here. */
 volatile static uint64_t shadow_tsc_stamp; /* TSC at last update of time vals. */
 volatile static uint64_t shadow_system_time; /* Time, in nanosecs, since boot. */
-volatile static unsigned long shadow_time_version;
 volatile static struct timeval shadow_tv; /* Time since 00:00:00 UTC, Jan 1, 1970 */
 
 static int timeset;
@@ -82,15 +81,25 @@ u_quad_t pentium_base_tsc = 0;
 static void
 get_time_values_from_xen(void)
 {
+	volatile struct vcpu_time_info *t =
+	    &HYPERVISOR_shared_info->vcpu_info[0].time;
+	uint32_t tversion;
 	do {
-		shadow_time_version = HYPERVISOR_shared_info->time_version2;
+		tversion = t->version;
+		x86_lfence();
+		shadow_tsc_stamp = t->tsc_timestamp;
+		shadow_system_time = t->system_time;
+		x86_lfence();
+	} while ((t->version & 1) || (tversion != t->version));
+	do {
+		tversion = HYPERVISOR_shared_info->wc_version;
 		x86_lfence();
 		shadow_tv.tv_sec = HYPERVISOR_shared_info->wc_sec;
-		shadow_tv.tv_usec = HYPERVISOR_shared_info->wc_usec;
-		shadow_tsc_stamp = HYPERVISOR_shared_info->tsc_timestamp;
-		shadow_system_time = HYPERVISOR_shared_info->system_time;
+		shadow_tv.tv_usec = HYPERVISOR_shared_info->wc_nsec;
 		x86_lfence();
-	} while (shadow_time_version != HYPERVISOR_shared_info->time_version1);
+	} while ((HYPERVISOR_shared_info->wc_version & 1) ||
+	    (tversion != HYPERVISOR_shared_info->wc_version));
+	shadow_tv.tv_usec = shadow_tv.tv_usec / 1000;
 }
 
 static uint64_t
@@ -184,8 +193,8 @@ resettodr_i(void)
 
 		op.cmd = DOM0_SETTIME;
 		op.u.settime.secs	 = time.tv_sec;
-		op.u.settime.usecs	 = time.tv_usec;
-		op.u.settime.system_time = shadow_system_time;
+		op.u.settime.usecs	 = time.tv_usec * 1000;
+		op.u.settime.system_time = processed_system_time;
 		HYPERVISOR_dom0_op(&op);
 
 		splx(s);
@@ -219,7 +228,7 @@ startrtclock(void)
 void
 xen_delay(int n)
 {
-	if (n < (500000 / hz)) {
+	if (n < 500000) {
 		/*
 		 * shadow_system_time is updated at best every hz tick,
 		 * it's not precise enouth for short delays. Use the CPU
@@ -351,9 +360,9 @@ sysctl_xen_timepush(const int *name, u_int namelen, void *oldp,
 #endif /* DOM0OPS */
 
 void
-calibrate_cyclecounter(void)
+calibrate_cyclecounter(uint64_t freq)
 {
-	pentium_mhz = (HYPERVISOR_shared_info->cpu_freq + 500000) / 1000000;
+	pentium_mhz = (freq + 500000) / 1000000;
 }
 
 void

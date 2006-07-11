@@ -80,18 +80,18 @@
 #include <machine/hypervisor.h>
 #include <machine/evtchn.h>
 
-#ifdef DOM0OPS
 #include <sys/dirent.h>
 #include <sys/stat.h>
 #include <sys/tree.h>
 #include <sys/vnode.h>
 #include <miscfs/specfs/specdev.h>
-#if 0
-#include <miscfs/kernfs/kernfs.h>
-#endif	/* 0 */
+#if NISA > 0
 #include <dev/isa/isavar.h>
 #endif
+#include <machine/granttables.h>
+#if NPCI > 0
 #include <dev/pci/pcivar.h>
+#endif
 
 #if NXENNET > 0
 #include <sys/socket.h>
@@ -192,12 +192,10 @@ void
 hypervisor_attach(struct device *parent, struct device *self, void *aux)
 {
 #if NPCI > 0
-	struct pcibus_attach_args pba;
+	//struct pcibus_attach_args pba;
 #if defined(DOM0OPS) && NISA > 0
 	struct isabus_attach_args iba;
 #endif
-	physdev_op_t physdev_op;
-	int i, j, busnum;
 #endif
 #if NXENCONS > 0 || NXENNET > 0 || NXBC > 0 || NNPX > 0 
 	union hypervisor_attach_cookie hac;
@@ -205,6 +203,7 @@ hypervisor_attach(struct device *parent, struct device *self, void *aux)
 	printf("\n");
 
 	init_events();
+	xengnt_init();
 
 #if NXENCONS > 0
 	hac.hac_xencons.xa_device = "xencons";
@@ -223,43 +222,7 @@ hypervisor_attach(struct device *parent, struct device *self, void *aux)
 	config_found(self, &hac.hac_xennpx, hypervisor_print);
 #endif
 #if NPCI > 0
-	physdev_op.cmd = PHYSDEVOP_PCI_PROBE_ROOT_BUSES;
-	if (HYPERVISOR_physdev_op(&physdev_op) < 0) {
-		printf("hypervisor: PHYSDEVOP_PCI_PROBE_ROOT_BUSES failed\n");
-	} else {
-#ifdef DEBUG
-		printf("PCI_PROBE_ROOT_BUSES: ");
-		for (i = 0; i < 256/32; i++)
-			printf("0x%x ", physdev_op.u.pci_probe_root_buses.busmask[i]);
-		printf("\n");
-#endif
-		memset(pci_bus_attached, 0, sizeof(u_int32_t) * 256 / 32);
-		for (i = 0, busnum = 0; i < 256/32; i++) {
-			u_int32_t mask =
-			    physdev_op.u.pci_probe_root_buses.busmask[i];
-			for (j = 0; j < 32; j++, busnum++) {
-				if ((mask & (1 << j)) == 0)
-					continue;
-				if (pci_bus_attached[i] & (1 << j)) {
-					printf("bus %d already attached\n",
-					    busnum);
-					continue;
-				}
-				pba.pba_busname = "pci";
-				pba.pba_iot = I386_BUS_SPACE_IO;
-				pba.pba_memt = I386_BUS_SPACE_MEM;
-				pba.pba_dmat = &pci_bus_dma_tag;
-#if 0
-				pba.pba_dmat64 = 0;
-				pba.pba_flags = PCI_FLAGS_MEM_ENABLED |
-						PCI_FLAGS_IO_ENABLED;
-				pba.pba_bridgetag = NULL;
-#endif
-				pba.pba_bus = busnum;
-				config_found(self, &pba, hypervisor_print);
-			}
-		}
-	}
+	/* XXX: todo PCI for Xen3 */
 #if defined(DOM0OPS) && NISA > 0
 	if (isa_has_been_seen == 0) {
 		iba.iba_busname = "isa";
@@ -307,15 +270,6 @@ hypervisor_print(void *aux, const char *parent)
 }
 #endif
 
-void
-hypervisor_notify_via_evtchn(unsigned int port)
-{
-	evtchn_op_t op;
-
-	op.cmd = EVTCHNOP_send;
-	op.u.send.local_port = port;
-	(void)HYPERVISOR_event_channel_op(&op);
-}
 
 #ifdef DOM0OPS
 #if 0

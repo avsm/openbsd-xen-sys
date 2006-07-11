@@ -43,14 +43,9 @@
 #include <sys/systm.h>
 #include <sys/param.h>
 
-#include <machine/xen-public/xen.h>
-#include <machine/xen-public/grant_table.h>
-#include <machine/xen-public/event_channel.h>
-#include <machine/hypercall.h>
-#include <machine/intr.h>
 #include <machine/evtchn.h>
 #include <machine/xenbus.h>
-#include <machine/grant_table.h>
+#include <machine/granttables.h>
 
 
 int
@@ -119,9 +114,11 @@ xenbus_switch_state(struct xenbus_device *dev,
 
 	unsigned long current_state;
 
-	int err = xenbus_read_ul(xbt, dev->xbusd_path, "state", &current_state);
+	int err = xenbus_read_ul(xbt, dev->xbusd_path, "state",
+	    &current_state, 10);
 	if (err)
 		return 0;
+
 	if ((XenbusState)current_state == state)
 		return 0;
 
@@ -255,7 +252,7 @@ xenbus_read_driver_state(const char *path)
 {
 	u_long result;
 
-	int err = xenbus_read_ul(NULL, path, "state", &result);
+	int err = xenbus_read_ul(NULL, path, "state", &result, 10);
 	if (err)
 		result = XenbusStateClosed;
 

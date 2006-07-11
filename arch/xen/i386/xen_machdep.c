@@ -52,9 +52,7 @@
 #define	XENPRINTK(x) printk x
 #define	XENPRINTK2(x) printk x
 
-#if defined(XENDEBUG)
 static char XBUF[256];
-#endif
 #else
 #define	XENPRINTF(x)
 #define	XENPRINTK(x)
@@ -68,6 +66,8 @@ union start_info_union start_info_union;
 
 void xen_failsafe_handler(void);
 
+#define HYPERVISOR_mmu_update_self(req, count, success_count) \
+	HYPERVISOR_mmu_update((req), (count), (success_count), DOMID_SELF)
 void
 xen_failsafe_handler(void)
 {
@@ -266,10 +266,8 @@ xen_parse_cmdline(int what, union xen_cmdline_parseinfo *xcp)
 		if (cmd_line)
 			*cmd_line++ = ' ';
 	}
-
 }
 
-#define XEN_PAGE_OFFSET 0xD0100000
 
 static pd_entry_t
 xpmap_get_bootpde(paddr_t va)
@@ -508,13 +506,13 @@ find_pmap_mem_end(vaddr_t va)
 	while (start < end) {
 		r.val = (((start + end) / 2) << PAGE_SHIFT) | PG_V;
 
-		if (HYPERVISOR_mmu_update(&r, 1, &ok) < 0)
+		if (HYPERVISOR_mmu_update_self(&r, 1, &ok) < 0)
 			end = (start + end) / 2;
 		else
 			start = (start + end) / 2;
 	}
 	r.val = old;
-	HYPERVISOR_mmu_update(&r, 1, &ok);
+	HYPERVISOR_mmu_update_self(&r, 1, &ok);
 
 	return xpmap_ptom(((end  - 1) << PAGE_SHIFT) + XPMAP_OFFSET);
 }
@@ -563,25 +561,7 @@ void xpq_debug_dump(void);
 #endif
 
 #define XPQUEUE_SIZE 2048
-typedef union xpq_queue {
-	struct {
-		uint32_t ptr;
-		uint32_t val;
-	} cmd;
-	struct {
-		pd_entry_t *ptr;
-		pd_entry_t val;
-	} pde;
-	struct {
-		pt_entry_t *ptr;
-		pt_entry_t val;
-	} pte;
-	struct {
-		paddr_t ptr;
-		uint32_t val;
-	} pa;
-} xpq_queue_t;
-static xpq_queue_t xpq_queue[XPQUEUE_SIZE];
+static mmu_update_t xpq_queue[XPQUEUE_SIZE];
 static int xpq_idx = 0;
 
 void
@@ -594,8 +574,7 @@ xpq_flush_queue(void)
 		XENPRINTK2(("%d: %p %08x\n", i, xpq_queue[i].pde.ptr,
 		    xpq_queue[i].pde.val));
 	if (xpq_idx != 0 &&
-	    HYPERVISOR_mmu_update((mmu_update_t *)xpq_queue, xpq_idx, &ok) < 0) {
-		XENPRINTK(("HYPERVISOR_mmu_update failed\n"));
+	    HYPERVISOR_mmu_update_self(xpq_queue, xpq_idx, &ok) < 0) {
 #ifdef XENDEBUG
 		xpmap_dump_pt((pt_entry_t *)xen_start_info.pt_base, 0);
 #endif
@@ -627,134 +606,153 @@ xpq_queue_machphys_update(paddr_t ma, paddr_t pa)
 void
 xpq_queue_invlpg(vaddr_t va)
 {
+	struct mmuext_op op;
+	xpq_flush_queue();
 
 	XENPRINTK2(("xpq_queue_invlpg %p\n", (void *)va));
-	xpq_queue[xpq_idx].pa.ptr = (va & PG_FRAME) | MMU_EXTENDED_COMMAND;
-	xpq_queue[xpq_idx].pa.val = MMUEXT_INVLPG;
-	xpq_increment_idx();
+	op.cmd = MMUEXT_INVLPG_LOCAL;
+	op.arg1.linear_addr = (va & PG_FRAME);
+	if (HYPERVISOR_mmuext_op(&op, 1, NULL, DOMID_SELF) < 0)
+		panic("xpq_queue_invlpg");
 }
 
 void
 xpq_queue_pde_update(pd_entry_t *ptr, pd_entry_t val)
 {
 
-	xpq_queue[xpq_idx].pde.ptr = ptr;
-	xpq_queue[xpq_idx].pde.val = val;
+	xpq_queue[xpq_idx].ptr = (paddr_t)ptr;
+	xpq_queue[xpq_idx].val = val;
 	xpq_increment_idx();
+#ifdef XENDEBUG_SYNC
+	xpq_flush_queue();
+#endif
 }
 
 void
 xpq_queue_pte_update(pt_entry_t *ptr, pt_entry_t val)
 {
 
-	xpq_queue[xpq_idx].pte.ptr = ptr;
-	xpq_queue[xpq_idx].pte.val = val;
+	xpq_queue[xpq_idx].ptr = (paddr_t)ptr;
+	xpq_queue[xpq_idx].val = val;
 	xpq_increment_idx();
-}
-
-int
-xpq_update_foreign(pt_entry_t *ptr, pt_entry_t val, int dom)
-{
-	xpq_queue_t xpq_up[3];
-
-	xpq_up[0].cmd.ptr = MMU_EXTENDED_COMMAND;
-	xpq_up[0].cmd.val = MMUEXT_SET_FOREIGNDOM | (dom << 16);
-	xpq_up[1].pte.ptr = ptr;
-	xpq_up[1].pte.val = val;
-#if 0
-	xpq_up[2].cmd.ptr = MMU_EXTENDED_COMMAND;
-	xpq_up[2].cmd.val = MMUEXT_CLEAR_FOREIGNDOM;
-	if (HYPERVISOR_mmu_update((mmu_update_t *)xpq_up, 3, NULL) < 0)
-		return EFAULT;
-#else
-	if (HYPERVISOR_mmu_update((mmu_update_t *)xpq_up, 2, NULL) < 0)
-		return EFAULT;
+#ifdef XENDEBUG_SYNC
+	xpq_flush_queue();
 #endif
-	return (0);
 }
 
 void
 xpq_queue_unchecked_pte_update(pt_entry_t *ptr, pt_entry_t val)
 {
 
-	xpq_queue[xpq_idx].pa.ptr = (paddr_t)ptr | MMU_NORMAL_PT_UPDATE;
+	xpq_queue[xpq_idx].ptr = (paddr_t)ptr | MMU_NORMAL_PT_UPDATE;
 	/* XXXcl UNCHECKED_PT_UPDATE */
-	xpq_queue[xpq_idx].pa.val = val;
+	xpq_queue[xpq_idx].val = val;
 	xpq_increment_idx();
+#ifdef XENDEBUG_SYNC
+	xpq_flush_queue();
+#endif
 }
 
 void
 xpq_queue_pt_switch(paddr_t pa)
 {
+	struct mmuext_op op;
+	xpq_flush_queue();
 
 	XENPRINTK2(("xpq_queue_pt_switch: %p %p\n", (void *)pa, (void *)pa));
-	xpq_queue[xpq_idx].pa.ptr = pa | MMU_EXTENDED_COMMAND;
-	xpq_queue[xpq_idx].pa.val = MMUEXT_NEW_BASEPTR;
-	xpq_increment_idx();
+	op.cmd = MMUEXT_NEW_BASEPTR;
+	op.arg1.mfn = pa >> PAGE_SHIFT;
+	if (HYPERVISOR_mmuext_op(&op, 1, NULL, DOMID_SELF) < 0)
+		panic("xpq_queue_pt_switch");
 }
 
 void
 xpq_queue_pin_table(paddr_t pa, int type)
 {
+	struct mmuext_op op;
+	xpq_flush_queue();
 
 	XENPRINTK2(("xpq_queue_pin_table: %p %p\n", (void *)pa, (void *)pa));
-	xpq_queue[xpq_idx].pa.ptr = pa | MMU_EXTENDED_COMMAND;
+	op.arg1.mfn = pa >> PAGE_SHIFT;
+
 	switch (type) {
 	case XPQ_PIN_L1_TABLE:
-		xpq_queue[xpq_idx].pa.val = MMUEXT_PIN_L1_TABLE;
+		op.cmd = MMUEXT_PIN_L1_TABLE;
 		break;
 	case XPQ_PIN_L2_TABLE:
-		xpq_queue[xpq_idx].pa.val = MMUEXT_PIN_L2_TABLE;
+		op.cmd = MMUEXT_PIN_L2_TABLE;
 		break;
 	}
-	xpq_increment_idx();
+	if (HYPERVISOR_mmuext_op(&op, 1, NULL, DOMID_SELF) < 0)
+		panic("xpq_queue_pin_table()");
 }
 
 void
 xpq_queue_unpin_table(paddr_t pa)
 {
+	struct mmuext_op op;
+	xpq_flush_queue();
 
 	XENPRINTK2(("xpq_queue_unpin_table: %p %p\n", (void *)pa, (void *)pa));
-	xpq_queue[xpq_idx].pa.ptr = pa | MMU_EXTENDED_COMMAND;
-	xpq_queue[xpq_idx].pa.val = MMUEXT_UNPIN_TABLE;
-	xpq_increment_idx();
+	op.arg1.mfn = pa >> PAGE_SHIFT;
+	op.cmd = MMUEXT_UNPIN_TABLE;
+	if (HYPERVISOR_mmuext_op(&op, 1, NULL, DOMID_SELF) < 0)
+		panic("xpq_queue_unpin_table");
 }
 
 void
 xpq_queue_set_ldt(vaddr_t va, uint32_t entries)
 {
+	struct mmuext_op op;
+	xpq_flush_queue();
 
 	XENPRINTK2(("xpq_queue_set_ldt\n"));
 	KASSERT(va == (va & PG_FRAME));
-	xpq_queue[xpq_idx].pa.ptr = MMU_EXTENDED_COMMAND | va;
-	xpq_queue[xpq_idx].pa.val = MMUEXT_SET_LDT |
-		(entries << MMUEXT_CMD_SHIFT);
-	xpq_increment_idx();
+	op.cmd = MMUEXT_SET_LDT;
+	op.arg1.linear_addr = va;
+	op.arg2.nr_ents = entries;
+	if (HYPERVISOR_mmuext_op(&op, 1, NULL, DOMID_SELF) < 0)
+		panic("xpq_queue_set_ldt");
 }
 
 void
 xpq_queue_tlb_flush(void)
 {
+	struct mmuext_op op;
+	xpq_flush_queue();
 
 	XENPRINTK2(("xpq_queue_tlb_flush\n"));
-	xpq_queue[xpq_idx].pa.ptr = MMU_EXTENDED_COMMAND;
-	xpq_queue[xpq_idx].pa.val = MMUEXT_TLB_FLUSH;
-	xpq_increment_idx();
+	op.cmd = MMUEXT_TLB_FLUSH_LOCAL;
+	if (HYPERVISOR_mmuext_op(&op, 1, NULL, DOMID_SELF) < 0)
+		panic("xpq_queue_tlb_flush");
 }
 
 void
 xpq_flush_cache(void)
 {
+	struct mmuext_op op;
 	int s = splvm();
+	xpq_flush_queue();
 
 	XENPRINTK2(("xpq_queue_flush_cache\n"));
-	xpq_queue[xpq_idx].pa.ptr = MMU_EXTENDED_COMMAND;
-	xpq_queue[xpq_idx].pa.val = MMUEXT_FLUSH_CACHE;
-	xpq_increment_idx();
-	xpq_flush_queue();
+	op.cmd = MMUEXT_FLUSH_CACHE;
+	if (HYPERVISOR_mmuext_op(&op, 1, NULL, DOMID_SELF) < 0)
+		panic("xpq_flush_cache");
 	splx(s);
 }
 
+int xpq_update_foreign(pt_entry_t *ptr, pt_entry_t val, int dom)
+{
+	mmu_update_t op;
+	int ok;
+	xpq_flush_queue();
+
+	op.ptr = (uint32_t)ptr;
+	op.val = val;
+	if (HYPERVISOR_mmu_update(&op, 1, &ok, dom) < 0)
+		return EFAULT;
+	return (0);
+}
 
 #ifdef XENDEBUG
 void

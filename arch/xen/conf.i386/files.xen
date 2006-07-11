@@ -52,7 +52,6 @@ file	arch/i386/i386/db_mp.c		multiprocessor & ddb
 file	arch/xen/i386/softintr.c
 
 file	arch/xen/xen/clock.c
-file	arch/xen/xen/ctrl_if.c
 file	arch/xen/xen/evtchn.c
 file	arch/xen/xen/xen_debug.c
 #
@@ -125,7 +124,6 @@ file	arch/xen/xen/xbc.c		xbc needs-flag
 #
 
 include "../../../dev/pci/files.pci"
-file	arch/xen/xen/pci_machdep.c		pci
 file	arch/i386/pci/agp_machdep.c		pciagp
 file	dev/pci/agp_ali.c			pciagp
 file	dev/pci/agp_amd.c			pciagp
@@ -154,6 +152,15 @@ major	{wd = 0}
 
 include "../../../dev/isa/files.isa"
 file	arch/xen/xen/isa_machdep.c	isabus & dom0ops
+
+# Xenbus
+device xenbus {[id = -1]}
+attach xenbus at xendevbus
+file	arch/xen/xenbus/xenbus_client.c
+file	arch/xen/xenbus/xenbus_comms.c
+file	arch/xen/xenbus/xenbus_dev.c
+file	arch/xen/xenbus/xenbus_probe.c
+file	arch/xen/xenbus/xenbus_xs.c
 
 # Numeric Processing Extension; Math Co-processor
 device	npx

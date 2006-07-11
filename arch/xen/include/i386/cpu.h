@@ -257,7 +257,7 @@ extern void (*microtime_func)(struct timeval *);
 /*
  * High resolution clock support (Pentium only)
  */
-void	calibrate_cyclecounter(void);
+void	calibrate_cyclecounter(uint64_t freq);
 #if 0
 #ifndef	HZ
 extern u_quad_t pentium_base_tsc;

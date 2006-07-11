@@ -37,15 +37,10 @@
 #include <sys/proc.h>
 #include <sys/systm.h>
 
-#include <uvm/uvm.h>
-#include <machine/pmap.h>
-
 #include <machine/hypervisor.h>
 #include <machine/evtchn.h>
-#include <machine/xen-public/xen.h>
-#include <machine/xen-public/grant_table.h>
 #include <machine/xenbus.h>
-#include <machine/xen.h>
+#include "xenbus_comms.h"
 
 #undef XENDEBUG
 #ifdef XENDEBUG
@@ -77,9 +72,10 @@ xenstore_domain_interface(void)
 static int
 wake_waiting(void *arg)
 {
-	if (__predict_false(xenstored_ready == 0)) {
+	if (__predict_false(xenstored_ready == 0) &&
+	    xen_start_info.flags & SIF_INITDOMAIN)) {
 		xenstored_ready = 1; 
-		/* XXX implement schedule_work(&probe_work);  */
+		wakeup(&xenstored_ready);
 	} 
 
 	wakeup(&xenstore_interface);
@@ -135,7 +131,7 @@ xb_write(const void *data, unsigned len)
 		/* Read indexes, then verify. */
 		cons = intf->req_cons;
 		prod = intf->req_prod;
-		xen_lfence();
+		x86_lfence();
 		if (!check_indexes(cons, prod)) {
 			splx(s);
 			return EIO;
@@ -152,9 +148,9 @@ xb_write(const void *data, unsigned len)
 		len -= avail;
 
 		/* Other side must not see new header until data is there. */
-		xen_lfence();
+		x86_fence();
 		intf->req_prod += avail;
-		xen_lfence();
+		x86_lfence();
 
 		hypervisor_notify_via_evtchn(xen_start_info.store_evtchn);
 	}
@@ -181,7 +177,7 @@ xb_read(void *data, unsigned len)
 		/* Read indexes, then verify. */
 		cons = intf->rsp_cons;
 		prod = intf->rsp_prod;
-		xen_lfence();
+		x86_lfence();
 		if (!check_indexes(cons, prod)) {
 			XENPRINTF(("xb_read EIO\n"));
 			splx(s);
@@ -195,16 +191,16 @@ xb_read(void *data, unsigned len)
 			avail = len;
 
 		/* We must read header before we read data. */
-		xen_lfence();
+		x86_lfence();
 
 		memcpy(data, src, avail);
 		data = (char *)data + avail;
 		len -= avail;
 
 		/* Other side must not see free space until we've copied out */
-		xen_lfence();
+		x86_lfence();
 		intf->rsp_cons += avail;
-		xen_lfence();
+		x86_lfence();
 
 		XENPRINTF(("Finished read of %i bytes (%i to go)\n",
 		    avail, len));
@@ -216,16 +212,11 @@ xb_read(void *data, unsigned len)
 	return 0;
 }
 
-/* Set up interrupt handler off store event channel, map xenstore page. */
+/* Set up interrupt handler off store event channel. */
 int
 xb_init_comms(struct device *dev)
 {
 	int err;
-
-	xenstore_interface = (struct xenstore_domain_interface *)
-		uvm_km_valloc(kernel_map, PAGE_SIZE);
-	pmap_kenter_ma((vaddr_t) xenstore_interface,
-		xen_start_info.store_mfn << PAGE_SHIFT, VM_PROT_WRITE);
 
 	if (xenbus_irq)
 		event_remove_handler(xenbus_irq, wake_waiting, NULL);

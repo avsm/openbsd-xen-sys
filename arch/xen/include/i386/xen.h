@@ -1,4 +1,4 @@
-/*	$NetBSD: xen.h,v 1.15 2005/06/15 22:08:08 bouyer Exp $	*/
+/*	$NetBSD: xen.h,v 1.21 2006/03/06 19:55:47 bouyer Exp $	*/
 
 /*
  *
@@ -11,16 +11,16 @@
  * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
  * sell copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- *
+ * 
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER 
  * DEALINGS IN THE SOFTWARE.
  */
 
@@ -75,7 +75,7 @@ void vprintk(const char *, __va_list);
 
 /******************************************************************************
  * os.h
- *
+ * 
  * random collection of macros and definition
  */
 
@@ -86,8 +86,8 @@ void vprintk(const char *, __va_list);
  * These are the segment descriptors provided for us by the hypervisor.
  * For now, these are hardwired -- guest OSes cannot update the GDT
  * or LDT.
- *
- * It shouldn't be hard to support descriptor-table frobbing -- let me
+ * 
+ * It shouldn't be hard to support descriptor-table frobbing -- let me 
  * know if the BSD or XP ports require flexibility here.
  */
 
@@ -99,10 +99,12 @@ void vprintk(const char *, __va_list);
  */
 
 #ifndef FLAT_RING1_CS
-#define FLAT_RING1_CS		0x0819
-#define FLAT_RING1_DS		0x0821
-#define FLAT_RING3_CS		0x082b
-#define FLAT_RING3_DS		0x0833
+#define FLAT_RING1_CS 0xe019    /* GDT index 259 */
+#define FLAT_RING1_DS 0xe021    /* GDT index 260 */
+#define FLAT_RING1_SS 0xe021    /* GDT index 260 */
+#define FLAT_RING3_CS 0xe02b    /* GDT index 261 */
+#define FLAT_RING3_DS 0xe033    /* GDT index 262 */
+#define FLAT_RING3_SS 0xe033    /* GDT index 262 */
 #endif
 
 #define __KERNEL_CS        FLAT_RING1_CS
@@ -171,12 +173,13 @@ do {									\
  */
 #define __LOCK_PREFIX "lock; "
 
-static __inline__ uint32_t
-x86_atomic_xchg(volatile uint32_t *ptr, unsigned long val)
+#define XATOMIC_T long
+static __inline XATOMIC_T
+xen_atomic_xchg(volatile XATOMIC_T *ptr, unsigned long val)
 {
 	unsigned long result;
 
-	__asm __volatile(__LOCK_PREFIX
+        __asm __volatile(__LOCK_PREFIX
 	    "xchgl %0,%1"
 	    :"=r" (result)
 	    :"m" (*ptr), "0" (val)
@@ -185,74 +188,100 @@ x86_atomic_xchg(volatile uint32_t *ptr, unsigned long val)
 	return result;
 }
 
-static __inline__ int
-x86_atomic_test_and_clear_bit(volatile void *ptr, int bitno)
+static inline uint16_t
+xen_atomic_cmpxchg16(volatile uint16_t *ptr, uint16_t  val, uint16_t newval)
 {
-	int result;
+	unsigned long result;
 
-	__asm __volatile(__LOCK_PREFIX
+        __asm volatile(__LOCK_PREFIX
+	    "cmpxchgw %w1,%2"
+	    :"=a" (result)
+	    :"q"(newval), "m" (*ptr), "0" (val)
+	    :"memory");
+
+	return result;
+}
+
+static __inline void
+xen_atomic_setbits_l (volatile XATOMIC_T *ptr, unsigned long bits) {  
+	__asm volatile("lock ; orl %1,%0" :  "=m" (*ptr) : "ir" (bits)); 
+}
+     
+static __inline void
+xen_atomic_clearbits_l (volatile XATOMIC_T *ptr, unsigned long bits) {  
+	__asm volatile("lock ; andl %1,%0" :  "=m" (*ptr) : "ir" (~bits));
+}
+
+static __inline int
+xen_atomic_test_and_clear_bit(volatile void *ptr, int bitno)
+{
+        int result;
+
+        __asm volatile(__LOCK_PREFIX
 	    "btrl %2,%1 ;"
 	    "sbbl %0,%0"
-	    :"=r" (result), "=m" (*(volatile uint32_t *)(ptr))
+	    :"=r" (result), "=m" (*(volatile XATOMIC_T *)(ptr))
 	    :"Ir" (bitno) : "memory");
-	return result;
+        return result;
 }
 
-static __inline__ int
-x86_atomic_test_and_set_bit(volatile void *ptr, int bitno)
+static __inline int
+xen_atomic_test_and_set_bit(volatile void *ptr, int bitno)
 {
-	int result;
+        int result;
 
-	__asm __volatile(__LOCK_PREFIX
+        __asm volatile(__LOCK_PREFIX
 	    "btsl %2,%1 ;"
 	    "sbbl %0,%0"
-	    :"=r" (result), "=m" (*(volatile uint32_t *)(ptr))
+	    :"=r" (result), "=m" (*(volatile XATOMIC_T *)(ptr))
 	    :"Ir" (bitno) : "memory");
-	return result;
+        return result;
 }
 
 static __inline int
-x86_constant_test_bit(const volatile void *ptr, int bitno)
+xen_constant_test_bit(const volatile void *ptr, int bitno)
 {
 	return ((1UL << (bitno & 31)) &
-	    (((const volatile uint32_t *) ptr)[bitno >> 5])) != 0;
+	    (((const volatile XATOMIC_T *) ptr)[bitno >> 5])) != 0;
 }
 
 static __inline int
-x86_variable_test_bit(const volatile void *ptr, int bitno)
+xen_variable_test_bit(const volatile void *ptr, int bitno)
 {
 	int result;
-
-	__asm __volatile(
+    
+	__asm volatile(
 		"btl %2,%1 ;"
 		"sbbl %0,%0"
 		:"=r" (result)
-		:"m" (*(const volatile uint32_t *)(ptr)), "Ir" (bitno));
+		:"m" (*(const volatile XATOMIC_T *)(ptr)), "Ir" (bitno));
 	return result;
 }
 
-#define x86_atomic_test_bit(ptr, bitno) \
+#define xen_atomic_test_bit(ptr, bitno) \
 	(__builtin_constant_p(bitno) ? \
-	 x86_constant_test_bit((ptr),(bitno)) : \
-	 x86_variable_test_bit((ptr),(bitno)))
+	 xen_constant_test_bit((ptr),(bitno)) : \
+	 xen_variable_test_bit((ptr),(bitno)))
 
 static __inline void
-x86_atomic_set_bit(volatile void *ptr, int bitno)
+xen_atomic_set_bit(volatile void *ptr, int bitno)
 {
-	__asm __volatile(__LOCK_PREFIX
+        __asm volatile(__LOCK_PREFIX
 	    "btsl %1,%0"
-	    :"=m" (*(volatile uint32_t *)(ptr))
+	    :"=m" (*(volatile XATOMIC_T *)(ptr))
 	    :"Ir" (bitno));
 }
 
 static __inline void
-x86_atomic_clear_bit(volatile void *ptr, int bitno)
+xen_atomic_clear_bit(volatile void *ptr, int bitno)
 {
-	__asm __volatile(__LOCK_PREFIX
+        __asm volatile(__LOCK_PREFIX
 	    "btrl %1,%0"
-	    :"=m" (*(volatile uint32_t *)(ptr))
+	    :"=m" (*(volatile XATOMIC_T *)(ptr))
 	    :"Ir" (bitno));
 }
+
+#undef XATOMIC_T
 
 static __inline void
 wbinvd(void)

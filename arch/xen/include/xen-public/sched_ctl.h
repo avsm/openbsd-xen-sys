@@ -1,42 +1,18 @@
-/* $NetBSD: sched_ctl.h,v 1.2 2005/03/09 22:39:20 bouyer Exp $ */
-
-/*
- * Mark Williamson, (C) 2004 Intel Research Cambridge
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to
- * deal in the Software without restriction, including without limitation the
- * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
- * sell copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE.
- */
-
-/**
+/* $NetBSD: sched_ctl.h,v 1.3 2006/05/07 10:56:37 bouyer Exp $ */
+/******************************************************************************
  * Generic scheduler control interface.
  *
+ * Mark Williamson, (C) 2004 Intel Research Cambridge
  */
 
 #ifndef __XEN_PUBLIC_SCHED_CTL_H__
 #define __XEN_PUBLIC_SCHED_CTL_H__
 
-/* Scheduler types */
+/* Scheduler types. */
 #define SCHED_BVT      0
-#define SCHED_ATROPOS  2
-#define SCHED_RROBIN   3
+#define SCHED_SEDF     4
 
-/* these describe the intended direction used for a scheduler control or domain
- * command */
+/* Set or get info? */
 #define SCHED_INFO_PUT 0
 #define SCHED_INFO_GET 1
 
@@ -44,50 +20,46 @@
  * Generic scheduler control command - used to adjust system-wide scheduler
  * parameters
  */
-struct sched_ctl_cmd
-{
-    u32 sched_id;                     /*  0 */
-    u32 direction;                    /*  4 */
-    union {                           /*  8 */
-	struct bvt_ctl
-	{
-	    /* IN variables. */
-	    u32 ctx_allow;            /*  8: context switch allowance */
-	} PACKED bvt;
+struct sched_ctl_cmd {
+    uint32_t sched_id;
+    uint32_t direction;
+    union {
+        struct bvt_ctl {
+            uint32_t ctx_allow;
+        } bvt;
+    } u;
+};
 
-	struct rrobin_ctl
-	{
-	    /* IN variables */
-	    u64 slice;                /*  8: round robin time slice */
-	} PACKED rrobin;
-    } PACKED u;
-} PACKED; /* 16 bytes */
-
-struct sched_adjdom_cmd
-{
-    u32     sched_id;                 /*  0 */
-    u32     direction;                /*  4 */
-    domid_t domain;                   /*  8 */
-    u16     __pad0;
-    u32     __pad1;
-    union {                           /* 16 */
-	struct bvt_adjdom
-	{
-	    u32 mcu_adv;            /* 16: mcu advance: inverse of weight */
-	    u32 warpback;           /* 20: warp? */
-	    s32 warpvalue;          /* 24: warp value */
-	    long long warpl;        /* 32: warp limit */
-	    long long warpu;        /* 40: unwarp time requirement */
-	} PACKED bvt;
-
-	struct atropos_adjdom
-	{
-	    u64 nat_period; /* 16 */
-	    u64 nat_slice;  /* 24 */
-	    u64 latency;    /* 32 */
-	    u32 xtratime;   /* 36 */
-	} PACKED atropos;
-    } PACKED u;
-} PACKED; /* 40 bytes */
+struct sched_adjdom_cmd {
+    uint32_t sched_id;
+    uint32_t direction;
+    domid_t  domain;
+    union {
+        struct bvt_adjdom {
+            uint32_t mcu_adv;      /* mcu advance: inverse of weight */
+            uint32_t warpback;     /* warp? */
+            int32_t  warpvalue;    /* warp value */
+            int64_t  warpl;        /* warp limit */
+            int64_t  warpu;        /* unwarp time requirement */
+        } bvt;
+        struct sedf_adjdom {
+            uint64_t period;
+            uint64_t slice;
+            uint64_t latency;
+            uint32_t extratime;
+            uint32_t weight;
+        } sedf;
+    } u;
+};
 
 #endif /* __XEN_PUBLIC_SCHED_CTL_H__ */
+
+/*
+ * Local variables:
+ * mode: C
+ * c-set-style: "BSD"
+ * c-basic-offset: 4
+ * tab-width: 4
+ * indent-tabs-mode: nil
+ * End:
+ */

@@ -50,11 +50,10 @@
 #include <machine/xen.h>
 #include <machine/hypervisor.h>
 #include <machine/evtchn.h>
-#include <machine/ctrl_if.h>
 #include <machine/xenfunc.h>
 #include <machine/lock.h>
 
-#if 0	/* XXX ????!!! */
+#if 0 /* XXX ??? */
 /*
  * This lock protects updates to the following mapping and reference-count
  * arrays. The lock does not need to be acquired to read the mapping tables.
@@ -83,9 +82,9 @@ physdev_op_t physdev_op_notify = {
 };
 #endif
 
-int	debug_port;
-int	xen_debug_handler(void *);
-int	xen_misdirect_handler(void *);
+int debug_port;
+int xen_debug_handler(void *);
+int xen_misdirect_handler(void *);
 
 /* #define IRQ_DEBUG 5 */
 
@@ -98,7 +97,7 @@ events_default_setup(void)
 	for (i = 0; i < NR_VIRQS; i++)
 		virq_to_evtch[i] = -1;
 
-#ifdef DOM0OPS
+#if NPCI > 0 || NISA > 0
 	/* No PIRQ -> event mappings. */
 	for (i = 0; i < NR_PIRQS; i++)
 		pirq_to_evtch[i] = -1;
@@ -125,16 +124,6 @@ init_events(void)
 	event_set_handler(evtch, &xen_debug_handler, NULL, IPL_DEBUG,
 	    "debugev");
 	hypervisor_enable_event(evtch);
-
-	evtch = bind_virq_to_evtch(VIRQ_MISDIRECT);
-	printf("misdirect virtual interrupt using event channel %d\n", evtch);
-	event_set_handler(evtch, &xen_misdirect_handler, NULL, IPL_DIE,
-	    "misdirev");
-	hypervisor_enable_event(evtch);
-
-	/* This needs to be done early, but after the IRQ subsystem is
-	 * alive. */
-	ctrl_if_init();
 
 	enable_intr();		/* at long last... */
 }
@@ -250,6 +239,7 @@ bind_virq_to_evtch(int virq)
 	if (evtchn == -1) {
 		op.cmd = EVTCHNOP_bind_virq;
 		op.u.bind_virq.virq = virq;
+		op.u.bind_virq.vcpu = 0;
 		if (HYPERVISOR_event_channel_op(&op) != 0)
 			panic("Failed to bind virtual IRQ %d\n", virq);
 		evtchn = op.u.bind_virq.port;
@@ -279,7 +269,6 @@ unbind_virq_from_evtch(int virq)
 	evtch_bindcount[evtchn]--;
 	if (evtch_bindcount[evtchn] == 0) {
 		op.cmd = EVTCHNOP_close;
-		op.u.close.dom = DOMID_SELF;
 		op.u.close.port = evtchn;
 		if (HYPERVISOR_event_channel_op(&op) != 0)
 			panic("Failed to unbind virtual IRQ %d\n", virq);
@@ -340,7 +329,6 @@ unbind_pirq_from_evtch(int pirq)
 	evtch_bindcount[evtchn]--;
 	if (evtch_bindcount[evtchn] == 0) {
 		op.cmd = EVTCHNOP_close;
-		op.u.close.dom = DOMID_SELF;
 		op.u.close.port = evtchn;
 		if (HYPERVISOR_event_channel_op(&op) != 0)
 			panic("Failed to unbind physical IRQ %d\n", pirq);
@@ -407,7 +395,7 @@ pirq_interrupt(void *arg)
 	return ret;
 }
 
-#endif /* DOM0OPS */
+#endif /* NPCI > 0 || NISA > 0 */
 
 int
 event_set_handler(int evtch, int (*func)(void *), void *arg, int level,
@@ -565,7 +553,7 @@ hypervisor_enable_event(unsigned int evtch)
 #endif
 
 	hypervisor_unmask_event(evtch);
-#ifdef DOM0OPS
+#if NPCI > 0 || NISA > 0 
 	if (pirq_needs_unmask_notify[evtch >> 5] & (1 << (evtch & 0x1f))) {
 #ifdef  IRQ_DEBUG
 		if (evtch == IRQ_DEBUG)
@@ -573,7 +561,7 @@ hypervisor_enable_event(unsigned int evtch)
 #endif
 		(void)HYPERVISOR_physdev_op(&physdev_op_notify);
 	}
-#endif /* DOM0OPS */
+#endif /* NPCI > 0 || NISA > 0 */
 }
 
 int
@@ -597,15 +585,5 @@ xen_debug_handler(void *arg)
 	for (i = 0 ; i < 32; i++)
 		printf(" %x", HYPERVISOR_shared_info->evtchn_pending[i]);
 	printf("\n");
-	return 0;
-}
-
-int
-xen_misdirect_handler(void *arg)
-{
-#if 0
-	char *msg = "misdirect\n";
-	(void)HYPERVISOR_console_io(CONSOLEIO_write, strlen(msg), msg);
-#endif
 	return 0;
 }

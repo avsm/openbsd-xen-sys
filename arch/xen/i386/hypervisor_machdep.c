@@ -79,17 +79,6 @@ extern int debug_port;
 extern int xen_debug_handler(void *);
 #endif
 
-/*
- * Force a proper event-channel callback from Xen after clearing the
- * callback mask. We do this in a very simple manner, by making a call
- * down into Xen. The pending flag will be checked by Xen on return.
- */
-void
-hypervisor_force_callback(void)
-{
-	(void)HYPERVISOR_xen_version(0);
-}
-
 int stipending(void);
 int
 stipending(void)
@@ -117,6 +106,7 @@ stipending(void)
 		xen_atomic_clear_bit(&s->evtchn_pending[0], debug_port);
 	}
 #endif
+
 	/*
 	 * we're only called after STIC, so we know that we'll have to
 	 * STI at the end
@@ -126,7 +116,7 @@ stipending(void)
 		s->vcpu_data[0].evtchn_upcall_pending = 0;
 		/* NB. No need for a barrier here -- XCHG is a barrier
 		 * on x86. */
-		l1 = x86_atomic_xchg(&s->evtchn_pending_sel, 0);
+		l1 = xen_atomic_xchg(&s->evtchn_pending_sel, 0);
 		while ((l1i = ffs(l1)) != 0) {
 			l1i--;
 			l1 &= ~(1 << l1i);
@@ -136,8 +126,8 @@ stipending(void)
 			 * mask and clear event. More efficient than calling
 			 * hypervisor_mask/clear_event for each event.
 			 */
-			i386_atomic_setbits_l(&s->evtchn_mask[l1i], l2);
-			i386_atomic_clearbits_l(&s->evtchn_pending[l1i], l2);
+			xen_atomic_setbits_l(&s->evtchn_mask[l1i], l2);
+			xen_atomic_clearbits_l(&s->evtchn_pending[l1i], l2);
 			while ((l2i = ffs(l2)) != 0) {
 				l2i--;
 				l2 &= ~(1 << l2i);
@@ -185,11 +175,18 @@ do_hypervisor_callback(struct intrframe *regs)
 
 	level = cpl;
 
+#ifdef EARLY_DEBUG_EVENT
+	if (xen_atomic_test_bit(&s->evtchn_pending[0], debug_port)) {
+		xen_debug_handler(NULL);
+		xen_atomic_clear_bit(&s->evtchn_pending[0], debug_port);
+	}
+#endif
+
 	while (s->vcpu_data[0].evtchn_upcall_pending) {
 		s->vcpu_data[0].evtchn_upcall_pending = 0;
 		/* NB. No need for a barrier here -- XCHG is a barrier
 		 * on x86. */
-		l1 = x86_atomic_xchg(&s->evtchn_pending_sel, 0);
+		l1 = xen_atomic_xchg(&s->evtchn_pending_sel, 0);
 		while ((l1i = ffs(l1)) != 0) {
 			l1i--;
 			l1 &= ~(1 << l1i);
@@ -202,8 +199,8 @@ do_hypervisor_callback(struct intrframe *regs)
 			 * though evtchn_do_event->splx) that could cause an event to
 			 * be both processed and marked pending.
 			 */
-			i386_atomic_setbits_l(&s->evtchn_mask[l1i], l2);
-			i386_atomic_clearbits_l(&s->evtchn_pending[l1i], l2);
+			xen_atomic_setbits_l(&s->evtchn_mask[l1i], l2);
+			xen_atomic_clearbits_l(&s->evtchn_pending[l1i], l2);
 
 			while ((l2i = ffs(l2)) != 0) {
 				l2i--;
@@ -212,7 +209,7 @@ do_hypervisor_callback(struct intrframe *regs)
 				port = (l1i << 5) + l2i;
 #ifdef PORT_DEBUG
 				if (port == PORT_DEBUG)
-					printk("do_hypervisor_callback event %d\n", port);
+					printf("do_hypervisor_callback event %d\n", port);
 #endif
 				if (evtsource[port])
 					evtchn_do_event(port, regs);
@@ -243,15 +240,15 @@ hypervisor_unmask_event(unsigned int ev)
 		printf("hypervisor_unmask_event %d\n", ev);
 #endif
 
-	x86_atomic_clear_bit(&s->evtchn_mask[0], ev);
+	xen_atomic_clear_bit(&s->evtchn_mask[0], ev);
 	/*
 	 * The following is basically the equivalent of
 	 * 'hw_resend_irq'. Just like a real IO-APIC we 'lose the
 	 * interrupt edge' if the channel is masked.
 	 */
-	if (x86_atomic_test_bit(&s->evtchn_pending[0], ev) &&
-	    !x86_atomic_test_and_set_bit(&s->evtchn_pending_sel, ev>>5)) {
-		s->vcpu_data[0].evtchn_upcall_pending = 1;
+	if (xen_atomic_test_bit(&s->evtchn_pending[0], ev) &&
+	    !xen_atomic_test_and_set_bit(&s->evtchn_pending_sel, ev>>5)) {
+		xen_atomic_set_bit(&s->vcpu_data[0].evtchn_upcall_pending, 0);
 		if (!s->vcpu_data[0].evtchn_upcall_mask)
 			hypervisor_force_callback();
 	}
@@ -266,7 +263,7 @@ hypervisor_mask_event(unsigned int ev)
 		printf("hypervisor_mask_event %d\n", ev);
 #endif
 
-	x86_atomic_set_bit(&s->evtchn_mask[0], ev);
+	xen_atomic_set_bit(&s->evtchn_mask[0], ev);
 }
 
 void
@@ -278,7 +275,7 @@ hypervisor_clear_event(unsigned int ev)
 		printf("hypervisor_clear_event %d\n", ev);
 #endif
 
-	x86_atomic_clear_bit(&s->evtchn_pending[0], ev);
+	xen_atomic_clear_bit(&s->evtchn_pending[0], ev);
 }
 
 void
