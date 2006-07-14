@@ -32,7 +32,7 @@
  */
 
 #ifdef I686_CPU
-#include <machince/i386/cpufunc.h>
+#include <machine/i386/cpufunc.h>
 #endif
 
 #ifdef amd64
