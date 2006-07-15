@@ -1,0 +1,23 @@
+Index: ddb/db_sym.c
+===================================================================
+RCS file: /mount/p4/cvs/openbsd/src/sys/ddb/db_sym.c,v
+retrieving revision 1.32
+diff -u -p -r1.32 db_sym.c
+--- ddb/db_sym.c	13 Mar 2006 06:23:20 -0000	1.32
++++ ddb/db_sym.c	20 Mar 2006 07:42:41 -0000
+@@ -127,13 +127,13 @@ ddb_init(void)
+ 	const db_symformat_t **symf;
+ 	const char *name = "bsd";
+ 	extern char *esym;
+-#if defined(__sparc64__) || defined(__mips__)
++#if defined(__sparc64__) || defined(__mips__) || defined(xen)
+ 	extern char *ssym;
+ #endif
+ 	char *xssym, *xesym;
+ 
+ 	xesym = esym;
+-#if defined(__sparc64__) || defined(__mips__)
++#if defined(__sparc64__) || defined(__mips__) || defined(xen)
+ 	xssym = ssym;
+ #else
+ 	xssym = (char *)&end;
