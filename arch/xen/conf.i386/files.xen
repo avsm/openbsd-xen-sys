@@ -54,6 +54,8 @@ file	arch/xen/i386/softintr.c
 file	arch/xen/xen/clock.c
 file	arch/xen/xen/evtchn.c
 file	arch/xen/xen/xen_debug.c
+
+file	arch/xen/xen/xengnt.c
 #
 # Media Independent Interface (mii)
 #
