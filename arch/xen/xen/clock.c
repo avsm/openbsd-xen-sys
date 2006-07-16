@@ -121,6 +121,7 @@ void
 inittodr(time_t base)
 {
 	int s;
+	uint64_t t;
 
 	if (base && base < 15 * SECYR) {
 		printf("WARNING: preposterous time in file system\n");
@@ -131,8 +132,10 @@ inittodr(time_t base)
 	get_time_values_from_xen();
 	splx(s);
 
-	time.tv_usec = shadow_tv.tv_usec;
-	time.tv_sec = shadow_tv.tv_sec;
+	t = shadow_tv.tv_sec * 1000000 +
+	    shadow_tv.tv_usec + processed_system_time / 1000;
+	time.tv_usec = t % 1000000;
+	time.tv_sec = t / 1000000;
 #ifdef XEN_CLOCK_DEBUG
 	printf("readclock: %ld (%ld)\n", time.tv_sec, base);
 #endif
