@@ -65,10 +65,10 @@ static void xengnt_free_entry(grant_ref_t);
 static void xengnt_resume(void);
 
 void
-xengnt_init()
+xengnt_init(void)
 {
-	grant_table = (void *)uvm_km_alloc(kernel_map,
-	    NR_GRANT_FRAMES * PAGE_SIZE, 0, UVM_KMF_VAONLY);
+	grant_table = (void *)uvm_km_valloc(kernel_map,
+	    NR_GRANT_FRAMES * PAGE_SIZE);
 	if (grant_table == NULL)
 		panic("xengnt_init() no VM space");
 
@@ -78,7 +78,7 @@ xengnt_init()
 }
 
 static void
-xengnt_resume()
+xengnt_resume(void)
 {
 	gnttab_setup_table_t setup;
 	unsigned long pages[NR_GRANT_FRAMES];
@@ -103,7 +103,7 @@ xengnt_resume()
 }
 
 static grant_ref_t
-xengnt_get_entry()
+xengnt_get_entry(void)
 {
 	int i;
 	grant_ref_t entry;
