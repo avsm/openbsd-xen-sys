@@ -28,19 +28,20 @@
  * IN THE SOFTWARE.
  */
 
-#include <sys/cdefs.h>
 #include <sys/types.h>
 #include <sys/errno.h>
 #include <sys/malloc.h>
 #include <sys/systm.h>
 #include <sys/param.h>
 #include <sys/kthread.h>
+#include "strtoul.h"
 
 #include <machine/xen-public/grant_table.h>
 #include <machine/hypervisor.h>
 #include <machine/xenbus.h>
 #include <machine/evtchn.h>
 #include <machine/xen.h>
+#include "xenbus_comms.h"
 
 #if 0
 #define DPRINTK(fmt, args...) \
@@ -122,17 +123,17 @@ otherend_changed(struct xenbus_watch *watch,
 		state, xdev->xbusd_otherend_watch.node, vec[XS_WATCH_PATH]);
 	if (state == XenbusStateClosed) {
 		int error;
-		error = config_detach(xdev->xbusd_dev, DETACH_FORCE);
+		error = config_detach(xdev->xbusd_u.f.f_dev, DETACH_FORCE);
 		if (error) {
 			printf("could not detach %s: %d\n",
-			    xdev->xbusd_dev->dv_xname, error);
+			    xdev->xbusd_u.f.f_dev->dv_xname, error);
 			return;
 		}
 		xenbus_free_device(xdev);
 		return;
 	}
 	if (xdev->xbusd_otherend_changed)
-		xdev->xbusd_otherend_changed(xdev->xbusd_dev, state);
+		xdev->xbusd_otherend_changed(xdev->xbusd_u.f.f_dev, state);
 }
 
 static int
@@ -329,8 +330,8 @@ xenbus_probe_device_type(struct xen_bus_type *bus, const char *type)
 			    "for %s (%d)\n", xbusd->xbusd_path, err);
 			break;
 		}
-		xbusd->xbusd_dev = config_found(xenbus_sc, &xa, xenbus_print);
-		if (xbusd->xbusd_dev == NULL)
+		xbusd->xbusd_u.f.f_dev = config_found(xenbus_sc, &xa, xenbus_print);
+		if (xbusd->xbusd_u.f.f_dev == NULL)
 			free(xbusd, M_DEVBUF);
 		else {
 			SLIST_INSERT_HEAD(&xenbus_device_list,

@@ -46,11 +46,13 @@
 #include <machine/xenbus.h>
 #include "xenbus_comms.h"
 
+#if 0
 static int xenbus_dev_read(void *);
 static int xenbus_dev_write(void *);
 static int xenbus_dev_open(void *);
 static int xenbus_dev_close(void *);
 static int xsd_port_read(void *);
+#endif
 
 struct xenbus_dev_transaction {
 	SLIST_ENTRY(xenbus_dev_transaction) trans_next;
@@ -59,6 +61,7 @@ struct xenbus_dev_transaction {
 
 #define DIR_MODE	 (S_IRUSR|S_IXUSR|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH)
 #define PRIVCMD_MODE    (S_IRUSR | S_IWUSR)
+#if 0
 static const struct kernfs_fileop xenbus_fileops[] = {
   { .kf_fileop = KERNFS_FILEOP_OPEN, .kf_vop = xenbus_dev_open },
   { .kf_fileop = KERNFS_FILEOP_CLOSE, .kf_vop = xenbus_dev_close },
@@ -88,6 +91,8 @@ xenbus_kernfs_init()
 	KERNFS_INITENTRY(dkt, DT_REG, "xsd_port", NULL, kfst, VREG, XSD_MODE);
 	kernfs_addentry(kernxen_pkt, dkt);
 }
+#endif
+
 
 struct xenbus_dev_data {
 #define BUFFER_SIZE (PAGE_SIZE)
@@ -107,6 +112,7 @@ struct xenbus_dev_data {
 	unsigned int read_cons, read_prod;
 };
 
+#if 0
 static int
 xenbus_dev_read(void *v)
 {
@@ -333,6 +339,7 @@ xsd_port_read(void *v)
 	error = uiomove(bf, len, uio);
 	return error;
 }
+#endif
 
 /*
  * Local variables:

@@ -29,6 +29,8 @@
 #ifndef _XENBUS_COMMS_H
 #define _XENBUS_COMMS_H
 
+#include <machine/cpufunc.h>
+
 void xenbus_kernfs_init(void);
 int xs_init(void);
 int xb_init_comms(struct device *dev);

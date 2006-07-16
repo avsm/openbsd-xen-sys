@@ -49,6 +49,8 @@
 #include <machine/xen-public/grant_table.h>
 #include <machine/xenbus.h>
 #include <machine/xen.h>
+#include "xenbus_comms.h"
+#include "strtoul.h"
 
 #define streq(a, b) (strcmp((a), (b)) == 0)
 
@@ -383,7 +385,8 @@ xenbus_read(struct xenbus_transaction *t,
 /* Read a node and convert it to unsigned long. */
 int
 xenbus_read_ul(struct xenbus_transaction *t,
-	const char *dir, const char *node, unsigned long *val)
+	const char *dir, const char *node, unsigned long *val,
+	int base)
 {
 	char *string, *ep;
 	int err;
@@ -391,7 +394,7 @@ xenbus_read_ul(struct xenbus_transaction *t,
 	err = xenbus_read(t, dir, node, NULL, &string);
 	if (err)
 		return err;
-	*val = strtoul(string, &ep, 10);
+	*val = strtoul(string, &ep, base);
 	if (*ep != '\0') {
 		free(string, M_DEVBUF);
 		return EFTYPE;

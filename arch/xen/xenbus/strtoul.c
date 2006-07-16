@@ -31,6 +31,7 @@
 #include <sys/limits.h>
 #include <lib/libkern/libkern.h>
 #include <machine/xen.h>
+#include "strtoul.h"
 
 /* Required macros (from libstand) */
 #define isupper(c)      ((c) >= 'A' && (c) <= 'Z')

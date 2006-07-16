@@ -72,7 +72,7 @@ xenstore_domain_interface(void)
 static int
 wake_waiting(void *arg)
 {
-	if (__predict_false(xenstored_ready == 0) &&
+	if (__predict_false(xenstored_ready == 0 &&
 	    xen_start_info.flags & SIF_INITDOMAIN)) {
 		xenstored_ready = 1; 
 		wakeup(&xenstored_ready);
@@ -148,7 +148,7 @@ xb_write(const void *data, unsigned len)
 		len -= avail;
 
 		/* Other side must not see new header until data is there. */
-		x86_fence();
+		x86_lfence();
 		intf->req_prod += avail;
 		x86_lfence();
 

@@ -156,6 +156,7 @@ file	arch/xen/xen/isa_machdep.c	isabus & dom0ops
 # Xenbus
 device xenbus {[id = -1]}
 attach xenbus at xendevbus
+file	arch/xen/xenbus/strtoul.c
 file	arch/xen/xenbus/xenbus_client.c
 file	arch/xen/xenbus/xenbus_comms.c
 file	arch/xen/xenbus/xenbus_dev.c
