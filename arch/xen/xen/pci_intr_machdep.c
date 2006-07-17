@@ -35,15 +35,11 @@
 #include <sys/systm.h>
 
 #include <machine/bus.h>
-#include <machine/bus_private.h>
 
 #include <dev/pci/pcivar.h>
 #include <dev/pci/pcidevs.h>
 
 #include <machine/evtchn.h>
-
-#include "locators.h"
-#include "opt_ddb.h"
 
 int
 pci_intr_map(struct pci_attach_args *pa, pci_intr_handle_t *ihp)
@@ -84,6 +80,7 @@ bad:
 	ihp->evtch = -1;
 	return 1;
 }
+
 const char
 *pci_intr_string(pci_chipset_tag_t pc, pci_intr_handle_t ih)
 {
