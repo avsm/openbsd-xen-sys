@@ -126,6 +126,8 @@ file	arch/xen/xen/xbc.c		xbc needs-flag
 #
 
 include "../../../dev/pci/files.pci"
+file	arch/i386/pci/pci_machdep.c		pci
+file	arch/xen/xen/pci_intr_machdep.c		pci
 file	arch/i386/pci/agp_machdep.c		pciagp
 file	dev/pci/agp_ali.c			pciagp
 file	dev/pci/agp_amd.c			pciagp
