@@ -196,7 +196,7 @@ resettodr_i(void)
 
 		op.cmd = DOM0_SETTIME;
 		op.u.settime.secs	 = time.tv_sec;
-		op.u.settime.usecs	 = time.tv_usec * 1000;
+		op.u.settime.nsecs	 = time.tv_usec * 1000;
 		op.u.settime.system_time = processed_system_time;
 		HYPERVISOR_dom0_op(&op);
 
