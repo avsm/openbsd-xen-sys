@@ -207,7 +207,7 @@
  * Xen guest identifier and loader selection
  */
 .section __xen_guest
-        .ascii  "GUEST_OS=openbsd,GUEST_VER=2.0,XEN_VER=2.0"
+        .ascii  "GUEST_OS=openbsd,GUEST_VER=3.0,XEN_VER=3.0"
         .ascii  ",LOADER=generic"
 #if (NKSYMS || defined(DDB) || defined(LKM)) && !defined(SYMTAB_SPACE)
         .ascii  ",BSD_SYMTAB"
@@ -297,7 +297,7 @@ tmpstk:
 start:
 	cld
 
-        movl    %esi,%ebx               # save start_info pointer
+	movl	%esp,%ebx		# save start of available space
 
         lss     tmpstk,%esp             # bootstrap stack end location
 
@@ -486,6 +486,22 @@ start:
 	movl	%eax, (%ebx)
 	addl	$4,%ebx
 
+	/* map the console page if not domain 0 */
+	movl	RELOC(start_info_union)+START_INFO_FLAGS,%eax
+	testl	$SIF_INITDOMAIN, %eax
+	jnz	1f
+	movl	RELOC(start_info_union)+START_INFO_CONSOLE_MFN,%eax
+	shll	$PGSHIFT,%eax
+	orl	$(PG_V|PG_RW), %eax
+	movl	%eax, (%ebx)
+	addl	$4,%ebx
+	movl	RELOC(start_info_union)+START_INFO_STORE_MFN,%eax
+	shll	$PGSHIFT,%eax
+	orl	$(PG_V|PG_RW), %eax
+	movl	%eax, (%ebx)
+	addl	$4,%ebx
+1:
+
 /*
  * Construct a page table directory.
 */
@@ -509,6 +525,15 @@ start:
 	movl    %edx,_C_LABEL(HYPERVISOR_shared_info)
 	addl    $PAGE_SIZE,%edx
 	movl    %edx,_C_LABEL(atdevbase)
+
+	/* set console and xenstore pages virtual address if not domain0 */
+	movl	RELOC(start_info_union)+START_INFO_FLAGS,%eax
+	testl	$SIF_INITDOMAIN, %eax
+	jnz	1f
+	movl	%edx,_C_LABEL(xencons_interface)
+	addl	$PAGE_SIZE,%edx			# xencons_interface
+	movl	%edx,_C_LABEL(xenstore_interface)
+	addl	$PAGE_SIZE,%edx			# xenstore_interface
 
 	/* Set up bootstrap stack. */
 	leal	(PROC0STACK)(%esi),%eax
@@ -1790,68 +1815,9 @@ IDTVEC(stk)
 IDTVEC(trap0d)
 IDTVEC(prot)
 	TRAP(T_PROTFLT)
-IDTVEC(trap0e)			/* XXX */
+IDTVEC(trap0e)
 IDTVEC(page)
-#if 1
-	INTRENTRY
-	movl	TF_TRAPNO(%esp),%eax
-	movl	$T_PAGEFLT,TF_TRAPNO(%esp)
-#ifdef DIAGNOSTIC
-	movl	CPL,%ebx
-#endif /* DIAGNOSTIC */
-	#pushl	%esp
-	pushl	%eax
-	movl	%esp,%eax
-	addl	$4,%eax
-	pushl	%eax
-	call	_C_LABEL(trap)
-	addl	$4,%esp
-	addl	$4,%esp
-	testb	$CHK_UPL,TF_CS(%esp)
-	jnz	trap0e_checkast
-#ifdef VM86
-	testl	$PSL_VM,TF_EFLAGS(%esp)
-	jz	6f
-#else
-	jmp	6f
-#endif
-trap0e_checkast:
-	/* Check for ASTs on exit to user mode. */
-	CLI(%eax)
-	CHECK_ASTPENDING(%eax)
-	jz	6f
-5:	CLEAR_ASTPENDING(%eax)
-	STI(%eax)
-	movl	$T_ASTFLT,TF_TRAPNO(%esp)
-	pushl	%esp
-	call	_C_LABEL(trap)
-	addl	$4,%esp
-	jmp	trap0e_checkast		/* re-check ASTs */
-6:	STIC(%eax)
-    	jz	4f
-	call	_C_LABEL(stipending)
-	#testl	%eax,%eax		/* XXXcl */
-	#jnz	1b
-4:
-#ifndef DIAGNOSTIC
-	INTRFASTEXIT
-#else
-	cmpl	CPL,%ebx
-	jne	3f
-	INTRFASTEXIT
-3:	pushl	$4f
-	call	_C_LABEL(printf)
-	addl	$4,%esp
-#ifdef DDB
-	int	$3
-#endif /* DDB */
-	movl	%ebx,CPL
-	jmp	trap0e_checkast		/* re-check ASTs */
-4:	.asciz	"WARNING: SPL NOT LOWERED ON TRAP EXIT\n"
-#endif /* DIAGNOSTIC */
-#else
 	TRAP(T_PAGEFLT)
-#endif
 IDTVEC(trap0f)
 IDTVEC(rsvd)
 	ZTRAP(T_RESERVED)

@@ -462,7 +462,7 @@ trap(struct trapframe *frame)
 		if (frame->tf_err & PGEX_P)
 			goto we_re_toast;
 #endif
-		cr2 = ((u_int32_t *)(void *)&frame)[1];
+		cr2 = HYPERVISOR_shared_info->vcpu_info[0].arch.cr2;
 		KERNEL_LOCK(LK_CANRECURSE|LK_EXCLUSIVE);
 		goto faultcommon;
 
@@ -472,7 +472,7 @@ trap(struct trapframe *frame)
 		struct vm_map *map;
 		int rv;
 
-		cr2 = ((u_int32_t *)(void *)&frame)[1];
+		cr2 = HYPERVISOR_shared_info->vcpu_info[0].arch.cr2;
 		KERNEL_PROC_LOCK(p);
 	faultcommon:
 		KASSERT(p != NULL);
