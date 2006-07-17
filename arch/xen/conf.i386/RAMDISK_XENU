@@ -57,8 +57,5 @@ pci*		at hypervisor? bus ?
 pchb*		at pci? dev ? function ?	# PCI-Host bridges
 ppb*		at pci? dev ? function ?	# PCI-PCI bridges
 
-#option          PCIAGP
-
-
 pseudo-device	rd	1		# ramdisk
 
