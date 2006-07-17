@@ -52,17 +52,6 @@ pci_intr_map(struct pci_attach_args *pa, pci_intr_handle_t *ihp)
 	int pin;
 	int line;
 
-#ifndef XEN3
-	physdev_op_t physdev_op;
-	/* initialise device, to get the real IRQ */
-	physdev_op.cmd = PHYSDEVOP_PCI_INITIALISE_DEVICE;
-	physdev_op.u.pci_initialise_device.bus = pa->pa_bus;
-	physdev_op.u.pci_initialise_device.dev = pa->pa_device;
-	physdev_op.u.pci_initialise_device.func = pa->pa_function;
-	if (HYPERVISOR_physdev_op(&physdev_op) < 0)
-		panic("HYPERVISOR_physdev_op(PHYSDEVOP_PCI_INITIALISE_DEVICE)");
-#endif /* !XEN3 */
-
 	intr = pci_conf_read(pa->pa_pc, pa->pa_tag, PCI_INTERRUPT_REG);
 	pin = pa->pa_intrpin;
 	pa->pa_intrline = line = PCI_INTERRUPT_LINE(intr);
@@ -113,7 +102,7 @@ pci_intr_evcnt(pci_chipset_tag_t pcitag, pci_intr_handle_t intrh)
 
 void *
 pci_intr_establish(pci_chipset_tag_t pcitag, pci_intr_handle_t intrh,
-    int level, int (*func)(void *), void *arg)
+    int level, int (*func)(void *), void *arg, char *what)
 {
 	return (void *)pirq_establish(intrh.pirq, intrh.evtch, func, arg, level);
 }
