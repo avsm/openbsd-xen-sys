@@ -91,7 +91,11 @@
 #include <machine/granttables.h>
 #if NPCI > 0
 #include <dev/pci/pcivar.h>
+#if NPCIBIOS > 0
+#include <arch/i386/pci/pcibiosvar.h>
 #endif
+#endif
+#include <machine/xenbus.h>
 
 #if NXENNET > 0
 #include <sys/socket.h>
@@ -126,12 +130,12 @@ struct cfattach hypervisor_ca = {
 struct cfdriver hypervisor_cd = {
 	NULL, "hypervisor", 0
 };
-#if NXENCONS > 0 || NXENNET > 0 || NXBC > 0 || NNPX > 0
 static int hypervisor_print(void *, const char *);
-#endif
 
 union hypervisor_attach_cookie {
 	const char *hac_device;		/* first elem of all */
+
+	struct xenbus_attach_args hac_xenbus;
 #if NXENCONS > 0
 	struct xencons_attach_args hac_xencons;
 #endif
@@ -144,6 +148,12 @@ union hypervisor_attach_cookie {
 #if NNPX > 0
 	struct xen_npx_attach_args hac_xennpx;
 #endif
+#if NPCI > 0
+	struct pcibus_attach_args hac_pba;
+#if defined(DOM0OPS) && NISA > 0
+	struct isabus_attach_args hac_iba;
+#endif
+#endif /* NPCI */
 };
 
 /*
@@ -161,7 +171,6 @@ struct  x86_isa_chipset x86_isa_chipset;
 
 #if 0
 /* shutdown/reboot message stuff */
-static void hypervisor_shutdown_handler(ctrl_msg_t *, unsigned long);
 static struct sysmon_pswitch hysw_shutdown = {
 	.smpsw_type = PSWITCH_TYPE_POWER,
 	.smpsw_name = "hypervisor",
@@ -192,18 +201,22 @@ void
 hypervisor_attach(struct device *parent, struct device *self, void *aux)
 {
 #if NPCI > 0
-	//struct pcibus_attach_args pba;
-#if defined(DOM0OPS) && NISA > 0
-	struct isabus_attach_args iba;
+#if NACPI > 0
+	int acpi_present = 0;
+#endif
+#ifdef NPCIBIOS
+	int pci_maxbus = 0;
 #endif
 #endif
-#if NXENCONS > 0 || NXENNET > 0 || NXBC > 0 || NNPX > 0 
 	union hypervisor_attach_cookie hac;
-#endif
+
 	printf("\n");
 
 	init_events();
 	xengnt_init();
+
+	hac.hac_xenbus.xa_device = "xenbus";
+	config_found(self, &hac.hac_xenbus, hypervisor_print);
 
 #if NXENCONS > 0
 	hac.hac_xencons.xa_device = "xencons";
@@ -222,20 +235,16 @@ hypervisor_attach(struct device *parent, struct device *self, void *aux)
 	config_found(self, &hac.hac_xennpx, hypervisor_print);
 #endif
 #if NPCI > 0
-	/* XXX: todo PCI for Xen3 */
-#if defined(DOM0OPS) && NISA > 0
-	if (isa_has_been_seen == 0) {
-		iba.iba_busname = "isa";
-		iba.iba_iot = I386_BUS_SPACE_IO;
-		iba.iba_memt = I386_BUS_SPACE_MEM;
-#if NISADMA > 0
-		iba.iba_dmat = &isa_bus_dma_tag;
+	pci_mode = pci_mode_detect();
+#ifdef NPCIBIOS
+	pci_maxbus = pci_bus_fixup(NULL, 0);
+	printf("PCI bus max, after pci_bus_fixup: %i\n", pci_maxbus);
+	pciaddr.extent_port = NULL;
+	pciaddr.extent_mem = NULL;
+	pci_addr_fixup(NULL, pci_maxbus);
 #endif
-		iba.iba_ic = NULL; /* No isa DMA yet */
-		config_found(self, &iba, hypervisor_print);
-	}
-#endif	/* DOM0OPS && NISA */
-#endif	/* NPCI */
+#endif /* NPCI */
+
 #ifdef DOM0OPS
 	if (xen_start_info.flags & SIF_PRIVILEGED) {
 #if 0
@@ -258,7 +267,6 @@ hypervisor_attach(struct device *parent, struct device *self, void *aux)
 #endif	/* 0 */
 }
 
-#if NXENCONS > 0 || NXENNET > 0 || NXBC > 0 || NNPX > 0
 static int
 hypervisor_print(void *aux, const char *parent)
 {
@@ -268,7 +276,6 @@ hypervisor_print(void *aux, const char *parent)
 		printf("%s at %s", hac->hac_device, parent);
 	return (UNCONF);
 }
-#endif
 
 
 #ifdef DOM0OPS

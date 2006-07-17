@@ -58,15 +58,7 @@ pciide_machdep_compat_intr_establish(struct device *dev,
 				struct pci_attach_args *pa,
 				int chan, int (*func)(void *), void *arg)
 {
-	physdev_op_t physdev_op;
 	struct pintrhand *ih;
-
-	physdev_op.cmd = PHYSDEVOP_PCI_INITIALISE_DEVICE;
-	physdev_op.u.pci_cfgreg_read.bus = pa->pa_bus;
-	physdev_op.u.pci_cfgreg_read.dev = pa->pa_device;
-	physdev_op.u.pci_cfgreg_read.func = pa->pa_function;
-	if (HYPERVISOR_physdev_op(&physdev_op) < 0)
-		panic("HYPERVISOR_physdev_op(PHYSDEVOP_PCI_INITIALISE_DEVICE)");
 
 	ih = pirq_establish(PCIIDE_COMPAT_IRQ(chan),
 	    bind_pirq_to_evtch(PCIIDE_COMPAT_IRQ(chan)), func, arg, IPL_BIO);

@@ -63,6 +63,7 @@ typedef struct xen_intr_handle pci_intr_handle_t;
  * i386-specific PCI variables and functions.
  * NOT TO BE USED DIRECTLY BY MACHINE INDEPENDENT CODE.
  */
+extern int	pci_mode;
 int		pci_mode_detect(void);
 
 /* functions provided to MI PCI */
