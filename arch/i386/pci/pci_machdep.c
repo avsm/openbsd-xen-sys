@@ -312,7 +312,7 @@ pci_conf_write(pc, tag, reg, data)
 }
 
 int
-pci_mode_detect()
+pci_mode_detect(void)
 {
 
 #ifdef PCI_CONF_MODE

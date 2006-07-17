@@ -42,21 +42,29 @@ extern u_int32_t pci_bus_attached[];
 #define PCI_MACHDEP_ENUMERATE_BUS xen_pci_enumerate_bus
 
 /* types provided to MI PCI */
-struct xen_pci_tag {
-	u_int8_t bus;
-	u_int8_t device;
-	u_int8_t function;
-	u_int8_t _pad; /* pad to 32bits */
+union x86_pci_tag_u {
+	u_int32_t mode1;
+	struct {
+		u_int16_t port;
+		u_int8_t enable;
+		u_int8_t forward;
+	} mode2;
 };
+typedef union x86_pci_tag_u pcitag_t;
 
 struct xen_intr_handle {
 	int pirq;
 	int evtch;
 };
 
-typedef struct xen_pci_tag pcitag_t;
 typedef void *pci_chipset_tag_t;
 typedef struct xen_intr_handle pci_intr_handle_t;
+
+/*
+ * i386-specific PCI variables and functions.
+ * NOT TO BE USED DIRECTLY BY MACHINE INDEPENDENT CODE.
+ */
+int		pci_mode_detect(void);
 
 /* functions provided to MI PCI */
 struct pci_attach_args;
