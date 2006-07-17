@@ -39,7 +39,6 @@ extern u_int32_t pci_bus_attached[];
 /* Some values appropriate for x86, from x86/include/pci_machdep.h */
 #define __HAVE_PCIIDE_MACHDEP_COMPAT_INTR_ESTABLISH
 #define PCI_PREFER_IOSPACE
-#define PCI_MACHDEP_ENUMERATE_BUS xen_pci_enumerate_bus
 
 /* types provided to MI PCI */
 union x86_pci_tag_u {
@@ -84,8 +83,6 @@ const struct evcnt *pci_intr_evcnt(pci_chipset_tag_t, pci_intr_handle_t);
 void		*pci_intr_establish(pci_chipset_tag_t, pci_intr_handle_t,
 		    int, int (*)(void *), void *, char *);
 void		pci_intr_disestablish(pci_chipset_tag_t, void *);
-int		xen_pci_enumerate_bus(struct pci_softc *, /* const int *, */
-		   int (*)(struct pci_attach_args *), struct pci_attach_args *);
 
 /*
  * Section 6.2.4, `Miscellaneous Functions' of the PCI Specification,
