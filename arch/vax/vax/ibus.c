@@ -1,4 +1,4 @@
-/*	$OpenBSD: ibus.c,v 1.4 2001/08/25 13:33:37 hugh Exp $	*/
+/*	$OpenBSD: ibus.c,v 1.6 2006/07/20 19:08:15 miod Exp $	*/
 /*	$NetBSD: ibus.c,v 1.7 2001/02/04 20:36:32 ragge Exp $ */
 /*
  * Copyright (c) 1999 Ludd, University of Lule}, Sweden.
@@ -57,7 +57,7 @@ ibus_print(void *aux, const char *name)
 	struct bp_conf *bp = aux;
 
 	if (name)
-		printf("device %s at %s", bp->type, name);
+		printf("%s at %s", bp->type, name);
 
 	return (UNCONF);
 }
@@ -66,7 +66,9 @@ ibus_print(void *aux, const char *name)
 int
 ibus_match(struct device *parent, struct cfdata *cf, void *aux)
 {
-	if (vax_bustype == VAX_IBUS)
+	struct mainbus_attach_args *maa = aux;
+
+	if (maa->maa_bustype == VAX_IBUS)
 		return 1;
 	return 0;
 }
@@ -108,7 +110,12 @@ ibus_attach(parent, self, aux)
 	 * The same procedure for SHAC.
 	 */
 	bp.type = "shac";
-	if (vax_boardtype == VAX_BTYP_1303)
+	/*
+	 * XXX Clearly the address on Cheetah machines varies between models,
+	 * XXX but I could only check the address on a 4000 105A so far. -- miod
+	 */
+	if (vax_boardtype == VAX_BTYP_1303 &&
+	    ((vax_siedata >> 8) & 0xFF) != VAX_STYP_53)
 		va = vax_map_physmem(SHAC1303ADDR, 1);
 	else
 		va = vax_map_physmem(SHACADDR, 1);
