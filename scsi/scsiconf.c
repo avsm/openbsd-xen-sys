@@ -1,4 +1,4 @@
-/*	$OpenBSD: scsiconf.c,v 1.106 2006/07/13 11:46:16 krw Exp $	*/
+/*	$OpenBSD: scsiconf.c,v 1.108 2006/07/22 18:03:07 krw Exp $	*/
 /*	$NetBSD: scsiconf.c,v 1.57 1996/05/02 01:09:01 neil Exp $	*/
 
 /*
@@ -90,9 +90,6 @@ int scsidebug_targets = SCSIDEBUG_TARGETS;
 int scsidebug_luns = SCSIDEBUG_LUNS;
 int scsidebug_level = SCSIDEBUG_LEVEL;
 
-int scsiforcelun_buses = SCSIFORCELUN_BUSES;
-int scsiforcelun_targets = SCSIFORCELUN_TARGETS;
-
 int scsi_autoconf = SCSI_AUTOCONF;
 
 int scsibusprint(void *, const char *);
@@ -144,7 +141,7 @@ scsibusattach(struct device *parent, struct device *self, void *aux)
 	sb->sc_link = malloc(nbytes, M_DEVBUF, M_NOWAIT);
 	if (sb->sc_link == NULL)
 		panic("scsibusattach: can't allocate target links");
-	nbytes = 8 * sizeof(struct scsi_link *);
+	nbytes = sb->adapter_link->luns * sizeof(struct scsi_link *);
 	for (i = 0; i < sb->sc_buswidth; i++) {
 		sb->sc_link[i] = malloc(nbytes, M_DEVBUF, M_NOWAIT);
 		if (sb->sc_link[i] == NULL)
@@ -607,9 +604,6 @@ scsi_probedev(struct scsibus_softc *scsi, int target, int lun)
 	}
 
 	if (lun == 0 || scsi->sc_link[target][0] == NULL)
-		;
-	else if (((1 << sc_link->scsibus) & scsiforcelun_buses) &&
-	    ((1 << target) & scsiforcelun_targets))
 		;
 	else if (sc_link->flags & SDEV_UMASS)
 		;
