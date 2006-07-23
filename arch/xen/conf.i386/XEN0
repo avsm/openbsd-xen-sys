@@ -27,6 +27,7 @@ cpu0		at mainbus?
 
 hypervisor*	at mainbus?	# Xen hypervisor
 xencons*	at hypervisor?	# Xen virtual console 
+xenbus*		at hypervisor?	# Xen virtual bus
 bios0		at hypervisor?
 
 # PCI bus support
