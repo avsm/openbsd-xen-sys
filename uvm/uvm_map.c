@@ -1367,13 +1367,8 @@ uvm_map_findspace(map, hint, length, result, uobj, uoffset, align, flags)
 	return (entry);
 
  error:
-	if (align != 0) {
-		UVMHIST_LOG(maphist,
-		    "calling recursively, no align",
-		    0,0,0,0);
-		return (uvm_map_findspace(map, orig_hint,
-			    length, result, uobj, uoffset, 0, flags));
-	}
+	UVMHIST_LOG(maphist, "<- failed (not found)", 0,0,0,0);
+
 	return (NULL);
 }
 
