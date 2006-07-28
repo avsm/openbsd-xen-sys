@@ -1,5 +1,4 @@
-/*	$OpenBSD: opl_yds.c,v 1.5 2005/11/21 18:16:41 millert Exp $	*/
-/*	$NetBSD$	*/
+/*	$OpenBSD: opl_cmpci.c,v 1.2 2006/07/27 05:55:03 miod Exp $	*/
 
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.
@@ -55,56 +54,50 @@
 #include <dev/midi_if.h>
 #include <dev/ic/oplreg.h>
 #include <dev/ic/oplvar.h>
-#include <dev/ic/ac97.h>
 
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
 
-#include <dev/pci/ydsreg.h>
-#include <dev/pci/ydsvar.h>
+#include <dev/pci/cmpcireg.h>
+#include <dev/pci/cmpcivar.h>
 
-int	opl_yds_match(struct device *, void *, void *);
-void	opl_yds_attach(struct device *, struct device *, void *);
+int	opl_cmpci_match(struct device *, void *, void *);
+void	opl_cmpci_attach(struct device *, struct device *, void *);
 
-struct cfdriver opl_yds_cd = {
-	NULL, "opl_yds", DV_DULL
+struct cfdriver opl_cmpci_cd = {
+	NULL, "opl_cmpci", DV_DULL
 };
 
-struct cfattach opl_yds_ca = {
-	sizeof (struct opl_softc), opl_yds_match, opl_yds_attach
+struct cfattach opl_cmpci_ca = {
+	sizeof (struct opl_softc), opl_cmpci_match, opl_cmpci_attach
 };
 
 int
-opl_yds_match(parent, match, aux)
-	struct device *parent;
-	void *match;
-	void *aux;
+opl_cmpci_match(struct device *parent, void *match, void *aux)
 {
 	struct audio_attach_args *aa = (struct audio_attach_args *)aux;
-	struct yds_softc *ssc = (struct yds_softc *)parent;
+	struct cmpci_softc *ssc = (struct cmpci_softc *)parent;
 	struct opl_attach_arg oaa;
 
 	if (aa->type != AUDIODEV_TYPE_OPL)
 		return (0);
 	memset(&oaa, 0, sizeof oaa);
-	oaa.iot = ssc->sc_opl_iot;
-	oaa.ioh = ssc->sc_opl_ioh;
+	oaa.iot = ssc->sc_iot;
+	oaa.ioh = ssc->sc_ioh;
+	oaa.offs = CMPCI_REG_FM_BASE;
 	return (opl_find(&oaa));
 }
 
 void
-opl_yds_attach(parent, self, aux)
-	struct device *parent;
-	struct device *self;
-	void *aux;
+opl_cmpci_attach(struct device *parent, struct device *self, void *aux)
 {
-	struct yds_softc *ssc = (struct yds_softc *)parent;
+	struct cmpci_softc *ssc = (struct cmpci_softc *)parent;
 	struct opl_softc *sc = (struct opl_softc *)self;
 
-	sc->ioh = ssc->sc_opl_ioh;
-	sc->iot = ssc->sc_opl_iot;
-	sc->offs = 0;
-	strlcpy(sc->syn.name, "DS-1 integrated ", sizeof sc->syn.name);
+	sc->ioh = ssc->sc_ioh;
+	sc->iot = ssc->sc_iot;
+	sc->offs = CMPCI_REG_FM_BASE;
+	strlcpy(sc->syn.name, "CMPCI ", sizeof sc->syn.name);
 
 	opl_attach(sc);
 }
