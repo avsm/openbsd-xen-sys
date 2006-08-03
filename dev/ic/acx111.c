@@ -1,4 +1,4 @@
-/* $Id: acx111.c,v 1.1 2006/08/03 08:45:01 mglocker Exp $ */
+/*	$OpenBSD$ */
 
 /*
  * Copyright (c) 2006 The DragonFly Project.  All rights reserved.
