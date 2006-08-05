@@ -2,7 +2,7 @@
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
- *	OpenBSD: pcidevs,v 1.1118 2006/07/31 08:05:40 dlg Exp 
+ *	OpenBSD: pcidevs,v 1.1124 2006/08/03 02:43:56 brad Exp 
  */
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
 
@@ -1049,6 +1049,38 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_PCNETS_PCI,
 	    "79C974 PCnet-PCI",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_GEODE_LX_PCHB,
+	    "Geode LX",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_GEODE_LX_VIDEO,
+	    "Geode LX Video",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_GEODE_LX_CRYPTO,
+	    "Geode LX Crypto",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_CS5536_PCIB,
+	    "CS5536 ISA",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_CS5536_AUDIO,
+	    "CS5536 Audio",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_CS5536_OHCI,
+	    "CS5536 USB",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_CS5536_EHCI,
+	    "CS5536 USB",
+	},
+	{
+	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_CS5536_IDE,
+	    "CS5536 IDE",
 	},
 	{
 	    PCI_VENDOR_AMD, PCI_PRODUCT_AMD_ELANSC520,
@@ -4187,6 +4219,10 @@ static const struct pci_known_product pci_known_products[] = {
 	    "ServeRAID",
 	},
 	{
+	    PCI_VENDOR_IBM, PCI_PRODUCT_IBM_CALGARY_IOMMU,
+	    "Calgary IOMMU",
+	},
+	{
 	    PCI_VENDOR_ICENSEMBLE, PCI_PRODUCT_ICENSEMBLE_ICE1712,
 	    "Envy24 I/O Ctrlr",
 	},
@@ -5387,12 +5423,12 @@ static const struct pci_known_product pci_known_products[] = {
 	    "6300ESB Modem",
 	},
 	{
-	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6300ESB_USB,
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6300ESB_USB_1,
 	    "6300ESB USB",
 	},
 	{
-	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_5300ESB_USB,
-	    "5300ESB USB",
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6300ESB_USB_2,
+	    "6300ESB USB",
 	},
 	{
 	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6300ESB_WDT,
@@ -6265,6 +6301,10 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_ITEXPRESS, PCI_PRODUCT_ITEXPRESS_IT8330G,
 	    "IT8330G",
+	},
+	{
+	    PCI_VENDOR_ITEXPRESS, PCI_PRODUCT_ITEXPRESS_IT8888F_ISA,
+	    "IT8888F ISA",
 	},
 	{
 	    PCI_VENDOR_JMICRON, PCI_PRODUCT_JMICRON_JMB360,
@@ -7829,6 +7869,10 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_NVIDIA, PCI_PRODUCT_NVIDIA_NFORCE3_PPB2,
 	    "nForce3 PCI-PCI",
+	},
+	{
+	    PCI_VENDOR_NVIDIA, PCI_PRODUCT_NVIDIA_CK804_MEM,
+	    "CK804",
 	},
 	{
 	    PCI_VENDOR_NVIDIA, PCI_PRODUCT_NVIDIA_NFORCE3_SMB,

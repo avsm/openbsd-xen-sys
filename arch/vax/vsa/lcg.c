@@ -1,4 +1,4 @@
-/*	$OpenBSD: lcg.c,v 1.3 2006/07/29 14:18:57 miod Exp $	*/
+/*	$OpenBSD: lcg.c,v 1.5 2006/08/01 18:49:42 miod Exp $	*/
 /*
  * Copyright (c) 2006 Miodrag Vallat.
  *
@@ -139,7 +139,7 @@ const struct wsdisplay_accessops lcg_accessops = {
 };
 
 int	lcg_alloc_attr(void *, int, int, int, long *);
-u_int	lcg_probe_screen(u_int32_t, u_int *, u_int *);
+int	lcg_probe_screen(u_int32_t, u_int *, u_int *);
 void	lcg_resetcmap(struct lcg_screen *);
 void	lcg_set_lut_entry(volatile u_int8_t *, const u_char *, u_int, u_int);
 int	lcg_setup_screen(struct lcg_screen *);
@@ -155,7 +155,7 @@ lcg_match(struct device *parent, void *vcf, void *aux)
 	struct vsbus_softc *sc = (void *)parent;
 	struct vsbus_attach_args *va = aux;
 	vaddr_t cfgreg;
-	int depth;
+	int depth, missing;
 	volatile u_int8_t *ch;
 
 	switch (vax_boardtype) {
@@ -171,24 +171,32 @@ lcg_match(struct device *parent, void *vcf, void *aux)
 	}
 
 	/*
-	 * Check for a recognized configuration.
+	 * Check the configuration register.
+	 * This is done to sort out empty frame buffer slots, since the video
+	 * memory test sometimes passes!
 	 */
 	cfgreg = vax_map_physmem(LCG_CONFIG_ADDR, 1);
 	depth = lcg_probe_screen(*(volatile u_int32_t *)cfgreg, NULL, NULL);
 	vax_unmap_physmem(cfgreg, 1);
-	if (depth == 0)
+	if (depth < 0)	/* no frame buffer */
 		return (0);
 
 	/*
 	 * Check for video memory.
 	 * We can not use badaddr() on these models.
 	 */
-	ch = (volatile u_int8_t *)va->va_addr;
+	missing = 0;
+	ch = (volatile u_int8_t *)vax_map_physmem(LCG_FB_ADDR, 1);
 	*ch = 0x01;
 	if ((*ch & 0x01) == 0)
-		return (0);
-	*ch = 0x00;
-	if ((*ch & 0x01) != 0)
+		missing = 1;
+	else {
+		*ch = 0x00;
+		if ((*ch & 0x01) != 0)
+			missing = 1;
+	}
+	vax_unmap_physmem((vaddr_t)ch, 1);
+	if (missing != 0)
 		return (0);
 
 	sc->sc_mask = 0x04;	/* XXX - should be generated */
@@ -203,10 +211,35 @@ lcg_attach(struct device *parent, struct device *self, void *aux)
 	struct lcg_screen *ss;
 	struct wsemuldisplaydev_attach_args aa;
 	vaddr_t tmp;
+	u_int32_t cfg;
 	int console;
 	extern struct consdev wsdisplay_cons;
 
 	console = (vax_confdata & 0x100) == 0 && cn_tab == &wsdisplay_cons;
+
+	/*
+	 * Check for a recognized configuration register.
+	 * If we do not recognize it, print it and do not attach - so that
+	 * this gets noticed...
+	 */
+	if (!console) {
+		tmp = vax_map_physmem(LCG_CONFIG_ADDR, 1);
+		if (tmp == NULL) {
+			printf("\n%s: can not map configuration register\n",
+			    self->dv_xname);
+			return;
+		}
+		cfg = *(volatile u_int32_t *)tmp;
+		vax_unmap_physmem(tmp, 1);
+
+		if (lcg_probe_screen(cfg, NULL, NULL) <= 0) {
+			printf("\n%s:"
+			    " unrecognized configuration register %08x\n",
+			    self->dv_xname, cfg);
+			return;
+		}
+	}
+
 	if (console) {
 		ss = &lcg_consscr;
 		sc->sc_nscreens = 1;
@@ -218,14 +251,7 @@ lcg_attach(struct device *parent, struct device *self, void *aux)
 		}
 		bzero(ss, sizeof(struct lcg_screen));
 
-		tmp = vax_map_physmem(LCG_CONFIG_ADDR, 1);
-		if (tmp == NULL) {
-			printf(": can not map configuration register\n");
-			goto fail1;
-		}
-		ss->ss_cfg = *(volatile u_int32_t *)tmp;
-		vax_unmap_physmem(tmp, 1);
-
+		ss->ss_cfg = cfg;
 		ss->ss_depth = lcg_probe_screen(ss->ss_cfg,
 		    &ss->ss_width, &ss->ss_height);
 		ss->ss_fbsize =
@@ -284,7 +310,7 @@ fail1:
  * Determine if we have a recognized frame buffer, its resolution and
  * color depth.
  */
-u_int
+int
 lcg_probe_screen(u_int32_t cfg, u_int *width, u_int *height)
 {
 	u_int w, h, d = 8;
@@ -292,6 +318,8 @@ lcg_probe_screen(u_int32_t cfg, u_int *width, u_int *height)
 	switch (vax_boardtype) {
 	case VAX_BTYP_46:
 		switch (cfg & 0xf0) {
+		case 0x00:
+			return (-1);	/* no hardware */
 		case 0x20:
 		case 0x60:
 			w = 1024; h = 864;
@@ -307,11 +335,13 @@ lcg_probe_screen(u_int32_t cfg, u_int *width, u_int *height)
 			w = 1280; h = 1024;
 			break;
 		default:
-			return (0);
+			return (0);	/* unknown configuration, please help */
 		}
 		break;
 	case VAX_BTYP_48:
 		switch (cfg & 0x07) {
+		case 0x00:
+			return (-1);	/* no hardware */
 		case 0x05:
 			w = 1280; h = 1024;
 			break;
@@ -330,7 +360,7 @@ lcg_probe_screen(u_int32_t cfg, u_int *width, u_int *height)
 			}
 			break;
 		default:
-			return (0);
+			return (0);	/* unknown configuration, please help */
 		}
 		break;
 	}
@@ -596,7 +626,7 @@ lcgcnprobe()
 		cfg = *(volatile u_int32_t *)
 		    (tmp + (LCG_CONFIG_ADDR & VAX_PGOFSET));
 
-		if (lcg_probe_screen(cfg, NULL, NULL) == 0)
+		if (lcg_probe_screen(cfg, NULL, NULL) <= 0)
 			break;	/* unsupported configuration */
 
 		/*
