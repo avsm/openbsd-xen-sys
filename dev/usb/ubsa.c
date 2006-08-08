@@ -1,4 +1,4 @@
-/*	$OpenBSD: ubsa.c,v 1.14 2006/02/11 09:33:45 brad Exp $ 	*/
+/*	$OpenBSD: ubsa.c,v 1.16 2006/08/07 16:22:44 fkr Exp $ 	*/
 /*	$NetBSD: ubsa.c,v 1.5 2002/11/25 00:51:33 fvdl Exp $	*/
 /*-
  * Copyright (c) 2002, Alexander Kabaev <kan.FreeBSD.org>.
@@ -197,7 +197,7 @@ Static	int  ubsa_param(void *, int, struct termios *);
 Static	int  ubsa_open(void *, int);
 Static	void ubsa_close(void *, int);
 
-Static  void ubsa_break(struct ubsa_softc *sc, int onoff);
+Static	void ubsa_break(struct ubsa_softc *sc, int onoff);
 Static	int  ubsa_request(struct ubsa_softc *, u_int8_t, u_int16_t);
 Static	void ubsa_dtr(struct ubsa_softc *, int);
 Static	void ubsa_rts(struct ubsa_softc *, int);
@@ -227,6 +227,8 @@ Static const struct usb_devno ubsa_devs[] = {
 	{ USB_VENDOR_ETEK, USB_PRODUCT_ETEK_1COM },
 	/* GoHubs GO-COM232 */
 	{ USB_VENDOR_GOHUBS, USB_PRODUCT_GOHUBS_GOCOM232 },
+	/* HUAWEI Mobile */
+	{ USB_VENDOR_HUAWEI, USB_PRODUCT_HUAWEI_E618 },
 	/* Peracom */
 	{ USB_VENDOR_PERACOM, USB_PRODUCT_PERACOM_SERIAL1 },
 	/* Option Vodafone Mobile Connect 3G */
@@ -269,7 +271,7 @@ USB_ATTACH(ubsa)
 	printf("%s: %s\n", devname, devinfop);
 	usbd_devinfo_free(devinfop);
 
-        sc->sc_udev = dev;
+	sc->sc_udev = dev;
 
 	/*
 	 * initialize rts, dtr variables to something

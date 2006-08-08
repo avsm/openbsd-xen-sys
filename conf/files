@@ -1,4 +1,4 @@
-#	$OpenBSD: files,v 1.380 2006/07/18 11:52:12 dlg Exp $
+#	$OpenBSD: files,v 1.383 2006/08/03 16:13:24 mbalmer Exp $
 #	$NetBSD: files,v 1.87 1996/05/19 17:17:50 jonathan Exp $
 
 #	@(#)files.newconf	7.5 (Berkeley) 5/10/93
@@ -78,7 +78,6 @@ define	wsdisplaydev		{[mux = 1]}
 define	wsemuldisplaydev	{[console = -1], [mux = 1]}
 define	wskbddev		{[console = -1], [mux = 1]}
 define	wsmousedev		{[mux = 0]}
-define	wsrasteremulops
 
 # SMC 93Cx6 Serial EEPROM devices
 define	smc93cx6
@@ -368,6 +367,12 @@ device	ral: ether, ifnet, ifmedia, firmload, wlan
 file	dev/ic/rt2560.c			ral
 file	dev/ic/rt2661.c			ral
 
+# Texas Instruments ACX 802.11
+device	acx: ether, ifnet, ifmedia, firmload, wlan
+file	dev/ic/acx.c			acx
+file	dev/ic/acx111.c			acx
+file	dev/ic/acx100.c			acx
+
 # Attributes which machine-independent bus support can be attached to.
 # These should be defined here, because some of these busses can have
 # devices which provide these attributes, and we'd like to avoid hairy
@@ -415,7 +420,6 @@ pseudo-device rd: disk
 file	dev/ramdisk.c			rd needs-flag
 
 pseudo-device pty: tty
-pseudo-device tb: tty
 
 pseudo-device loop: ifnet
 pseudo-device sl: ifnet
@@ -652,7 +656,6 @@ file kern/tty.c
 file kern/tty_conf.c
 file kern/tty_pty.c			pty			needs-count
 file kern/tty_subr.c
-file kern/tty_tb.c			tb			needs-count
 file kern/tty_tty.c
 file kern/uipc_domain.c
 file kern/uipc_mbuf.c

@@ -1,4 +1,4 @@
-/*	$OpenBSD: armish_machdep.c,v 1.6 2006/07/20 02:48:03 deraadt Exp $ */
+/*	$OpenBSD: armish_machdep.c,v 1.8 2006/08/01 15:44:24 deraadt Exp $ */
 /*	$NetBSD: lubbock_machdep.c,v 1.2 2003/07/15 00:25:06 lukem Exp $ */
 
 /*
@@ -148,7 +148,7 @@ u_int cpu_reset_address = 0;
 
 BootConfig bootconfig;		/* Boot config storage */
 char *boot_args = NULL;
-char *boot_file = "wd0a";
+char *boot_file = NULL;
 
 paddr_t physical_start;
 paddr_t physical_freestart;
@@ -234,6 +234,7 @@ int comcnmode = CONMODE;
  * then reset the CPU.
  */
 void	board_reset(void);
+void	board_powerdown(void);
 void
 boot(int howto)
 {
@@ -283,6 +284,11 @@ boot(int howto)
 	IRQdisable;
 
 	if (howto & RB_HALT) {
+		if (howto & RB_POWERDOWN) {
+			board_powerdown();
+			printf("WARNING: powerdown failed!\n");
+		}
+
 		printf("The operating system has halted.\n");
 		printf("Please press any key to reboot.\n\n");
 		cngetc();

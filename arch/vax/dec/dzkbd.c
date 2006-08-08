@@ -1,4 +1,4 @@
-/*	$OpenBSD: dzkbd.c,v 1.7 2006/07/30 18:35:10 miod Exp $	*/
+/*	$OpenBSD: dzkbd.c,v 1.10 2006/08/03 20:19:29 miod Exp $	*/
 /*	$NetBSD: dzkbd.c,v 1.1 2000/12/02 17:03:55 ragge Exp $	*/
 
 /*
@@ -114,10 +114,10 @@ const struct wskbd_consops dzkbd_consops = {
 
 const struct wskbd_mapdata dzkbd_keymapdata = {
 	lkkbd_keydesctab,
-#ifdef DZKBD_LAYOUT
-	DZKBD_LAYOUT,
+#ifdef LKKBD_LAYOUT
+	LKKBD_LAYOUT,
 #else
-	KB_US | KB_LK401,
+	KB_US,
 #endif
 };
 
@@ -224,7 +224,7 @@ dzkbd_cngetc(void *v, u_int *type, int *data)
 
 	do {
 		c = dzgetc(dzi->dzi_ls);
-	} while (!lk201_decode(&dzi->dzi_ks, 1, c, type, data));
+	} while (lk201_decode(&dzi->dzi_ks, 1, 0, c, type, data) == LKD_NODATA);
 }
 
 void
@@ -250,14 +250,13 @@ dzkbd_ioctl(void *v, u_long cmd, caddr_t data, int flag, struct proc *p)
 
 	switch (cmd) {
 	case WSKBDIO_GTYPE:
-		*(int *)data = WSKBD_TYPE_LK201;
+		*(int *)data = lk201_get_type(&sc->sc_itl->dzi_ks);
 		return 0;
 	case WSKBDIO_SETLEDS:
 		lk201_set_leds(&sc->sc_itl->dzi_ks, *(int *)data);
 		return 0;
 	case WSKBDIO_GETLEDS:
-		/* XXX don't dig in kbd internals */
-		*(int *)data = sc->sc_itl->dzi_ks.leds_state;
+		*(int *)data = lk201_get_leds(&sc->sc_itl->dzi_ks);
 		return 0;
 	case WSKBDIO_COMPLEXBELL:
 		lk201_bell(&sc->sc_itl->dzi_ks,
@@ -273,14 +272,18 @@ dzkbd_input(void *v, int data)
 	struct dzkbd_softc *sc = (struct dzkbd_softc *)v;
 	u_int type;
 	int val;
+	int decode;
 
 	/*
 	 * We want to run through lk201_decode always, so that a late plugged
 	 * keyboard will get configured correctly.
 	 */
-	if (lk201_decode(&sc->sc_itl->dzi_ks, sc->sc_enabled, data,
-	    &type, &val))
-		wskbd_input(sc->sc_wskbddev, type, val);
+	do {
+		decode = lk201_decode(&sc->sc_itl->dzi_ks, sc->sc_enabled, 1,
+		    data, &type, &val);
+		if (decode != LKD_NODATA)
+			wskbd_input(sc->sc_wskbddev, type, val);
+	} while (decode == LKD_MORE);
 
 	return(1);
 }

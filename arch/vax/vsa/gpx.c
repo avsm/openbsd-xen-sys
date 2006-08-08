@@ -1,4 +1,4 @@
-/*	$OpenBSD: gpx.c,v 1.6 2006/07/29 19:04:37 miod Exp $	*/
+/*	$OpenBSD: gpx.c,v 1.9 2006/08/01 18:50:48 miod Exp $	*/
 /*
  * Copyright (c) 2006 Miodrag Vallat.
  *
@@ -145,6 +145,7 @@ struct	gpx_screen {
 	u_int		ss_gpr;		/* font glyphs per row */
 	struct adder	*ss_adder;
 	void 		*ss_vdac;
+	u_int8_t	ss_cmap[256 * 3];
 	/* struct dc503reg *ss_cursor; */
 };
 
@@ -202,6 +203,10 @@ const struct wsdisplay_accessops gpx_accessops = {
 void	gpx_clear_screen(struct gpx_screen *);
 void	gpx_copyrect(struct gpx_screen *, int, int, int, int, int, int);
 void	gpx_fillrect(struct gpx_screen *, int, int, int, int, long, u_int);
+int	gpx_getcmap(struct gpx_screen *, struct wsdisplay_cmap *);
+void	gpx_loadcmap(struct gpx_screen *, int, int);
+int	gpx_putcmap(struct gpx_screen *, struct wsdisplay_cmap *);
+void	gpx_resetcmap(struct gpx_screen *);
 void	gpx_reset_viper(struct gpx_screen *);
 int	gpx_setup_screen(struct gpx_screen *);
 void	gpx_upload_font(struct gpx_screen *);
@@ -257,9 +262,9 @@ gpx_match(struct device *parent, void *vcf, void *aux)
 	if (depth != 0x00f0 && depth != 0x0080)
 		return (0);
 
-	if ((vax_confdata & (KA420_CFG_L3CON | KA420_CFG_MULTU)) == 0 &&
+	/* when already running as console, always fake things */
+	if ((vax_confdata & KA420_CFG_L3CON) == 0 &&
 	    cn_tab == &wsdisplay_cons) {
-		/* when already running as console, fake things */
 		struct vsbus_softc *sc = (void *)parent;
 		sc->sc_mask = 0x08;
 		scb_fake(0x44, oldvsbus ? 0x14 : 0x15);
@@ -268,7 +273,7 @@ gpx_match(struct device *parent, void *vcf, void *aux)
 		    GPX_ADDER_OFFSET, 1);
 		if (adder == NULL)
 			return (0);
-		adder->interrupt_enable = VSYNC;
+		adder->interrupt_enable = FRAME_SYNC;
 		DELAY(100000);	/* enough to get a retrace interrupt */
 		adder->interrupt_enable = 0;
 		vax_unmap_physmem((vaddr_t)adder, 1);
@@ -287,7 +292,7 @@ gpx_attach(struct device *parent, struct device *self, void *aux)
 	vaddr_t tmp;
 	extern struct consdev wsdisplay_cons;
 
-	console = (vax_confdata & (KA420_CFG_L3CON | KA420_CFG_MULTU)) == 0 &&
+	console = (vax_confdata & KA420_CFG_L3CON) == 0 &&
 	    cn_tab == &wsdisplay_cons;
 	if (console) {
 		scr = &gpx_consscr;
@@ -356,6 +361,8 @@ gpx_ioctl(void *v, u_long cmd, caddr_t data, int flag, struct proc *p)
 	struct gpx_softc *sc = v;
 	struct gpx_screen *ss = sc->sc_scr;
 	struct wsdisplay_fbinfo *wdf;
+	struct wsdisplay_cmap *cm;
+	int error;
 
 	switch (cmd) {
 	case WSDISPLAYIO_GTYPE:
@@ -371,8 +378,18 @@ gpx_ioctl(void *v, u_long cmd, caddr_t data, int flag, struct proc *p)
 		break;
 
 	case WSDISPLAYIO_GETCMAP:
+		cm = (struct wsdisplay_cmap *)data;
+		error = gpx_getcmap(ss, cm);
+		if (error != 0)
+			return (error);
+		break;
 	case WSDISPLAYIO_PUTCMAP:
-		break;	/* XXX TBD */
+		cm = (struct wsdisplay_cmap *)data;
+		error = gpx_putcmap(ss, cm);
+		if (error != 0)
+			return (error);
+		gpx_loadcmap(ss, cm->index, cm->count);
+		break;
 
 	case WSDISPLAYIO_GVIDEO:
 	case WSDISPLAYIO_SVIDEO:
@@ -460,16 +477,16 @@ gpx_putchar(void *v, int row, int col, u_int uc, long attr)
 	struct rasops_info *ri = v;
 	struct gpx_screen *ss = ri->ri_hw;
 	struct wsdisplay_font *font = ri->ri_font;
-	int dx, dy, sx, sy, fg, bg;
+	int dx, dy, sx, sy, fg, bg, ul;
 
-	rasops_unpack_attr(attr, &fg, &bg, NULL);
+	rasops_unpack_attr(attr, &fg, &bg, &ul);
 
 	/* find where to output the glyph... */
 	dx = col * font->fontwidth + ri->ri_xorigin;
 	dy = row * font->fontheight + ri->ri_yorigin;
 	/* ... and where to pick it from */
 	uc -= font->firstchar;
-	sx = (uc % ss->ss_gpr) * font->fontwidth;
+	sx = (uc % ss->ss_gpr) * font->stride * NBBY;
 	sy = GPX_HEIGHT - (1 + uc / ss->ss_gpr) * font->fontheight;
 
 	/* setup VIPER operand control registers */
@@ -502,6 +519,11 @@ gpx_putchar(void *v, int row, int col, u_int uc, long attr)
 	ss->ss_adder->source_1_dx = font->fontwidth;
 	ss->ss_adder->source_1_dy = font->fontheight;
 	ss->ss_adder->cmd = RASTEROP | OCRB | S1E | DTE | LF_R1;
+
+	if (ul != 0) {
+		gpx_fillrect(ss, dx, dy + font->fontheight - 2, font->fontwidth,
+		    1, attr, LF_R3);	/* fg fill */
+	}
 }
 
 void
@@ -625,6 +647,7 @@ gpx_reset_viper(struct gpx_screen *ss)
 {
 	int i;
 
+	ss->ss_adder->interrupt_enable = 0;
 	ss->ss_adder->command = CANCEL;
 	/* set monitor timing */
 	ss->ss_adder->x_scan_count_0 = 0x2800;
@@ -760,6 +783,8 @@ gpx_reset_viper(struct gpx_screen *ss)
 	gpx_viper_write(ss, LU_FUNCTION_R1, FULL_SRC_RESOLUTION | LF_SOURCE);
 	/* erase{cols,rows} */
 	gpx_viper_write(ss, LU_FUNCTION_R2, FULL_SRC_RESOLUTION | LF_ZEROS);
+	/* underline */
+	gpx_viper_write(ss, LU_FUNCTION_R3, FULL_SRC_RESOLUTION | LF_ONES);
 	/* cursor */
 	gpx_viper_write(ss, LU_FUNCTION_R4, FULL_SRC_RESOLUTION | LF_NOT_D);
 }
@@ -799,8 +824,7 @@ int
 gpx_setup_screen(struct gpx_screen *ss)
 {
 	struct rasops_info *ri = &ss->ss_ri;
-	const u_char *cmap;
-	int i, color12;
+	int cookie;
 
 	bzero(ri, sizeof(*ri));
 	ri->ri_depth = 8;	/* masquerade as a 8 bit device for rasops */
@@ -815,11 +839,17 @@ gpx_setup_screen(struct gpx_screen *ss)
 	 * a font with right-to-left bit order on this frame buffer.
 	 */
 	wsfont_init();
-	if ((ri->ri_wsfcookie = wsfont_find(NULL, 8, 15, 0)) <= 0)
+	cookie = wsfont_find(NULL, 12, 0, 0);
+	if (cookie <= 0)
+		cookie = wsfont_find(NULL, 8, 0, 0);
+	if (cookie <= 0)
+		cookie = wsfont_find(NULL, 0, 0, 0);
+	if (cookie <= 0)
 		return (-1);
-	if (wsfont_lock(ri->ri_wsfcookie, &ri->ri_font,
+	if (wsfont_lock(cookie, &ri->ri_font,
 	    WSDISPLAY_FONTORDER_R2L, WSDISPLAY_FONTORDER_L2R) <= 0)
 		return (-1);
+	ri->ri_wsfcookie = cookie;
 
 	/*
 	 * Ask for an unholy big display, rasops will trim this to more
@@ -843,7 +873,7 @@ gpx_setup_screen(struct gpx_screen *ss)
 	gpx_stdscreen.textops = &ri->ri_ops;
 	gpx_stdscreen.fontwidth = ri->ri_font->fontwidth;
 	gpx_stdscreen.fontheight = ri->ri_font->fontheight;
-	gpx_stdscreen.capabilities = ri->ri_caps & ~WSSCREEN_UNDERLINE;
+	gpx_stdscreen.capabilities = ri->ri_caps;
 
 	/*
 	 * Initialize RAMDAC.
@@ -866,22 +896,7 @@ gpx_setup_screen(struct gpx_screen *ss)
 	/*
 	 * Initialize colormap.
 	 */
-	gpx_wait(ss, FRAME_SYNC);
-	cmap = rasops_cmap;
-	if (ss->ss_depth == 8) {
-		struct ramdac8 *rd = ss->ss_vdac;
-		rd->address = 0;
-		for (i = 0; i < 256 * 3; i++)
-			rd->cmapdata = *cmap++;
-	} else {
-		struct ramdac4 *rd = ss->ss_vdac;
-		for (i = 0; i < 16; i++) {
-			color12  = (*cmap++ >> 4) << 8;
-			color12 |= (*cmap++ >> 4) << 4;
-			color12 |= (*cmap++ >> 4) << 0;
-			rd->colormap[i] = color12;
-		}
-	}
+	gpx_resetcmap(ss);
 
 	/*
 	 * Clear display (including non-visible area), in 864 lines chunks.
@@ -930,24 +945,21 @@ gpx_upload_font(struct gpx_screen *ss)
 	gpx_wait(ss, RASTEROP_COMPLETE);
 
 	/*
-	 * Load font data. The 8x15 font fits on two ``lines'' at the end
-	 * of the display (this also assumes the font has an even number
-	 * of glyphs; if it doesn't, the last glyph will render as empty).
+	 * Load font data. The font is uploaded in 8 or 16 bit wide cells, on
+	 * as many ``lines'' as necessary at the end of the display.
 	 */
-	ss->ss_gpr = MIN(GPX_WIDTH / font->fontwidth, font->numchars);
+	ss->ss_gpr = MIN(GPX_WIDTH / (NBBY * font->stride), font->numchars);
 	if (ss->ss_gpr & 1)
 		ss->ss_gpr--;
 	fontbits = font->data;
-	for (row = 1, remaining = font->numchars; remaining > 1;
+	for (row = 1, remaining = font->numchars; remaining != 0;
 	    row++, remaining -= nchars) {
 		nchars = MIN(ss->ss_gpr, remaining);
-		if (nchars & 1)
-			nchars--;
 
 		ss->ss_adder->destination_x = 0;
 		ss->ss_adder->destination_y =
 		    GPX_HEIGHT - row * font->fontheight;
-		ss->ss_adder->fast_dest_dx = nchars * font->fontwidth;
+		ss->ss_adder->fast_dest_dx = nchars * 16;
 		ss->ss_adder->slow_dest_dy = font->fontheight;
 
 		/* setup for processor to bitmap xfer */
@@ -956,20 +968,35 @@ gpx_upload_font(struct gpx_screen *ss)
 
 		/* iteratively do the processor to bitmap xfer */
 		for (i = font->fontheight; i != 0; i--) {
-			fb = fontbits++;
+			fb = fontbits;
+			fontbits += font->stride;
 			/* PTOB a scan line */
-			for (j = nchars >> 1; j != 0; j--) {
+			for (j = nchars; j != 0; j--) {
 				/* PTOB one scan of a char cell */
-				data = *fb;
-				fb += font->fontheight;
-				data |= ((u_int16_t)*fb) << 8;
-				fb += font->fontheight;
+				if (font->stride == 1) {
+					data = *fb;
+					fb += font->fontheight;
+					/*
+					 * Do not access past font memory if
+					 * it has an odd number of characters
+					 * and this is the last pair.
+					 */
+					if (j != 1 || (nchars & 1) == 0 ||
+					    remaining != nchars) {
+						data |= ((u_int16_t)*fb) << 8;
+						fb += font->fontheight;
+					}
+				} else {
+					data =
+					    fb[0] | (((u_int16_t)fb[1]) << 8);
+					fb += font->fontheight * font->stride;
+				}
 
 				gpx_wait(ss, TX_READY);
 				ss->ss_adder->id_data = data;
 			}
 		}
-		fontbits += (nchars - 1) * font->fontheight;
+		fontbits += (nchars - 1) * font->stride * font->fontheight;
 	}
 }
 
@@ -1038,6 +1065,113 @@ gpx_fillrect(struct gpx_screen *ss, int x, int y, int dx, int dy, long attr,
 	ss->ss_adder->source_1_y = y;
 	ss->ss_adder->source_1_dy = dy;
 	ss->ss_adder->cmd = RASTEROP | OCRB | S1E | DTE | function;
+}
+
+/*
+ * Colormap handling routines
+ */
+
+int
+gpx_getcmap(struct gpx_screen *ss, struct wsdisplay_cmap *cm)
+{
+	u_int index = cm->index, count = cm->count, i;
+	u_int colcount = 1 << ss->ss_depth;
+	int error;
+	u_int8_t ramp[256], *c, *r;
+
+	if (index >= colcount || count > colcount - index)
+		return (EINVAL);
+
+	/* extract reds */
+	c = ss->ss_cmap + 0 + index * 3;
+	for (i = count, r = ramp; i != 0; i--)
+		*r++ = *c << (8 - ss->ss_depth), c += 3;
+	if ((error = copyout(ramp, cm->red, count)) != 0)
+		return (error);
+
+	/* extract greens */
+	c = ss->ss_cmap + 1 + index * 3;
+	for (i = count, r = ramp; i != 0; i--)
+		*r++ = *c << (8 - ss->ss_depth), c += 3;
+	if ((error = copyout(ramp, cm->green, count)) != 0)
+		return (error);
+
+	/* extract blues */
+	c = ss->ss_cmap + 2 + index * 3;
+	for (i = count, r = ramp; i != 0; i--)
+		*r++ = *c << (8 - ss->ss_depth), c += 3;
+	if ((error = copyout(ramp, cm->blue, count)) != 0)
+		return (error);
+
+	return (0);
+}
+
+int
+gpx_putcmap(struct gpx_screen *ss, struct wsdisplay_cmap *cm)
+{
+	u_int index = cm->index, count = cm->count;
+	u_int colcount = 1 << ss->ss_depth;
+	int i, error;
+	u_int8_t r[256], g[256], b[256], *nr, *ng, *nb, *c;
+
+	if (index >= colcount || count > colcount - index)
+		return (EINVAL);
+
+	if ((error = copyin(cm->red, r, count)) != 0)
+		return (error);
+	if ((error = copyin(cm->green, g, count)) != 0)
+		return (error);
+	if ((error = copyin(cm->blue, b, count)) != 0)
+		return (error);
+
+	nr = r, ng = g, nb = b;
+	c = ss->ss_cmap + index * 3;
+	for (i = count; i != 0; i--) {
+		*c++ = *nr++ >> (8 - ss->ss_depth);
+		*c++ = *ng++ >> (8 - ss->ss_depth);
+		*c++ = *nb++ >> (8 - ss->ss_depth);
+	}
+
+	return (0);
+}
+
+void
+gpx_loadcmap(struct gpx_screen *ss, int from, int count)
+{
+	u_int8_t *cmap = ss->ss_cmap;
+	int i, color12;
+
+	gpx_wait(ss, FRAME_SYNC);
+	if (ss->ss_depth == 8) {
+		struct ramdac8 *rd = ss->ss_vdac;
+
+		cmap += from * 3;
+		rd->address = from;
+		for (i = 0; i < count * 3; i++)
+			rd->cmapdata = *cmap++;
+	} else {
+		struct ramdac4 *rd = ss->ss_vdac;
+
+		cmap = ss->ss_cmap + from;
+		for (i = from; i < from + count; i++) {
+			color12  = *cmap++ << 8;
+			color12 |= *cmap++ << 4;
+			color12 |= *cmap++ << 0;
+			rd->colormap[i] = color12;
+		}
+	}
+}
+
+void
+gpx_resetcmap(struct gpx_screen *ss)
+{
+	if (ss->ss_depth == 8)
+		bcopy(rasops_cmap, ss->ss_cmap, sizeof(ss->ss_cmap));
+	else {
+		bcopy(rasops_cmap, ss->ss_cmap, 8 * 3);
+		bcopy(rasops_cmap + 0xf8 * 3, ss->ss_cmap + 8 * 3, 8 * 3);
+	}
+	gpx_loadcmap(ss, 0, 1 << ss->ss_depth);
 }
 
 /*

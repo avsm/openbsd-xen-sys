@@ -1,4 +1,4 @@
-/*	$OpenBSD: lk201_ws.c,v 1.6 2006/07/31 06:47:25 miod Exp $	*/
+/*	$OpenBSD: lk201_ws.c,v 1.8 2006/07/31 21:57:05 miod Exp $	*/
 /* $NetBSD: lk201_ws.c,v 1.2 1998/10/22 17:55:20 drochner Exp $ */
 
 /*
@@ -142,29 +142,24 @@ lk201_identify(void *v)
 }
 
 int
-lk201_decode(struct lk201_state *lks, int active, int datain, u_int *type,
-    int *dataout)
+lk201_decode(struct lk201_state *lks, int active, int wantmulti, int datain,
+    u_int *type, int *dataout)
 {
 	int i, freeslot;
 
 	if (lks->waitack != 0) {
 		lks->ackdata = datain;
 		lks->waitack = 0;
-		return (0);
+		return (LKD_NODATA);
 	}
 
 	switch (datain) {
-	case LK_KEY_UP:
-		for (i = 0; i < LK_KLL; i++)
-			lks->down_keys_list[i] = -1;
-		*type = WSCONS_EVENT_ALL_KEYS_UP;
-		return (1);
 	case LK_POWER_UP:
 #ifdef DEBUG
 		printf("lk201_decode: powerup detected\n");
 #endif
 		lk201_init(lks);
-		return (0);
+		return (LKD_NODATA);
 	case LK_KDOWN_ERROR:
 	case LK_POWER_ERROR:
 	case LK_OUTPUT_ERROR:
@@ -173,19 +168,49 @@ lk201_decode(struct lk201_state *lks, int active, int datain, u_int *type,
 		/* FALLTHROUGH */
 	case LK_KEY_REPEAT: /* autorepeat handled by wskbd */
 	case LK_MODE_CHANGE: /* ignore silently */
-		return (0);
+		return (LKD_NODATA);
 	}
 
 	if (active == 0)
-		return (0);	/* no need to decode */
+		return (LKD_NODATA);	/* no need to decode */
 
-	if (datain < MIN_LK201_KEY || datain > MAX_LK201_KEY) {
+	if (datain == LK_KEY_UP) {
+		if (wantmulti) {
+			for (i = 0; i < LK_KLL; i++)
+				if (lks->down_keys_list[i] != -1) {
+					*type = WSCONS_EVENT_KEY_UP;
+					*dataout = lks->down_keys_list[i] -
+					    MIN_LK201_KEY;
+					lks->down_keys_list[i] = -1;
+					return (LKD_MORE);
+				}
+			return (LKD_NODATA);
+		} else {
+			for (i = 0; i < LK_KLL; i++)
+				lks->down_keys_list[i] = -1;
+			*type = WSCONS_EVENT_ALL_KEYS_UP;
+			return (LKD_COMPLETE);
+		}
+	} else if (datain < MIN_LK201_KEY || datain > MAX_LK201_KEY) {
 #ifdef DEBUG
 		/* this can happen while hotplugging the keyboard */
 		printf("lk201_decode: %x\n", datain);
 #endif
-		return (0);
+		return (LKD_NODATA);
 	}
+
+	/*
+	 * The LK-201 keyboard has a compose key (to the left of the spacebar),
+	 * but no alt/meta key at all. The LK-401 keyboard fixes this and has
+	 * two compose keys and two alt keys.
+	 *
+	 * If the keyboard is an LK-201, translate the left compose key
+	 * scancode to a specific key code, which will map as a left alt key,
+	 * and compose key when shifted), so that the user can have both
+	 * an alt and a compose key available.
+	 */
+	if (lks->kbdtype == KBD_LK201 && datain == 177)
+		datain = 252;
 
 	*dataout = datain - MIN_LK201_KEY;
 
@@ -194,7 +219,7 @@ lk201_decode(struct lk201_state *lks, int active, int datain, u_int *type,
 		if (lks->down_keys_list[i] == datain) {
 			*type = WSCONS_EVENT_KEY_UP;
 			lks->down_keys_list[i] = -1;
-			return (1);
+			return (LKD_COMPLETE);
 		}
 		if (lks->down_keys_list[i] == -1 && freeslot == -1)
 			freeslot = i;
@@ -202,18 +227,16 @@ lk201_decode(struct lk201_state *lks, int active, int datain, u_int *type,
 
 	if (freeslot == -1) {
 		printf("lk201_decode: down(%d) no free slot\n", datain);
-		return (0);
+		return (LKD_NODATA);
 	}
 
 	*type = WSCONS_EVENT_KEY_DOWN;
 	lks->down_keys_list[freeslot] = datain;
-	return (1);
+	return (LKD_COMPLETE);
 }
 
 void
-lk201_bell(lks, bell)
-	struct lk201_state *lks;
-	struct wskbd_bell_data *bell;
+lk201_bell(struct lk201_state *lks, struct wskbd_bell_data *bell)
 {
 	unsigned int vol;
 
@@ -232,10 +255,46 @@ lk201_bell(lks, bell)
 	send(lks, LK_RING_BELL);
 }
 
+int
+lk201_get_leds(struct lk201_state *lks)
+{
+	return (lks->leds_state);
+}
+
+int
+lk201_get_type(struct lk201_state *lks)
+{
+	/*
+	 * Note that we report LK201 even if no keyboard is
+	 * plugged to avoid confusing wsconsctl.
+	 */
+	if (lks->kbdtype == KBD_LK401)
+		return (WSKBD_TYPE_LK401);
+	else
+		return (WSKBD_TYPE_LK201);
+}
+
 void
-lk201_set_leds(lks, leds)
-	struct lk201_state *lks;
-	int leds;
+lk201_set_keyclick(struct lk201_state *lks, int vol)
+{
+	unsigned int newvol;
+
+	if (vol == 0)
+		send(lks, LK_CL_DISABLE);
+	else {
+		newvol = 8 - vol * 8 / 100;
+		if (newvol > 7)
+			newvol = 7;
+
+		send(lks, LK_CL_ENABLE);
+		send(lks, LK_PARAM_VOLUME(newvol));
+	}
+
+	lks->kcvol = vol;
+}
+
+void
+lk201_set_leds(struct lk201_state *lks, int leds)
 {
 	int newleds;
 
@@ -252,25 +311,4 @@ lk201_set_leds(lks, leds)
 	send(lks, (0x80 | (newleds & 0x0f)));
 
 	lks->leds_state = leds;
-}
-
-void
-lk201_set_keyclick(lks, vol)
-	struct lk201_state *lks;
-	int vol;
-{
-	unsigned int newvol;
-
-	if (vol == 0)
-		send(lks, LK_CL_DISABLE);
-	else {
-		newvol = 8 - vol * 8 / 100;
-		if (newvol > 7)
-			newvol = 7;
-
-		send(lks, LK_CL_ENABLE);
-		send(lks, LK_PARAM_VOLUME(newvol));
-	}
-
-	lks->kcvol = vol;
 }

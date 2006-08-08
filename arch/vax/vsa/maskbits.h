@@ -1,5 +1,4 @@
 /*	$OpenBSD: maskbits.h,v 1.5 2005/01/14 22:39:26 miod Exp $	*/
-/*	$NetBSD: maskbits.h,v 1.3 1997/03/31 07:37:28 scottr Exp $	*/
 
 /*-
  * Copyright (c) 1994
@@ -63,22 +62,34 @@ do {									\
 		nlw = (w) >> 5;						\
 } while (0)
 
-#define FASTGETBITS(psrc, x, w, dst) \
-    asm ("bfextu %3{%1:%2},%0" \
-    : "=d" (dst) : "di" (x), "di" (w), "o" (*(char *)(psrc)))
+#define	FASTGETBITS(psrc,x,w,dst)					\
+	__asm__ ("extzv %1,%2,%3,%0"					\
+		: "=g" (dst)						\
+		: "g" (x), "g" (w), "m" (*(char *)(psrc)))
 
-#define FASTPUTBITS(src, x, w, pdst) \
-    asm ("bfins %3,%0{%1:%2}" \
-	 : "=o" (*(char *)(pdst)) \
-	 : "di" (x), "di" (w), "d" (src), "0" (*(char *) (pdst)))
+#define	FASTPUTBITS(src, x, w, pdst)					\
+	__asm__ ("insv %3,%1,%2,%0"					\
+		: "=m" (*(char *)(pdst))				\
+		: "g" (x), "g" (w), "g" (src))
+
+#define	RR_CLEAR	0x00
+#define	RR_SET		0x01
+#define	RR_COPY		0x02
 
 #define getandputrop(psrc, srcbit, dstbit, width, pdst, rop)		\
 do {									\
 	unsigned int _tmpdst;						\
-	if (rop == RR_CLEAR)						\
+	switch (rop) {							\
+	case RR_CLEAR:							\
 		_tmpdst = 0;						\
-	else								\
+		break;							\
+	case RR_SET:							\
+		_tmpdst = ~0;						\
+		break;							\
+	default:							\
 		FASTGETBITS(psrc, srcbit, width, _tmpdst);		\
+		break;							\
+	}								\
 	FASTPUTBITS(_tmpdst, dstbit, width, pdst);			\
 } while (0)
 

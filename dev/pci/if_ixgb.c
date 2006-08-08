@@ -31,7 +31,7 @@ POSSIBILITY OF SUCH DAMAGE.
 
 ***************************************************************************/
 
-/* $OpenBSD: if_ixgb.c,v 1.20 2006/06/22 04:57:28 brad Exp $ */
+/* $OpenBSD: if_ixgb.c,v 1.24 2006/08/04 14:25:24 brad Exp $ */
 
 #include <dev/pci/if_ixgb.h>
 
@@ -87,10 +87,10 @@ void ixgb_disable_intr(struct ixgb_softc *);
 void ixgb_free_transmit_structures(struct ixgb_softc *);
 void ixgb_free_receive_structures(struct ixgb_softc *);
 void ixgb_update_stats_counters(struct ixgb_softc *);
-void ixgb_clean_transmit_interrupts(struct ixgb_softc *);
+void ixgb_txeof(struct ixgb_softc *);
 int  ixgb_allocate_receive_structures(struct ixgb_softc *);
 int  ixgb_allocate_transmit_structures(struct ixgb_softc *);
-void ixgb_process_receive_interrupts(struct ixgb_softc *, int);
+void ixgb_rxeof(struct ixgb_softc *, int);
 void
 ixgb_receive_checksum(struct ixgb_softc *,
 		      struct ixgb_rx_desc * rx_desc,
@@ -100,7 +100,6 @@ ixgb_transmit_checksum_setup(struct ixgb_softc *,
 			     struct mbuf *,
 			     u_int8_t *);
 void ixgb_set_promisc(struct ixgb_softc *);
-void ixgb_disable_promisc(struct ixgb_softc *);
 void ixgb_set_multi(struct ixgb_softc *);
 void ixgb_print_hw_stats(struct ixgb_softc *);
 void ixgb_update_link_status(struct ixgb_softc *);
@@ -379,15 +378,24 @@ ixgb_ioctl(struct ifnet *ifp, u_long command, caddr_t data)
 	case SIOCSIFFLAGS:
 		IOCTL_DEBUGOUT("ioctl rcv'd: SIOCSIFFLAGS (Set Interface Flags)");
 		if (ifp->if_flags & IFF_UP) {
-			if (!(ifp->if_flags & IFF_RUNNING))
-				ixgb_init(sc);
-
-			ixgb_disable_promisc(sc);
-			ixgb_set_promisc(sc);
+			/*
+			 * If only the PROMISC or ALLMULTI flag changes, then
+			 * don't do a full re-init of the chip, just update
+			 * the Rx filter.
+			 */
+			if ((ifp->if_flags & IFF_RUNNING) &&
+			    ((ifp->if_flags ^ sc->if_flags) &
+			     (IFF_ALLMULTI | IFF_PROMISC)) != 0) {
+				ixgb_set_promisc(sc);
+			} else {
+				if (!(ifp->if_flags & IFF_RUNNING))
+					ixgb_init(sc);
+			}
 		} else {
 			if (ifp->if_flags & IFF_RUNNING)
 				ixgb_stop(sc);
 		}
+		sc->if_flags = ifp->if_flags;
 		break;
 	case SIOCADDMULTI:
 	case SIOCDELMULTI:
@@ -507,7 +515,7 @@ ixgb_init(void *arg)
 	}
 	ixgb_initialize_receive_unit(sc);
 
-	/* Don't loose promiscuous settings */
+	/* Don't lose promiscuous settings */
 	ixgb_set_promisc(sc);
 
 	ifp->if_flags |= IFF_RUNNING;
@@ -555,8 +563,8 @@ ixgb_intr(void *arg)
 			rxdmt0 = TRUE;
 
 		if (ifp->if_flags & IFF_RUNNING) {
-			ixgb_process_receive_interrupts(sc, -1);
-			ixgb_clean_transmit_interrupts(sc);
+			ixgb_rxeof(sc, -1);
+			ixgb_txeof(sc);
 		}
 
 		/* Link status change */
@@ -660,11 +668,12 @@ ixgb_encap(struct ixgb_softc *sc, struct mbuf *m_head)
 	 * Force a cleanup if number of TX descriptors available hits the
 	 * threshold
 	 */
-	if (sc->num_tx_desc_avail <= IXGB_TX_CLEANUP_THRESHOLD)
-		ixgb_clean_transmit_interrupts(sc);
 	if (sc->num_tx_desc_avail <= IXGB_TX_CLEANUP_THRESHOLD) {
-		sc->no_tx_desc_avail1++;
-		return (ENOBUFS);
+		ixgb_txeof(sc);
+		if (sc->num_tx_desc_avail <= IXGB_TX_CLEANUP_THRESHOLD) {
+			sc->no_tx_desc_avail1++;
+			return (ENOBUFS);
+		}
 	}
 	/*
 	 * Map the packet for DMA.
@@ -744,26 +753,14 @@ ixgb_set_promisc(struct ixgb_softc *sc)
 
 	if (ifp->if_flags & IFF_PROMISC) {
 		reg_rctl |= (IXGB_RCTL_UPE | IXGB_RCTL_MPE);
-		IXGB_WRITE_REG(&sc->hw, RCTL, reg_rctl);
 	} else if (ifp->if_flags & IFF_ALLMULTI) {
 		reg_rctl |= IXGB_RCTL_MPE;
 		reg_rctl &= ~IXGB_RCTL_UPE;
-		IXGB_WRITE_REG(&sc->hw, RCTL, reg_rctl);
+	} else {
+		reg_rctl &= ~(IXGB_RCTL_UPE | IXGB_RCTL_MPE);
 	}
-}
-
-void
-ixgb_disable_promisc(struct ixgb_softc *sc)
-{
-	u_int32_t       reg_rctl;
-
-	reg_rctl = IXGB_READ_REG(&sc->hw, RCTL);
-
-	reg_rctl &= (~IXGB_RCTL_UPE);
-	reg_rctl &= (~IXGB_RCTL_MPE);
 	IXGB_WRITE_REG(&sc->hw, RCTL, reg_rctl);
 }
-
 
 /*********************************************************************
  *  Multicast Update
@@ -940,13 +937,13 @@ ixgb_allocate_pci_resources(struct ixgb_softc *sc)
 
 	val = pci_conf_read(pa->pa_pc, pa->pa_tag, IXGB_MMBA);
 	if (PCI_MAPREG_TYPE(val) != PCI_MAPREG_TYPE_MEM) {
-		printf(": mmba isn't memory");
+		printf(": mmba is not mem space\n");
 		return (ENXIO);
 	}
 	if (pci_mapreg_map(pa, IXGB_MMBA, PCI_MAPREG_MEM_TYPE(val), 0,
 	    &sc->osdep.mem_bus_space_tag, &sc->osdep.mem_bus_space_handle,
 	    &sc->osdep.ixgb_membase, &sc->osdep.ixgb_memsize, 0)) {
-		printf(": can't find mem space\n");
+		printf(": cannot find mem space\n");
 		return (ENXIO);
 	}
 
@@ -969,7 +966,7 @@ ixgb_allocate_pci_resources(struct ixgb_softc *sc)
 	}
 	printf(": %s", intrstr);
 
-	return(0);
+	return (0);
 }
 
 void
@@ -1347,7 +1344,7 @@ ixgb_transmit_checksum_setup(struct ixgb_softc *sc,
  *
  **********************************************************************/
 void
-ixgb_clean_transmit_interrupts(struct ixgb_softc *sc)
+ixgb_txeof(struct ixgb_softc *sc)
 {
 	int             i, num_avail;
 	struct ixgb_buffer *tx_buffer;
@@ -1683,7 +1680,7 @@ ixgb_free_receive_structures(struct ixgb_softc *sc)
  *
  *********************************************************************/
 void
-ixgb_process_receive_interrupts(struct ixgb_softc *sc, int count)
+ixgb_rxeof(struct ixgb_softc *sc, int count)
 {
 	struct ifnet   *ifp;
 	struct mbuf    *mp;

@@ -1,4 +1,4 @@
-/*	$OpenBSD: ipmi.c,v 1.44 2006/07/28 20:46:12 marco Exp $ */
+/*	$OpenBSD: ipmi.c,v 1.46 2006/08/01 20:02:04 marco Exp $ */
 
 /*
  * Copyright (c) 2005 Jordan Hargrave
@@ -148,6 +148,7 @@ int	get_sdr(struct ipmi_softc *, u_int16_t, u_int16_t *);
 
 int	ipmi_sendcmd(struct ipmi_softc *, int, int, int, int, int, const void*);
 int	ipmi_recvcmd(struct ipmi_softc *, int, int *, void *);
+void	ipmi_delay(struct ipmi_softc *, int);
 
 int	ipmi_watchdog(void *, int);
 
@@ -298,8 +299,8 @@ bmc_io_wait(struct ipmi_softc *sc, int offset, u_int8_t mask, u_int8_t value,
 		tsleep(sc, PWAIT, lbl, 0);
 
 	if (sc->sc_retries > sc->sc_max_retries) {
-		printf("%s: bmc_io_wait fails : v=%.2x m=%.2x b=%.2x %s\n",
-		    DEVNAME(sc), v, mask, value, lbl);
+		dbg_printf(1, "%s: bmc_io_wait fails : v=%.2x m=%.2x "
+		    "b=%.2x %s\n", DEVNAME(sc), v, mask, value, lbl);
 		return (-1);
 	}
 
@@ -717,7 +718,7 @@ kcs_sendmsg(struct ipmi_softc *sc, int len, const u_int8_t * data)
 	}
 	if (sts != KCS_READ_STATE) {
 		dbg_printf(1, "kcs sendmsg = %d/%d <%.2x>\n", idx, len, sts);
-		dumpb("kcs_sendmsg", len, data);
+		dbg_dump(1, "kcs_sendmsg", len, data);
 		return (-1);
 	}
 
@@ -988,7 +989,7 @@ ipmi_sendcmd(struct ipmi_softc *sc, int rssa, int rslun, int netfn, int cmd,
     int txlen, const void *data)
 {
 	u_int8_t	*buf;
-	int		rc;
+	int		rc = -1;
 
 	dbg_printf(50, "ipmi_sendcmd: rssa=%.2x nfln=%.2x cmd=%.2x len=%.2x\n",
 	    rssa, NETFN_LUN(netfn, rslun), cmd, txlen);
@@ -1012,18 +1013,21 @@ ipmi_sendcmd(struct ipmi_softc *sc, int rssa, int rslun, int netfn, int cmd,
 		/* Set message checksum */
 		imbreq->data[txlen] = cksum8(&imbreq->rqSa, txlen + 3);
 #endif
-		return (-1);
+		goto done;
 	} else
 		buf = sc->sc_if->buildmsg(sc, NETFN_LUN(netfn, rslun), cmd,
 		    txlen, data, &txlen);
 
 	if (buf == NULL) {
 		printf("%s: sendcmd malloc fails\n", DEVNAME(sc));
-		return (-1);
+		goto done;
 	}
 	rc = sc->sc_if->sendmsg(sc, txlen, buf);
 	free(buf, M_DEVBUF);
 
+	ipmi_delay(sc, 5); /* give bmc chance to digest command */
+
+done:
 	return (rc);
 }
 
@@ -1059,6 +1063,16 @@ ipmi_recvcmd(struct ipmi_softc *sc, int maxlen, int *rxlen, void *data)
 	free(buf, M_DEVBUF);
 
 	return (rc);
+}
+
+void
+ipmi_delay(struct ipmi_softc *sc, int period)
+{
+	/* period is in 10 ms increments */
+	if (cold)
+		delay(period * 10000);
+	else
+		while (tsleep(sc, PWAIT, "ipmicmd", period) != EWOULDBLOCK);
 }
 
 /* Read a partial SDR entry */
@@ -1532,7 +1546,7 @@ ipmi_refresh_sensors(struct ipmi_softc *sc)
 		sc->current_sensor = SLIST_FIRST(&ipmi_sensor_list);
 
 	if (read_sensor(sc, sc->current_sensor))
-		printf("%s: error reading: %s\n", DEVNAME(sc), 
+		dbg_printf(1, "%s: error reading: %s\n", DEVNAME(sc), 
 		    sc->current_sensor->i_sensor.desc);
 }
 
@@ -1672,9 +1686,11 @@ ipmi_attach(struct device *parent, struct device *self, void *aux)
 	/* Map registers */
 	ipmi_map_regs(sc, ia);
 
+
 	/* Identify BMC device */
-	if (ipmi_sendcmd(sc, BMC_SA, 0, APP_NETFN, APP_GET_DEVICE_ID, 0, NULL)){
-		printf(": unable to send get device id command\n");
+	if (ipmi_sendcmd(sc, BMC_SA, 0, APP_NETFN, APP_GET_DEVICE_ID,
+	    0, NULL)) {
+		printf(": unable to send get device id " "command\n");
 		ipmi_unmap_regs(sc, ia);
 		return;
 	}
@@ -1683,6 +1699,7 @@ ipmi_attach(struct device *parent, struct device *self, void *aux)
 		ipmi_unmap_regs(sc, ia);
 		return;
 	}
+
 	dbg_dump(1, "bmc data", len, cmd);
 
 	/* Scan SDRs, add sensors */
@@ -1718,7 +1735,7 @@ ipmi_attach(struct device *parent, struct device *self, void *aux)
 	/* setup ticker */
 	sc->sc_retries = 0;
 	sc->sc_wakeup = 0;
-	sc->sc_max_retries = 100; /* XXX 1 second the right value? */
+	sc->sc_max_retries = 50; /* 50 * 1/100 = 0.5 seconds max */
 	timeout_set(&sc->sc_timeout, _bmc_io_wait, sc);
 }
 

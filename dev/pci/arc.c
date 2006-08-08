@@ -1,4 +1,4 @@
-/*	$OpenBSD: arc.c,v 1.5 2006/07/31 10:03:22 dlg Exp $ */
+/*	$OpenBSD: arc.c,v 1.14 2006/08/07 21:35:22 dlg Exp $ */
 
 /*
  * Copyright (c) 2006 David Gwynne <dlg@openbsd.org>
@@ -83,43 +83,33 @@ static const struct pci_matchid arc_devices[] = {
 #define ARC_REG_OUTB_ADDR1		0x001c
 #define  ARC_REG_OUTB_ADDR1_FIRMWARE_OK		(1<<31)
 #define ARC_REG_INB_DOORBELL		0x0020
-#define ARC_REG_INB_INTRSTAT		0x0024
-#define  ARC_REG_INB_INTRSTAT_MSG0		(1<<0)
-#define  ARC_REG_INB_INTRSTAT_MSG1		(1<<1)
-#define  ARC_REG_INB_INTRSTAT_DOORBELL		(1<<2)
-#define  ARC_REG_INB_INTRSTAT_DOORBELL_ERR	(1<<3)
-#define  ARC_REG_INB_INTRSTAT_POSTQUEUE		(1<<4)
-#define  ARC_REG_INB_INTRSTAT_QUEUEFULL		(1<<5)
-#define  ARC_REG_INB_INTRSTAT_INDEX		(1<<6)
-#define ARC_REG_INB_INTRMASK	0x0028
-#define  ARC_REG_INB_INTRMASK_MSG0		(1<<0)
-#define  ARC_REG_INB_INTRMASK_MSG1		(1<<1)
-#define  ARC_REG_INB_INTRMASK_DOORBELL		(1<<2)
-#define  ARC_REG_INB_INTRMASK_DOORBELL_ERR	(1<<3)
-#define  ARC_REG_INB_INTRMASK_POSTQUEUE		(1<<4)
-#define  ARC_REG_INB_INTRMASK_QUEUEFULL		(1<<5)
-#define  ARC_REG_INB_INTRMASK_INDEX		(1<<6)
-#define ARC_REG_OUTB_DOORBELL	0x002c
-#define ARC_REG_OUTB_INTRSTAT	0x0030
-#define  ARC_REG_OUTB_INTRSTAT_MSG0		(1<<0)
-#define  ARC_REG_OUTB_INTRSTAT_MSG1		(1<<1)
-#define  ARC_REG_OUTB_INTRSTAT_DOORBELL		(1<<2)
-#define  ARC_REG_OUTB_INTRSTAT_POSTQUEUE	(1<<3)
-#define  ARC_REG_OUTB_INTRSTAT_PCI		(1<<4)
-#define ARC_REG_OUTB_INTRMASK	0x0034
-#define  ARC_REG_OUTB_INTRMASK_MSG0		(1<<0)
-#define  ARC_REG_OUTB_INTRMASK_MSG1		(1<<1)
-#define  ARC_REG_OUTB_INTRMASK_DOORBELL		(1<<2)
-#define  ARC_REG_OUTB_INTRMASK_POSTQUEUE	(1<<3)
-#define  ARC_REG_OUTB_INTRMASK_PCI		(1<<4)
-#define ARC_REG_INB_QUEUE	0x0040
-#define ARC_REG_OUTB_QUEUE	0x0044
-#define ARC_REG_MSGBUF		0x0a00
-#define  ARC_REG_MSGBUF_LEN	256	/* dwords */
-#define ARC_REG_IOC_WBUF	0x0e00
-#define  ARC_REG_IOC_WBUF_LEN	32	/* dwords */
-#define ARC_REG_IOC_RBUF	0x0f00
-#define  ARC_REG_IOC_RBUF_LEN	32	/* dwords */
+#define ARC_REG_OUTB_DOORBELL		0x002c
+#define ARC_REG_INTRSTAT		0x0030
+#define  ARC_REG_INTRSTAT_MSG0			(1<<0)
+#define  ARC_REG_INTRSTAT_MSG1			(1<<1)
+#define  ARC_REG_INTRSTAT_DOORBELL		(1<<2)
+#define  ARC_REG_INTRSTAT_POSTQUEUE		(1<<3)
+#define  ARC_REG_INTRSTAT_PCI			(1<<4)
+#define ARC_REG_INTRMASK		0x0034
+#define  ARC_REG_INTRMASK_MSG0			(1<<0)
+#define  ARC_REG_INTRMASK_MSG1			(1<<1)
+#define  ARC_REG_INTRMASK_DOORBELL		(1<<2)
+#define  ARC_REG_INTRMASK_POSTQUEUE		(1<<3)
+#define  ARC_REG_INTRMASK_PCI			(1<<4)
+#define ARC_REG_POST_QUEUE		0x0040
+#define  ARC_REG_POST_QUEUE_ADDR_SHIFT		5
+#define  ARC_REG_POST_QUEUE_IAMBIOS		(1<<30)
+#define  ARC_REG_POST_QUEUE_BIGFRAME		(1<<31)
+#define ARC_REG_REPLY_QUEUE		0x0044
+#define  ARC_REG_REPLY_QUEUE_ADDR_SHIFT		5
+#define  ARC_REG_REPLY_QUEUE_ERR		(1<<28)
+#define  ARC_REG_REPLY_QUEUE_IAMBIOS		(1<<30)
+#define ARC_REG_MSGBUF			0x0a00
+#define  ARC_REG_MSGBUF_LEN		256	/* dwords */
+#define ARC_REG_IOC_WBUF		0x0e00
+#define  ARC_REG_IOC_WBUF_LEN		32	/* dwords */
+#define ARC_REG_IOC_RBUF		0x0f00
+#define  ARC_REG_IOC_RBUF_LEN		32	/* dwords */
 
 struct arc_msg_firmware_info {
 	u_int32_t		signature;
@@ -157,8 +147,11 @@ struct arc_msg_scsicmd {
 #define ARC_MSG_CDBLEN				16
 	u_int8_t		cdb[ARC_MSG_CDBLEN];
 
-	u_int8_t		dev_stat;
-	u_int8_t		sense_data[15];
+#define ARC_MSG_SENSELEN			16
+	u_int8_t		sense_data[ARC_MSG_SENSELEN];
+#define ARC_MSG_SENSE_TIMEOUT			0xf0
+#define ARC_MSG_SENSE_ABORTED			0xf1
+#define ARC_MSG_SENSE_INIT_FAIL			0xf2
 
 	/* followed by an sgl */
 } __packed;
@@ -166,18 +159,24 @@ struct arc_msg_scsicmd {
 struct arc_sge {
 	u_int32_t		sg_hdr;
 #define ARC_SGE_64BIT				(1<<24)
-	u_int32_t               sg_lo_addr;
+	u_int32_t		sg_lo_addr;
 	u_int32_t		sg_hi_addr;
 } __packed;
 
 #define ARC_MAX_TARGET		16
 #define ARC_MAX_LUN		8
+#define ARC_MAX_IOCMDLEN	512
 
 /* the firmware deals with up to 256 or 512 byte command frames. */
-/* sizeof(struct arc_msg_scsicmd) + (sizeof(struct arc_sge) * 38) == 512 */
+/* sizeof(struct arc_msg_scsicmd) + (sizeof(struct arc_sge) * 38) == 508 */
 #define ARC_SGL_MAXLEN		38
-/* sizeof(struct arc_msg_scsicmd) + (sizeof(struct arc_sge) * 17) == 256 */
+/* sizeof(struct arc_msg_scsicmd) + (sizeof(struct arc_sge) * 17) == 252 */
 #define ARC_SGL_256LEN		17
+
+struct arc_io_cmd {
+	struct arc_msg_scsicmd	cmd;
+	struct arc_sge		sgl[ARC_SGL_MAXLEN];
+} __packed;
 
 int			arc_match(struct device *, void *, void *);
 void			arc_attach(struct device *, struct device *, void *);
@@ -201,7 +200,6 @@ struct arc_softc {
 
 	void			*sc_ih;
 
-	int			sc_req_size;
 	int			sc_req_count;
 
 	struct arc_dmamem	*sc_requests;
@@ -215,7 +213,7 @@ struct cfattach arc_ca = {
 };
 
 struct cfdriver arc_cd = {
-        NULL, "arc", DV_DULL
+	NULL, "arc", DV_DULL
 };
 
 /* interface for scsi midlayer to talk to */
@@ -242,6 +240,9 @@ int			arc_wait_eq(struct arc_softc *, bus_size_t,
 int			arc_wait_ne(struct arc_softc *, bus_size_t,
 			    u_int32_t, u_int32_t);
 
+#define arc_push(_s, _r)	arc_write((_s), ARC_REG_POST_QUEUE, (_r))
+#define arc_pop(_s)		arc_read((_s), ARC_REG_REPLY_QUEUE)
+
 /* wrap up the bus_dma api */
 struct arc_dmamem {
 	bus_dmamap_t		adm_map;
@@ -266,8 +267,8 @@ struct arc_ccb {
 
 	bus_dmamap_t		ccb_dmamap;
 	bus_addr_t		ccb_offset;
-	void			*ccb_cmd;
-	bus_addr_t		ccb_cmd_dva;
+	struct arc_io_cmd	*ccb_cmd;
+	u_int32_t		ccb_cmd_post;
 
 	TAILQ_ENTRY(arc_ccb)	ccb_link;
 };
@@ -276,6 +277,10 @@ int			arc_alloc_ccbs(struct arc_softc *);
 struct arc_ccb		*arc_get_ccb(struct arc_softc *);
 void			arc_put_ccb(struct arc_softc *, struct arc_ccb *);
 int			arc_load_xs(struct arc_ccb *);
+int			arc_complete(struct arc_softc *, struct arc_ccb *,
+			    int);
+void			arc_scsi_cmd_done(struct arc_softc *, struct arc_ccb *,
+			    u_int32_t);
 
 /* real stuff for dealing with the hardware */
 int			arc_map_pci_resources(struct arc_softc *,
@@ -320,6 +325,9 @@ arc_attach(struct device *parent, struct device *self, void *aux)
 
 	config_found(self, &sc->sc_link, scsiprint);
 
+	/* XXX enable interrupts */
+	arc_write(sc, ARC_REG_INTRMASK, ~ARC_REG_INTRMASK_POSTQUEUE);
+
 	return;
 }
 
@@ -332,21 +340,42 @@ arc_detach(struct device *self, int flags)
 int
 arc_intr(void *arg)
 {
-#if 0
 	struct arc_softc		*sc = arg;
-#endif
+	struct arc_ccb			*ccb = NULL;
+	char				*kva = ARC_DMA_KVA(sc->sc_requests);
+	struct arc_io_cmd		*cmd;
+	u_int32_t			reg, intrstat;
 
-	return (0);
+	intrstat = arc_read(sc, ARC_REG_INTRSTAT);
+	if (intrstat == 0x0)
+		return (0);
+	arc_write(sc, ARC_REG_INTRSTAT, intrstat);
+
+	while ((reg = arc_pop(sc)) != 0xffffffff) {
+		cmd = (struct arc_io_cmd *)(kva +
+		    ((reg << ARC_REG_REPLY_QUEUE_ADDR_SHIFT) -
+		    (u_int32_t)ARC_DMA_DVA(sc->sc_requests)));
+		ccb = &sc->sc_ccbs[letoh32(cmd->cmd.context)];
+
+		bus_dmamap_sync(sc->sc_dmat, ARC_DMA_MAP(sc->sc_requests),
+		    ccb->ccb_offset, ARC_MAX_IOCMDLEN,
+		    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+
+		arc_scsi_cmd_done(sc, ccb, reg);
+	}
+
+	return (1);
 }
 
 int
 arc_scsi_cmd(struct scsi_xfer *xs)
 {
-#if 0 /* XXX this is real code */
 	struct scsi_link		*link = xs->sc_link;
 	struct arc_softc		*sc = link->adapter_softc;
 	struct arc_ccb			*ccb;
 	struct arc_msg_scsicmd		*cmd;
+	u_int32_t			reg;
+	int				rv = SUCCESSFULLY_QUEUED;
 	int				s;
 
 	if (xs->cmdlen > ARC_MSG_CDBLEN) {
@@ -355,7 +384,9 @@ arc_scsi_cmd(struct scsi_xfer *xs)
 		xs->sense.flags = SKEY_ILLEGAL_REQUEST;
 		xs->sense.add_sense_code = 0x20;
 		xs->error = XS_SENSE;
+		s = splbio();
 		scsi_done(xs);
+		splx(s);
 		return (COMPLETE);
 	}
 
@@ -364,12 +395,25 @@ arc_scsi_cmd(struct scsi_xfer *xs)
 	splx(s);
 	if (ccb == NULL) {
 		xs->error = XS_DRIVER_STUFFUP;
+		s = splbio();
 		scsi_done(xs);
+		splx(s);
 		return (COMPLETE);
 	}
 
 	ccb->ccb_xs = xs;
-	cmd = ccb->ccb_cmd;
+
+	if (arc_load_xs(ccb) != 0) {
+		xs->error = XS_DRIVER_STUFFUP;
+		s = splbio();
+		arc_put_ccb(sc, ccb);
+		scsi_done(xs);
+		splx(s);
+		return (COMPLETE);
+	}
+
+	cmd = &ccb->ccb_cmd->cmd;
+	reg = ccb->ccb_cmd_post;
 
 	/* bus is always 0 */
 	cmd->target = link->target;
@@ -377,28 +421,36 @@ arc_scsi_cmd(struct scsi_xfer *xs)
 	cmd->function = 1; /* XXX magic number */
 
 	cmd->cdb_len = xs->cmdlen;
-	/* sgl_len is set in load_xs */
+	cmd->sgl_len = ccb->ccb_dmamap->dm_nsegs;
 	if (xs->flags & SCSI_DATA_OUT)
 		cmd->flags = ARC_MSG_SCSICMD_FLAG_WRITE;
+	if (ccb->ccb_dmamap->dm_nsegs > ARC_SGL_256LEN) {
+		cmd->flags |= ARC_MSG_SCSICMD_FLAG_SGL_BSIZE_512;
+		reg |= ARC_REG_POST_QUEUE_BIGFRAME;
+	}
 
 	cmd->context = htole32(ccb->ccb_id);
 	cmd->data_len = htole32(xs->datalen);
 
 	bcopy(xs->cmd, cmd->cdb, xs->cmdlen);
 
-	if (arc_load_xs(ccb) != 0) {
-		s = splbio();
-		arc_put_ccb(sc, ccb);
-		splx(s);
-		xs->error = XS_DRIVER_STUFFUP;
-		scsi_done(xs);
-		return (COMPLETE);
-	}
-#endif /* XXX this is real code */
+	/* we've built the command, lets put it on the hw */
+	bus_dmamap_sync(sc->sc_dmat, ARC_DMA_MAP(sc->sc_requests),
+	    ccb->ccb_offset, ARC_MAX_IOCMDLEN,
+	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
-	xs->error = XS_DRIVER_STUFFUP;
-	scsi_done(xs);
-	return (COMPLETE);
+	s = splbio();
+	arc_push(sc, reg);
+	if (xs->flags & SCSI_POLL) {
+		rv = COMPLETE;
+		if (arc_complete(sc, ccb, xs->timeout) != 0) {
+			xs->error = XS_DRIVER_STUFFUP;
+			scsi_done(xs);
+		}
+	}
+	splx(s);
+
+	return (rv);
 }
 
 int
@@ -407,11 +459,7 @@ arc_load_xs(struct arc_ccb *ccb)
 	struct arc_softc		*sc = ccb->ccb_sc;
 	struct scsi_xfer		*xs = ccb->ccb_xs;
 	bus_dmamap_t			dmap = ccb->ccb_dmamap;
-	struct {
-		struct arc_msg_scsicmd		cmd;
-		struct arc_sge			sgl[ARC_SGL_MAXLEN];
-	} __packed			*bundle = ccb->ccb_cmd;
-	struct arc_sge			*sge;
+	struct arc_sge			*sgl = ccb->ccb_cmd->sgl, *sge;
 	u_int64_t			addr;
 	int				i, error;
 
@@ -427,7 +475,7 @@ arc_load_xs(struct arc_ccb *ccb)
 	}
 
 	for (i = 0; i < dmap->dm_nsegs; i++) {
-		sge = &bundle->sgl[i];
+		sge = &sgl[i];
 
 		sge->sg_hdr = htole32(ARC_SGE_64BIT | dmap->dm_segs[i].ds_len);
 		addr = dmap->dm_segs[i].ds_addr;
@@ -435,13 +483,70 @@ arc_load_xs(struct arc_ccb *ccb)
 		sge->sg_lo_addr = htole32((u_int32_t)addr);
 	}
 
-	if (dmap->dm_nsegs > ARC_SGL_256LEN)
-		bundle->cmd.flags |= ARC_MSG_SCSICMD_FLAG_SGL_BSIZE_512;
-	bundle->cmd.sgl_len = dmap->dm_nsegs;
+	bus_dmamap_sync(sc->sc_dmat, dmap, 0, dmap->dm_mapsize,
+	    (xs->flags & SCSI_DATA_IN) ? BUS_DMASYNC_PREREAD :
+	    BUS_DMASYNC_PREWRITE);
 
-        bus_dmamap_sync(sc->sc_dmat, dmap, 0, dmap->dm_mapsize,
-            (xs->flags & SCSI_DATA_IN) ? BUS_DMASYNC_PREREAD :
-            BUS_DMASYNC_PREWRITE);
+	return (0);
+}
+
+void
+arc_scsi_cmd_done(struct arc_softc *sc, struct arc_ccb *ccb, u_int32_t reg)
+{
+	struct scsi_xfer		*xs = ccb->ccb_xs;
+
+	if (xs->datalen != 0) {
+		bus_dmamap_sync(sc->sc_dmat, ccb->ccb_dmamap, 0,
+		    ccb->ccb_dmamap->dm_mapsize, (xs->flags & SCSI_DATA_IN) ?
+		    BUS_DMASYNC_POSTREAD : BUS_DMASYNC_POSTWRITE);
+		bus_dmamap_unload(sc->sc_dmat, ccb->ccb_dmamap);
+	}
+
+	/* timeout_del */
+	xs->flags |= ITSDONE;
+
+	if (reg & ARC_REG_REPLY_QUEUE_ERR) {
+		// printf("%s: something went wrong\n", DEVNAME(sc));
+		xs->error = XS_DRIVER_STUFFUP;
+	} else {
+		xs->status = SCSI_OK;
+		xs->error = XS_NOERROR;
+		xs->resid = 0;
+	}
+
+	arc_put_ccb(sc, ccb);
+	scsi_done(xs);
+}
+
+int
+arc_complete(struct arc_softc *sc, struct arc_ccb *nccb, int timeout)
+{
+	struct arc_ccb			*ccb = NULL;
+	char				*kva = ARC_DMA_KVA(sc->sc_requests);
+	struct arc_io_cmd		*cmd;
+	u_int32_t			reg;
+
+	do {
+		reg = arc_pop(sc);
+		if (reg == 0xffffffff) {
+			if (timeout-- == 0)
+				return (1);
+
+			delay(1000);
+			continue;
+		}
+
+		cmd = (struct arc_io_cmd *)(kva +
+		    ((reg << ARC_REG_REPLY_QUEUE_ADDR_SHIFT) -
+		    ARC_DMA_DVA(sc->sc_requests)));
+		ccb = &sc->sc_ccbs[letoh32(cmd->cmd.context)];
+
+		bus_dmamap_sync(sc->sc_dmat, ARC_DMA_MAP(sc->sc_requests),
+		    ccb->ccb_offset, ARC_MAX_IOCMDLEN,
+		    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+
+		arc_scsi_cmd_done(sc, ccb, reg);
+	} while (nccb != ccb);
 
 	return (0);
 }
@@ -508,12 +613,12 @@ arc_query_firmware(struct arc_softc *sc)
 	}
 
 	arc_write(sc, ARC_REG_INB_MSG0, ARC_REG_INB_MSG0_GET_CONFIG);
-	if (arc_wait_eq(sc, ARC_REG_OUTB_INTRSTAT, ARC_REG_OUTB_INTRSTAT_MSG0,
-	    ARC_REG_OUTB_INTRSTAT_MSG0) != 0) {
+	if (arc_wait_eq(sc, ARC_REG_INTRSTAT, ARC_REG_INTRSTAT_MSG0,
+	    ARC_REG_INTRSTAT_MSG0) != 0) {
 		printf("%s: timeout waiting for get config\n");
 		return (1);
 	}
-	arc_write(sc, ARC_REG_OUTB_INTRSTAT, ARC_REG_OUTB_INTRSTAT_MSG0);
+	arc_write(sc, ARC_REG_INTRSTAT, ARC_REG_INTRSTAT_MSG0);
 
 	arc_read_region(sc, ARC_REG_MSGBUF, &fwinfo, sizeof(fwinfo));
 
@@ -546,7 +651,12 @@ arc_query_firmware(struct arc_softc *sc)
 
 	/* device map? */
 
-	sc->sc_req_size = letoh32(fwinfo.request_len); /* always 512 */
+	if (letoh32(fwinfo.request_len) != ARC_MAX_IOCMDLEN) {
+		printf("%s: unexpected request frame size (%d != %d)\n",
+		    DEVNAME(sc), letoh32(fwinfo.request_len), ARC_MAX_IOCMDLEN);
+		return (1);
+	}
+
 	sc->sc_req_count = letoh32(fwinfo.queue_len);
 
 	printf("%s: %d SATA Ports, %dMB SDRAM, FW Version: %s\n",
@@ -607,13 +717,13 @@ arc_wait_eq(struct arc_softc *sc, bus_size_t r, u_int32_t mask,
 
 	for (i = 0; i < 10000; i++) {
 		if ((arc_read(sc, r) & mask) == target)
-			return (0);  
+			return (0);
 		delay(1000);
 	}
 
-	return (1);         
+	return (1);
 }
-        
+
 int
 arc_wait_ne(struct arc_softc *sc, bus_size_t r, u_int32_t mask,
     u_int32_t target)
@@ -637,9 +747,9 @@ arc_dmamem_alloc(struct arc_softc *sc, size_t size)
 {
 	struct arc_dmamem		*adm;
 	int				nsegs;
-        
+
 	adm = malloc(sizeof(struct arc_dmamem), M_DEVBUF, M_NOWAIT);
-        if (adm == NULL)
+	if (adm == NULL)
 		return (NULL);
 
 	bzero(adm, sizeof(struct arc_dmamem));
@@ -684,7 +794,7 @@ arc_dmamem_free(struct arc_softc *sc, struct arc_dmamem *adm)
 	bus_dmamem_unmap(sc->sc_dmat, adm->adm_kva, adm->adm_size);
 	bus_dmamem_free(sc->sc_dmat, &adm->adm_seg, 1);
 	bus_dmamap_destroy(sc->sc_dmat, adm->adm_map);
-        free(adm, M_DEVBUF);
+	free(adm, M_DEVBUF);
 }
 
 int
@@ -705,7 +815,7 @@ arc_alloc_ccbs(struct arc_softc *sc)
 	bzero(sc->sc_ccbs, sizeof(struct arc_ccb) * sc->sc_req_count);
 
 	sc->sc_requests = arc_dmamem_alloc(sc,
-	    sc->sc_req_size * sc->sc_req_count);
+	    ARC_MAX_IOCMDLEN * sc->sc_req_count);
 	if (sc->sc_requests == NULL) {
 		printf("%s: unable to allocate ccb dmamem\n", DEVNAME(sc));
 		goto free_ccbs;
@@ -715,8 +825,8 @@ arc_alloc_ccbs(struct arc_softc *sc)
 	for (i = 0; i < sc->sc_req_count; i++) {
 		ccb = &sc->sc_ccbs[i];
 
-		if (bus_dmamap_create(sc->sc_dmat, MAXPHYS, 1, MAXPHYS, 0, 0,
-		    &ccb->ccb_dmamap) != 0) {
+		if (bus_dmamap_create(sc->sc_dmat, MAXPHYS, ARC_SGL_MAXLEN,
+		    MAXPHYS, 0, 0, &ccb->ccb_dmamap) != 0) {
 			printf("%s: unable to create dmamap for ccb %d\n",
 			    DEVNAME(sc), i);
 			goto free_maps;
@@ -724,11 +834,11 @@ arc_alloc_ccbs(struct arc_softc *sc)
 
 		ccb->ccb_sc = sc;
 		ccb->ccb_id = i;
-		ccb->ccb_offset = sc->sc_req_size * i;
+		ccb->ccb_offset = ARC_MAX_IOCMDLEN * i;
 
-		ccb->ccb_cmd = &cmd[ccb->ccb_offset];
-		ccb->ccb_cmd_dva = (u_int32_t)ARC_DMA_DVA(sc->sc_requests) +
-		    ccb->ccb_offset;
+		ccb->ccb_cmd = (struct arc_io_cmd *)&cmd[ccb->ccb_offset];
+		ccb->ccb_cmd_post = (ARC_DMA_DVA(sc->sc_requests) +
+		    ccb->ccb_offset) >> ARC_REG_POST_QUEUE_ADDR_SHIFT;
 
 		arc_put_ccb(sc, ccb);
 	}
@@ -761,7 +871,7 @@ arc_get_ccb(struct arc_softc *sc)
 void
 arc_put_ccb(struct arc_softc *sc, struct arc_ccb *ccb)
 {
-        ccb->ccb_xs = NULL;
-        bzero(ccb->ccb_cmd, sc->sc_req_size);
-        TAILQ_INSERT_TAIL(&sc->sc_ccb_free, ccb, ccb_link);
+	ccb->ccb_xs = NULL;
+	bzero(ccb->ccb_cmd, ARC_MAX_IOCMDLEN);
+	TAILQ_INSERT_TAIL(&sc->sc_ccb_free, ccb, ccb_link);
 }

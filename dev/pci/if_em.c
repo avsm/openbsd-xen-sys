@@ -31,7 +31,7 @@ POSSIBILITY OF SUCH DAMAGE.
 
 ***************************************************************************/
 
-/* $OpenBSD: if_em.c,v 1.137 2006/07/08 04:34:34 brad Exp $ */
+/* $OpenBSD: if_em.c,v 1.140 2006/08/04 02:44:50 brad Exp $ */
 /* $FreeBSD: if_em.c,v 1.46 2004/09/29 18:28:28 mlaier Exp $ */
 
 #include <dev/pci/if_em.h>
@@ -146,10 +146,10 @@ void em_disable_intr(struct em_softc *);
 void em_free_transmit_structures(struct em_softc *);
 void em_free_receive_structures(struct em_softc *);
 void em_update_stats_counters(struct em_softc *);
-void em_clean_transmit_interrupts(struct em_softc *);
+void em_txeof(struct em_softc *);
 int  em_allocate_receive_structures(struct em_softc *);
 int  em_allocate_transmit_structures(struct em_softc *);
-void em_process_receive_interrupts(struct em_softc *, int);
+void em_rxeof(struct em_softc *, int);
 #ifdef __STRICT_ALIGNMENT
 void em_fixup_rx(struct em_softc *);
 #endif
@@ -158,7 +158,6 @@ void em_receive_checksum(struct em_softc *, struct em_rx_desc *,
 void em_transmit_checksum_setup(struct em_softc *, struct mbuf *,
 				u_int32_t *, u_int32_t *);
 void em_set_promisc(struct em_softc *);
-void em_disable_promisc(struct em_softc *);
 void em_set_multi(struct em_softc *);
 void em_print_hw_stats(struct em_softc *);
 void em_update_link_status(struct em_softc *);
@@ -519,15 +518,24 @@ em_ioctl(struct ifnet *ifp, u_long command, caddr_t data)
 	case SIOCSIFFLAGS:
 		IOCTL_DEBUGOUT("ioctl rcv'd: SIOCSIFFLAGS (Set Interface Flags)");
 		if (ifp->if_flags & IFF_UP) {
-			if (!(ifp->if_flags & IFF_RUNNING))
-				em_init(sc);
-
-			em_disable_promisc(sc);
-			em_set_promisc(sc);
+			/*
+			 * If only the PROMISC or ALLMULTI flag changes, then
+			 * don't do a full re-init of the chip, just update
+			 * the Rx filter.
+			 */
+			if ((ifp->if_flags & IFF_RUNNING) &&
+			    ((ifp->if_flags ^ sc->if_flags) &
+			     (IFF_ALLMULTI | IFF_PROMISC)) != 0) {
+				em_set_promisc(sc);
+			} else {
+				if (!(ifp->if_flags & IFF_RUNNING))
+					em_init(sc);
+			}
 		} else {
 			if (ifp->if_flags & IFF_RUNNING)
 				em_stop(sc);
 		}
+		sc->if_flags = ifp->if_flags;
 		break;
 	case SIOCADDMULTI:
 	case SIOCDELMULTI:
@@ -745,8 +753,8 @@ em_intr(void *arg)
 		claimed = 1;
 
 		if (ifp->if_flags & IFF_RUNNING) {
-			em_process_receive_interrupts(sc, -1);
-			em_clean_transmit_interrupts(sc);
+			em_rxeof(sc, -1);
+			em_txeof(sc);
 		}
 
 		/* Link status change */
@@ -906,7 +914,7 @@ em_encap(struct em_softc *sc, struct mbuf *m_head)
 	 * available hits the threshold
 	 */
 	if (sc->num_tx_desc_avail <= EM_TX_CLEANUP_THRESHOLD) {
-		em_clean_transmit_interrupts(sc);
+		em_txeof(sc);
 		if (sc->num_tx_desc_avail <= EM_TX_CLEANUP_THRESHOLD) {
 			sc->no_tx_desc_avail1++;
 			return (ENOBUFS);
@@ -1150,34 +1158,20 @@ void
 em_set_promisc(struct em_softc *sc)
 {
 	u_int32_t	reg_rctl;
-	u_int32_t	ctrl;
 	struct ifnet   *ifp = &sc->interface_data.ac_if;
 
 	reg_rctl = E1000_READ_REG(&sc->hw, RCTL);
-	ctrl = E1000_READ_REG(&sc->hw, CTRL);
 
 	if (ifp->if_flags & IFF_PROMISC) {
 		reg_rctl |= (E1000_RCTL_UPE | E1000_RCTL_MPE);
-		E1000_WRITE_REG(&sc->hw, RCTL, reg_rctl);
 	} else if (ifp->if_flags & IFF_ALLMULTI) {
 		reg_rctl |= E1000_RCTL_MPE;
 		reg_rctl &= ~E1000_RCTL_UPE;
-		E1000_WRITE_REG(&sc->hw, RCTL, reg_rctl);
+	} else {
+		reg_rctl &= ~(E1000_RCTL_UPE | E1000_RCTL_MPE);
 	}
-}
-
-void
-em_disable_promisc(struct em_softc *sc)
-{
-	u_int32_t	reg_rctl;
-
-	reg_rctl = E1000_READ_REG(&sc->hw, RCTL);
-
-	reg_rctl &=  (~E1000_RCTL_UPE);
-	reg_rctl &=  (~E1000_RCTL_MPE);
 	E1000_WRITE_REG(&sc->hw, RCTL, reg_rctl);
 }
-
 
 /*********************************************************************
  *  Multicast Update
@@ -1381,13 +1375,13 @@ em_allocate_pci_resources(struct em_softc *sc)
 
 	val = pci_conf_read(pa->pa_pc, pa->pa_tag, EM_MMBA);
 	if (PCI_MAPREG_TYPE(val) != PCI_MAPREG_TYPE_MEM) {
-		printf(": mmba isn't memory");
+		printf(": mmba is not mem space\n");
 		return (ENXIO);
 	}
 	if (pci_mapreg_map(pa, EM_MMBA, PCI_MAPREG_MEM_TYPE(val), 0,
 	    &sc->osdep.mem_bus_space_tag, &sc->osdep.mem_bus_space_handle,
 	    &sc->osdep.em_membase, &sc->osdep.em_memsize, 0)) {
-		printf(": can't find mem space\n");
+		printf(": cannot find mem space\n");
 		return (ENXIO);
 	}
 
@@ -1408,7 +1402,7 @@ em_allocate_pci_resources(struct em_softc *sc)
 		if (pci_mapreg_map(pa, rid, PCI_MAPREG_TYPE_IO, 0,
 		    &sc->osdep.io_bus_space_tag, &sc->osdep.io_bus_space_handle,
 		    &sc->osdep.em_iobase, &sc->osdep.em_iosize, 0)) {
-			printf(": can't find io space\n");
+			printf(": cannot find i/o space\n");
 			return (ENXIO);
 		}
 
@@ -1419,14 +1413,14 @@ em_allocate_pci_resources(struct em_softc *sc)
 	if (sc->hw.mac_type == em_ich8lan) {
 		val = pci_conf_read(pa->pa_pc, pa->pa_tag, EM_FLASH);
 		if (PCI_MAPREG_TYPE(val) != PCI_MAPREG_TYPE_MEM) {
-			printf(": flash isn't memory");
+			printf(": flash is not mem space\n");
 			return (ENXIO);
 		}
 
 		if (pci_mapreg_map(pa, EM_FLASH, PCI_MAPREG_MEM_TYPE(val), 0,
 		    &sc->osdep.flash_bus_space_tag, &sc->osdep.flash_bus_space_handle,
 		    &sc->osdep.em_flashbase, &sc->osdep.em_flashsize, 0)) {
-			printf(": can't find mem space\n");
+			printf(": cannot find mem space\n");
 			return (ENXIO);
 		}
         }
@@ -2022,7 +2016,7 @@ em_transmit_checksum_setup(struct em_softc *sc, struct mbuf *mp,
  *
  **********************************************************************/
 void
-em_clean_transmit_interrupts(struct em_softc *sc)
+em_txeof(struct em_softc *sc)
 {
 	int i, num_avail;
 	struct em_buffer *tx_buffer;
@@ -2342,7 +2336,7 @@ em_free_receive_structures(struct em_softc *sc)
  *
  *********************************************************************/
 void
-em_process_receive_interrupts(struct em_softc *sc, int count)
+em_rxeof(struct em_softc *sc, int count)
 {
 	struct ifnet	    *ifp;
 	struct mbuf	    *mp;

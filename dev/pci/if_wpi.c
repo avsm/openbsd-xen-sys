@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_wpi.c,v 1.20 2006/06/17 18:35:46 damien Exp $	*/
+/*	$OpenBSD: if_wpi.c,v 1.26 2006/08/06 12:51:09 damien Exp $	*/
 
 /*-
  * Copyright (c) 2006
@@ -72,10 +72,9 @@ const struct pci_matchid wpi_devices[] = {
 /*
  * Supported rates for 802.11a/b/g modes (in 500Kbps unit).
  */
-#ifdef notyet
 static const struct ieee80211_rateset wpi_rateset_11a =
 	{ 8, { 12, 18, 24, 36, 48, 72, 96, 108 } };
-#endif
+
 static const struct ieee80211_rateset wpi_rateset_11b =
 	{ 4, { 2, 4, 11, 22 } };
 
@@ -137,7 +136,7 @@ void		wpi_set_led(struct wpi_softc *, uint8_t, uint8_t, uint8_t);
 void		wpi_enable_tsf(struct wpi_softc *, struct ieee80211_node *);
 int		wpi_setup_beacon(struct wpi_softc *, struct ieee80211_node *);
 int		wpi_auth(struct wpi_softc *);
-int		wpi_scan(struct wpi_softc *);
+int		wpi_scan(struct wpi_softc *, uint16_t);
 int		wpi_config(struct wpi_softc *);
 void		wpi_stop_master(struct wpi_softc *);
 int		wpi_power_up(struct wpi_softc *);
@@ -284,7 +283,6 @@ wpi_attach(struct device *parent, struct device *self, void *aux)
 	wpi_read_eeprom(sc);
 	printf(", address %s\n", ether_sprintf(ic->ic_myaddr));
 
-#ifdef notyet
 	/* set supported .11a rates */
 	ic->ic_sup_rates[IEEE80211_MODE_11A] = wpi_rateset_11a;
 
@@ -294,12 +292,16 @@ wpi_attach(struct device *parent, struct device *self, void *aux)
 		    ieee80211_ieee2mhz(i, IEEE80211_CHAN_5GHZ);
 		ic->ic_channels[i].ic_flags = IEEE80211_CHAN_A;
 	}
+	for (i = 100; i <= 140; i += 4) {
+		ic->ic_channels[i].ic_freq =
+		    ieee80211_ieee2mhz(i, IEEE80211_CHAN_5GHZ);
+		ic->ic_channels[i].ic_flags = IEEE80211_CHAN_A;
+	}
 	for (i = 149; i <= 165; i += 4) {
 		ic->ic_channels[i].ic_freq =
 		    ieee80211_ieee2mhz(i, IEEE80211_CHAN_5GHZ);
 		ic->ic_channels[i].ic_flags = IEEE80211_CHAN_A;
 	}
-#endif
 
 	/* set supported .11b and .11g rates */
 	ic->ic_sup_rates[IEEE80211_MODE_11B] = wpi_rateset_11b;
@@ -344,7 +346,7 @@ wpi_attach(struct device *parent, struct device *self, void *aux)
 
 #if NBPFILTER > 0
 	bpfattach(&sc->sc_drvbpf, ifp, DLT_IEEE802_11_RADIO,
-	    sizeof (struct ieee80211_frame) + 64);
+	    sizeof (struct ieee80211_frame) + IEEE80211_RADIOTAP_HDRLEN);
 
 	sc->sc_rxtap_len = sizeof sc->sc_rxtapu;
 	sc->sc_rxtap.wr_ihdr.it_len = htole16(sc->sc_rxtap_len);
@@ -776,7 +778,7 @@ wpi_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 		/* make the link LED blink while we're scanning */
 		wpi_set_led(sc, WPI_LED_LINK, 20, 2);
 
-		if ((error = wpi_scan(sc)) != 0) {
+		if ((error = wpi_scan(sc, IEEE80211_CHAN_G)) != 0) {
 			printf("%s: could not initiate scan\n",
 			    sc->sc_dev.dv_xname);
 			return error;
@@ -1308,7 +1310,7 @@ wpi_notif_intr(struct wpi_softc *sc)
 			    letoh32(uc->valid)));
 
 			if (letoh32(uc->valid) != 1) {
-				printf("%s microcontroller initialization "
+				printf("%s: microcontroller initialization "
 				    "failed\n", sc->sc_dev.dv_xname);
 			}
 			break;
@@ -1340,9 +1342,24 @@ wpi_notif_intr(struct wpi_softc *sc)
 			break;
 		}
 		case WPI_STOP_SCAN:
-			DPRINTF(("scan finished\n"));
+		{
+			struct wpi_stop_scan *scan =
+			    (struct wpi_stop_scan *)(desc + 1);
+
+			DPRINTF(("scan finished nchan=%d status=%d chan=%d\n",
+			    scan->nchan, scan->status, scan->chan));
+
+			if (scan->status == 1 && scan->chan <= 14) {
+				/*
+				 * We just finished scanning 802.11g channels,
+				 * start scanning 802.11a ones.
+				 */
+				if (wpi_scan(sc, IEEE80211_CHAN_A) == 0)
+					break;
+			}
 			ieee80211_end_scan(ifp);
 			break;
+		}
 		}
 
 		sc->rxq.cur = (sc->rxq.cur + 1) % WPI_RX_RING_COUNT;
@@ -1372,6 +1389,7 @@ wpi_intr(void *arg)
 	WPI_WRITE(sc, WPI_INTR, r);
 
 	if (r & (WPI_SW_ERROR | WPI_HW_ERROR)) {
+		/* SYSTEM FAILURE, SYSTEM FAILURE */
 		printf("%s: fatal firmware error\n", sc->sc_dev.dv_xname);
 		ifp->if_flags &= ~IFF_UP;
 		wpi_stop(ifp, 1);
@@ -1493,34 +1511,36 @@ wpi_tx_data(struct wpi_softc *sc, struct mbuf *m0, struct ieee80211_node *ni,
 	tx = (struct wpi_cmd_data *)cmd->data;
 	tx->flags = 0;
 
-	if (!IEEE80211_IS_MULTICAST(wh->i_addr1))
+	if (!IEEE80211_IS_MULTICAST(wh->i_addr1)) {
+		tx->id = WPI_ID_BSS;
 		tx->flags |= htole32(WPI_TX_NEED_ACK);
-	else if (m0->m_pkthdr.len + IEEE80211_CRC_LEN > ic->ic_rtsthreshold ||
-	    ((ic->ic_flags & IEEE80211_F_USEPROT) && WPI_RATE_IS_OFDM(rate)))
-		tx->flags |= htole32(WPI_TX_NEED_RTS | WPI_TX_FULL_TXOP);
+
+		if (m0->m_pkthdr.len + IEEE80211_CRC_LEN >
+		    ic->ic_rtsthreshold || (WPI_RATE_IS_OFDM(rate) &&
+		    (ic->ic_flags & IEEE80211_F_USEPROT))) {
+			tx->flags |= htole32(WPI_TX_NEED_RTS |
+			    WPI_TX_FULL_TXOP);
+		}
+	} else
+		tx->id = WPI_ID_BROADCAST;
 
 	tx->flags |= htole32(WPI_TX_AUTO_SEQ);
 
-	/* retrieve destination node's id */
-	tx->id = IEEE80211_IS_MULTICAST(wh->i_addr1) ? WPI_ID_BROADCAST :
-	    WPI_ID_BSS;
-
 	if ((wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) ==
 	    IEEE80211_FC0_TYPE_MGT) {
+		uint8_t subtype = wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK;
+
 		/* tell h/w to set timestamp in probe responses */
-		if ((wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK) ==
-		    IEEE80211_FC0_SUBTYPE_PROBE_RESP)
+		if (subtype == IEEE80211_FC0_SUBTYPE_PROBE_RESP)
 			tx->flags |= htole32(WPI_TX_INSERT_TSTAMP);
 
-		if (((wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK) ==
-		     IEEE80211_FC0_SUBTYPE_ASSOC_REQ) ||
-		    ((wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK) ==
-		     IEEE80211_FC0_SUBTYPE_REASSOC_REQ))
-			tx->timeout = 3;
+		if (subtype == IEEE80211_FC0_SUBTYPE_ASSOC_REQ ||
+		    subtype == IEEE80211_FC0_SUBTYPE_REASSOC_REQ)
+			tx->timeout = htole16(3);
 		else
-			tx->timeout = 2;
+			tx->timeout = htole16(2);
 	} else
-		tx->timeout = 0;
+		tx->timeout = htole16(0);
 
 	tx->rate = wpi_plcp_signal(rate);
 
@@ -1529,7 +1549,7 @@ wpi_tx_data(struct wpi_softc *sc, struct mbuf *m0, struct ieee80211_node *ni,
 	tx->data_ntries = 15;
 
 	tx->ofdm_mask = 0xff;
-	tx->cck_mask = 0xf;
+	tx->cck_mask = 0x0f;
 	tx->lifetime = htole32(0xffffffff);
 
 	tx->len = htole16(m0->m_pkthdr.len);
@@ -1780,7 +1800,7 @@ wpi_read_eeprom(struct wpi_softc *sc)
 	for (i = 0; i < 14; i++) {
 		sc->pwr1[i] = wpi_read_prom_word(sc, WPI_EEPROM_PWR1 + i);
 		sc->pwr2[i] = wpi_read_prom_word(sc, WPI_EEPROM_PWR2 + i);
-		DPRINTF(("channel %d pwr1 0x%04x pwr2 0x%04x\n", i + 1,
+		DPRINTFN(2, ("channel %d pwr1 0x%04x pwr2 0x%04x\n", i + 1,
 		    sc->pwr1[i], sc->pwr2[i]));
 	}
 }
@@ -1824,6 +1844,7 @@ wpi_cmd(struct wpi_softc *sc, int code, const void *buf, int size, int async)
 int
 wpi_mrr_setup(struct wpi_softc *sc)
 {
+	struct ieee80211com *ic = &sc->sc_ic;
 	struct wpi_mrr_setup mrr;
 	int i, error;
 
@@ -1843,7 +1864,10 @@ wpi_mrr_setup(struct wpi_softc *sc)
 		mrr.rates[i].plcp = wpi_ridx_to_plcp[i];
 		/* fallback to the immediate lower rate (if any) */
 		/* we allow fallback from OFDM/6 to CCK/2 in 11b/g mode */
-		mrr.rates[i].next = (i == WPI_OFDM6) ? WPI_CCK2 : i - 1;
+		mrr.rates[i].next = (i == WPI_OFDM6) ?
+		    ((ic->ic_curmode == IEEE80211_MODE_11A) ?
+			WPI_OFDM6 : WPI_CCK2) :
+		    i - 1;
 		/* try one time at this rate before falling back to "next" */
 		mrr.rates[i].ntries = 1;
 	}
@@ -1941,10 +1965,11 @@ wpi_setup_beacon(struct wpi_softc *sc, struct ieee80211_node *ni)
 	bzero(bcn, sizeof (struct wpi_cmd_beacon));
 	bcn->id = WPI_ID_BROADCAST;
 	bcn->ofdm_mask = 0xff;
-	bcn->cck_mask = 0xf;
+	bcn->cck_mask = 0x0f;
 	bcn->lifetime = htole32(0xffffffff);
 	bcn->len = htole16(m0->m_pkthdr.len);
-	bcn->rate = wpi_plcp_signal(2);
+	bcn->rate = (ic->ic_curmode == IEEE80211_MODE_11A) ?
+	    wpi_plcp_signal(12) : wpi_plcp_signal(2);
 	bcn->flags = htole32(WPI_TX_AUTO_SEQ | WPI_TX_INSERT_TSTAMP);
 
 	/* save and trim IEEE802.11 header */
@@ -1988,13 +2013,21 @@ wpi_auth(struct wpi_softc *sc)
 	/* update adapter's configuration */
 	IEEE80211_ADDR_COPY(sc->config.bssid, ni->ni_bssid);
 	sc->config.chan = ieee80211_chan2ieee(ic, ni->ni_chan);
-	if (ic->ic_curmode == IEEE80211_MODE_11B) {
-		sc->config.cck_mask  = 0x03;
-		sc->config.ofdm_mask = 0;
-	} else if (IEEE80211_IS_CHAN_5GHZ(ni->ni_chan)) {
+	sc->config.flags = htole32(WPI_CONFIG_TSF);
+	if (IEEE80211_IS_CHAN_2GHZ(ni->ni_chan)) {
+		sc->config.flags |= htole32(WPI_CONFIG_AUTO |
+		    WPI_CONFIG_24GHZ);
+	}
+	switch (ic->ic_curmode) {
+	case IEEE80211_MODE_11A:
 		sc->config.cck_mask  = 0;
 		sc->config.ofdm_mask = 0x15;
-	} else {	/* assume 802.11b/g */
+		break;
+	case IEEE80211_MODE_11B:
+		sc->config.cck_mask  = 0x03;
+		sc->config.ofdm_mask = 0;
+		break;
+	default:	/* assume 802.11b/g */
 		sc->config.cck_mask  = 0x0f;
 		sc->config.ofdm_mask = 0x15;
 	}
@@ -2015,7 +2048,8 @@ wpi_auth(struct wpi_softc *sc)
 	bzero(&node, sizeof node);
 	IEEE80211_ADDR_COPY(node.bssid, ni->ni_bssid);
 	node.id = WPI_ID_BSS;
-	node.rate = wpi_plcp_signal(2);
+	node.rate = (ic->ic_curmode == IEEE80211_MODE_11A) ?
+	    wpi_plcp_signal(12) : wpi_plcp_signal(2);
 	error = wpi_cmd(sc, WPI_CMD_ADD_NODE, &node, sizeof node, 1);
 	if (error != 0) {
 		printf("%s: could not add BSS node\n", sc->sc_dev.dv_xname);
@@ -2036,7 +2070,7 @@ wpi_auth(struct wpi_softc *sc)
  * into a mbuf instead of using the pre-allocated set of commands.
  */
 int
-wpi_scan(struct wpi_softc *sc)
+wpi_scan(struct wpi_softc *sc, uint16_t flags)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct wpi_tx_ring *ring = &sc->cmdq;
@@ -2046,11 +2080,11 @@ wpi_scan(struct wpi_softc *sc)
 	struct wpi_scan_hdr *hdr;
 	struct wpi_scan_chan *chan;
 	struct ieee80211_frame *wh;
-	struct ieee80211_node *ni = ic->ic_bss;
 	struct ieee80211_rateset *rs;
+	struct ieee80211_channel *c;
 	enum ieee80211_phymode mode;
 	uint8_t *frm;
-	int i, pktlen, error;
+	int pktlen, error;
 
 	desc = &ring->desc[ring->cur];
 	data = &ring->data[ring->cur];
@@ -2080,16 +2114,29 @@ wpi_scan(struct wpi_softc *sc)
 	hdr = (struct wpi_scan_hdr *)cmd->data;
 	bzero(hdr, sizeof (struct wpi_scan_hdr));
 	hdr->first = 1;
-	hdr->nchan = 14;
-	hdr->len = hdr->nchan * sizeof (struct wpi_scan_chan);
-	hdr->quiet = htole16(5);
-	hdr->threshold = htole16(1);
-	hdr->filter = htole32(5);	/* XXX */
-	hdr->rate = wpi_plcp_signal(2);
+	/*
+	 * Move to the next channel if no packets are received within 5 msecs
+	 * after sending the probe request (this helps to reduce the duration
+	 * of active scans).
+	 */
+	hdr->quiet = htole16(5);	/* timeout in milliseconds */
+	hdr->threshold = htole16(1);	/* min # of packets */
+
+	if (flags & IEEE80211_CHAN_A) {
+		hdr->band = htole16(WPI_SCAN_5GHZ);
+		/* send probe requests at 6Mbps */
+		hdr->rate = wpi_plcp_signal(12);
+	} else {
+		hdr->flags = htole32(WPI_CONFIG_24GHZ | WPI_CONFIG_AUTO);
+		/* send probe requests at 1Mbps */
+		hdr->rate = wpi_plcp_signal(2);
+	}
 	hdr->id = WPI_ID_BROADCAST;
 	hdr->mask = htole32(0xffffffff);
-	hdr->esslen = ni->ni_esslen;
-	bcopy(ni->ni_essid, hdr->essid, ni->ni_esslen);
+	hdr->magic1 = htole32(1 << 13);
+
+	hdr->esslen = ic->ic_des_esslen;
+	bcopy(ic->ic_des_essid, hdr->essid, ic->ic_des_esslen);
 
 	/*
 	 * Build a probe request frame.  Most of the following code is a
@@ -2108,7 +2155,7 @@ wpi_scan(struct wpi_softc *sc)
 	frm = (uint8_t *)(wh + 1);
 
 	/* add essid IE */
-	frm = ieee80211_add_ssid(frm, ni->ni_essid, ni->ni_esslen);
+	frm = ieee80211_add_ssid(frm, ic->ic_des_essid, ic->ic_des_esslen);
 
 	mode = ieee80211_chan2mode(ic, ic->ic_ibss_chan);
 	rs = &ic->ic_sup_rates[mode];
@@ -2122,22 +2169,34 @@ wpi_scan(struct wpi_softc *sc)
 	/* setup length of probe request */
 	hdr->length = htole16(frm - (uint8_t *)wh);
 
-	/* XXX: align on a 4-byte boundary? */
 	chan = (struct wpi_scan_chan *)frm;
-	for (i = 1; i <= hdr->nchan; i++, chan++) {
-		chan->flags = 3;
-		chan->chan = i;
+	for (c  = &ic->ic_channels[1];
+	     c <= &ic->ic_channels[IEEE80211_CHAN_MAX]; c++) {
+		if ((c->ic_flags & flags) != flags)
+			continue;
+
+		chan->chan = ieee80211_chan2ieee(ic, c);
+		chan->flags = (c->ic_flags & IEEE80211_CHAN_PASSIVE) ?
+		    0 : WPI_CHAN_ACTIVE;
 		chan->magic = htole16(0x62ab);
-		chan->active = htole16(20);
-		chan->passive = htole16(120);
+		if (IEEE80211_IS_CHAN_5GHZ(c)) {
+			chan->active = htole16(10);
+			chan->passive = htole16(110);
+		} else {
+			chan->active = htole16(20);
+			chan->passive = htole16(120);
+		}
+		hdr->nchan++;
+		chan++;
 
 		frm += sizeof (struct wpi_scan_chan);
 	}
 
+	hdr->len = hdr->nchan * sizeof (struct wpi_scan_chan);
 	pktlen = frm - mtod(data->m, uint8_t *);
 
-	error = bus_dmamap_load(sc->sc_dmat, data->map, cmd, pktlen,
-	    NULL, BUS_DMA_NOWAIT);
+	error = bus_dmamap_load(sc->sc_dmat, data->map, cmd, pktlen, NULL,
+	    BUS_DMA_NOWAIT);
 	if (error != 0) {
 		printf("%s: could not map scan command\n",
 		    sc->sc_dev.dv_xname);
@@ -2167,8 +2226,6 @@ wpi_config(struct wpi_softc *sc)
 	struct wpi_bluetooth bluetooth;
 	struct wpi_node_info node;
 	int error;
-
-	/* Intel's binary only daemon is a joke.. */
 
 	/* set Tx power for 2.4GHz channels (values read from EEPROM) */
 	bzero(&txpower, sizeof txpower);
@@ -2206,9 +2263,13 @@ wpi_config(struct wpi_softc *sc)
 	bzero(&sc->config, sizeof (struct wpi_config));
 	IEEE80211_ADDR_COPY(ic->ic_myaddr, LLADDR(ifp->if_sadl));
 	IEEE80211_ADDR_COPY(sc->config.myaddr, ic->ic_myaddr);
+	/* set default channel */
 	sc->config.chan = ieee80211_chan2ieee(ic, ic->ic_ibss_chan);
-	sc->config.flags = htole32(WPI_CONFIG_TSF | WPI_CONFIG_AUTO |
-	    WPI_CONFIG_24GHZ);
+	sc->config.flags = htole32(WPI_CONFIG_TSF);
+	if (IEEE80211_IS_CHAN_2GHZ(ic->ic_ibss_chan)) {
+		sc->config.flags |= htole32(WPI_CONFIG_AUTO |
+		    WPI_CONFIG_24GHZ);
+	}
 	sc->config.filter = 0;
 	switch (ic->ic_opmode) {
 	case IEEE80211_M_STA:
@@ -2493,6 +2554,7 @@ wpi_init(struct ifnet *ifp)
 
 	/* ..and wait at most one second for adapter to initialize */
 	if ((error = tsleep(sc, PCATCH, "wpiinit", hz)) != 0) {
+		/* this isn't what was supposed to happen.. */
 		printf("%s: timeout waiting for adapter to initialize\n",
 		    sc->sc_dev.dv_xname);
 		goto fail1;

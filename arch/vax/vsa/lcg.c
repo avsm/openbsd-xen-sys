@@ -1,4 +1,4 @@
-/*	$OpenBSD: lcg.c,v 1.3 2006/07/29 14:18:57 miod Exp $	*/
+/*	$OpenBSD: lcg.c,v 1.7 2006/08/05 22:04:53 miod Exp $	*/
 /*
  * Copyright (c) 2006 Miodrag Vallat.
  *
@@ -85,6 +85,7 @@ struct	lcg_screen {
 	caddr_t		ss_addr;		/* frame buffer address */
 	vaddr_t		ss_reg;
 	volatile u_int8_t *ss_lut;
+	u_int8_t	ss_cmap[256 * 3];
 };
 
 /* for console */
@@ -139,9 +140,11 @@ const struct wsdisplay_accessops lcg_accessops = {
 };
 
 int	lcg_alloc_attr(void *, int, int, int, long *);
-u_int	lcg_probe_screen(u_int32_t, u_int *, u_int *);
+int	lcg_getcmap(struct lcg_screen *, struct wsdisplay_cmap *);
+void	lcg_loadcmap(struct lcg_screen *, int, int);
+int	lcg_probe_screen(u_int32_t, u_int *, u_int *);
+int	lcg_putcmap(struct lcg_screen *, struct wsdisplay_cmap *);
 void	lcg_resetcmap(struct lcg_screen *);
-void	lcg_set_lut_entry(volatile u_int8_t *, const u_char *, u_int, u_int);
 int	lcg_setup_screen(struct lcg_screen *);
 
 #define	lcg_read_reg(ss, regno) \
@@ -155,7 +158,7 @@ lcg_match(struct device *parent, void *vcf, void *aux)
 	struct vsbus_softc *sc = (void *)parent;
 	struct vsbus_attach_args *va = aux;
 	vaddr_t cfgreg;
-	int depth;
+	int depth, missing;
 	volatile u_int8_t *ch;
 
 	switch (vax_boardtype) {
@@ -171,24 +174,32 @@ lcg_match(struct device *parent, void *vcf, void *aux)
 	}
 
 	/*
-	 * Check for a recognized configuration.
+	 * Check the configuration register.
+	 * This is done to sort out empty frame buffer slots, since the video
+	 * memory test sometimes passes!
 	 */
 	cfgreg = vax_map_physmem(LCG_CONFIG_ADDR, 1);
 	depth = lcg_probe_screen(*(volatile u_int32_t *)cfgreg, NULL, NULL);
 	vax_unmap_physmem(cfgreg, 1);
-	if (depth == 0)
+	if (depth < 0)	/* no frame buffer */
 		return (0);
 
 	/*
 	 * Check for video memory.
 	 * We can not use badaddr() on these models.
 	 */
-	ch = (volatile u_int8_t *)va->va_addr;
+	missing = 0;
+	ch = (volatile u_int8_t *)vax_map_physmem(LCG_FB_ADDR, 1);
 	*ch = 0x01;
 	if ((*ch & 0x01) == 0)
-		return (0);
-	*ch = 0x00;
-	if ((*ch & 0x01) != 0)
+		missing = 1;
+	else {
+		*ch = 0x00;
+		if ((*ch & 0x01) != 0)
+			missing = 1;
+	}
+	vax_unmap_physmem((vaddr_t)ch, 1);
+	if (missing != 0)
 		return (0);
 
 	sc->sc_mask = 0x04;	/* XXX - should be generated */
@@ -203,10 +214,35 @@ lcg_attach(struct device *parent, struct device *self, void *aux)
 	struct lcg_screen *ss;
 	struct wsemuldisplaydev_attach_args aa;
 	vaddr_t tmp;
+	u_int32_t cfg;
 	int console;
 	extern struct consdev wsdisplay_cons;
 
 	console = (vax_confdata & 0x100) == 0 && cn_tab == &wsdisplay_cons;
+
+	/*
+	 * Check for a recognized configuration register.
+	 * If we do not recognize it, print it and do not attach - so that
+	 * this gets noticed...
+	 */
+	if (!console) {
+		tmp = vax_map_physmem(LCG_CONFIG_ADDR, 1);
+		if (tmp == NULL) {
+			printf("\n%s: can not map configuration register\n",
+			    self->dv_xname);
+			return;
+		}
+		cfg = *(volatile u_int32_t *)tmp;
+		vax_unmap_physmem(tmp, 1);
+
+		if (lcg_probe_screen(cfg, NULL, NULL) <= 0) {
+			printf("\n%s:"
+			    " unrecognized configuration register %08x\n",
+			    self->dv_xname, cfg);
+			return;
+		}
+	}
+
 	if (console) {
 		ss = &lcg_consscr;
 		sc->sc_nscreens = 1;
@@ -218,14 +254,7 @@ lcg_attach(struct device *parent, struct device *self, void *aux)
 		}
 		bzero(ss, sizeof(struct lcg_screen));
 
-		tmp = vax_map_physmem(LCG_CONFIG_ADDR, 1);
-		if (tmp == NULL) {
-			printf(": can not map configuration register\n");
-			goto fail1;
-		}
-		ss->ss_cfg = *(volatile u_int32_t *)tmp;
-		vax_unmap_physmem(tmp, 1);
-
+		ss->ss_cfg = cfg;
 		ss->ss_depth = lcg_probe_screen(ss->ss_cfg,
 		    &ss->ss_width, &ss->ss_height);
 		ss->ss_fbsize =
@@ -284,7 +313,7 @@ fail1:
  * Determine if we have a recognized frame buffer, its resolution and
  * color depth.
  */
-u_int
+int
 lcg_probe_screen(u_int32_t cfg, u_int *width, u_int *height)
 {
 	u_int w, h, d = 8;
@@ -292,6 +321,8 @@ lcg_probe_screen(u_int32_t cfg, u_int *width, u_int *height)
 	switch (vax_boardtype) {
 	case VAX_BTYP_46:
 		switch (cfg & 0xf0) {
+		case 0x00:
+			return (-1);	/* no hardware */
 		case 0x20:
 		case 0x60:
 			w = 1024; h = 864;
@@ -307,11 +338,13 @@ lcg_probe_screen(u_int32_t cfg, u_int *width, u_int *height)
 			w = 1280; h = 1024;
 			break;
 		default:
-			return (0);
+			return (0);	/* unknown configuration, please help */
 		}
 		break;
 	case VAX_BTYP_48:
 		switch (cfg & 0x07) {
+		case 0x00:
+			return (-1);	/* no hardware */
 		case 0x05:
 			w = 1280; h = 1024;
 			break;
@@ -330,7 +363,7 @@ lcg_probe_screen(u_int32_t cfg, u_int *width, u_int *height)
 			}
 			break;
 		default:
-			return (0);
+			return (0);	/* unknown configuration, please help */
 		}
 		break;
 	}
@@ -367,12 +400,6 @@ lcg_setup_screen(struct lcg_screen *ss)
 	ri->ri_hw = ss;
 
 	/*
-	 * We can let rasops select our font here, as we do not need to
-	 * use a font with a different bit order than rasops' defaults,
-	 * unlike smg.
-	 */
-
-	/*
 	 * Ask for an unholy big display, rasops will trim this to more
 	 * reasonable values.
 	 */
@@ -402,6 +429,8 @@ lcg_ioctl(void *v, u_long cmd, caddr_t data, int flag, struct proc *p)
 	struct lcg_softc *sc = v;
 	struct lcg_screen *ss = sc->sc_scr;
 	struct wsdisplay_fbinfo *wdf;
+	struct wsdisplay_cmap *cm;
+	int error;
 
 	switch (cmd) {
 	case WSDISPLAYIO_GTYPE:
@@ -421,8 +450,18 @@ lcg_ioctl(void *v, u_long cmd, caddr_t data, int flag, struct proc *p)
 		break;
 
 	case WSDISPLAYIO_GETCMAP:
+		cm = (struct wsdisplay_cmap *)data;
+		error = lcg_getcmap(ss, cm);
+		if (error != 0)
+			return (error);
+		break;
 	case WSDISPLAYIO_PUTCMAP:
-		break;	/* XXX TBD */
+		cm = (struct wsdisplay_cmap *)data;
+		error = lcg_putcmap(ss, cm);
+		if (error != 0)
+			return (error);
+		lcg_loadcmap(ss, cm->index, cm->count);
+		break;
 
 	case WSDISPLAYIO_GVIDEO:
 	case WSDISPLAYIO_SVIDEO:
@@ -490,9 +529,12 @@ lcg_burner(void *v, u_int on, u_int flags)
 
 	vidcfg = lcg_read_reg(ss, LCG_REG_VIDEO_CONFIG);
 	if (on)
-		vidcfg |= 1 << 1;
-	else
-		vidcfg &= ~(1 << 1);
+		vidcfg |= VIDEO_ENABLE_VIDEO | VIDEO_SYNC_ENABLE;
+	else {
+		vidcfg &= ~VIDEO_ENABLE_VIDEO;
+		if (flags & WSDISPLAY_BURN_VBLANK)
+			vidcfg &= ~VIDEO_SYNC_ENABLE;
+	}
 	lcg_write_reg(ss, LCG_REG_VIDEO_CONFIG, vidcfg);
 }
 
@@ -512,62 +554,143 @@ lcg_alloc_attr(void *cookie, int fg, int bg, int flg, long *attr)
 }
 
 /*
- * Fill the given colormap (LUT) entry.
+ * Colormap handling routines
  */
-void
-lcg_set_lut_entry(volatile u_int8_t *lutptr, const u_char *cmap, u_int idx,
-    u_int shift)
+
+int
+lcg_getcmap(struct lcg_screen *ss, struct wsdisplay_cmap *cm)
 {
-	lutptr++;
-	*lutptr++ = idx;
-	*lutptr++ = 1;
-	*lutptr++ = (*cmap++) >> shift;
-	*lutptr++ = 1;
-	*lutptr++ = (*cmap++) >> shift;
-	*lutptr++ = 1;
-	*lutptr++ = (*cmap++) >> shift;
+	u_int index = cm->index, count = cm->count, i;
+	u_int colcount = 1 << ss->ss_depth;
+	int error;
+	u_int8_t ramp[256], *c, *r;
+
+	if (index >= colcount || count > colcount - index)
+		return (EINVAL);
+
+	/* extract reds */
+	c = ss->ss_cmap + 0 + index * 3;
+	for (i = count, r = ramp; i != 0; i--)
+		*r++ = *c, c += 3;
+	if ((error = copyout(ramp, cm->red, count)) != 0)
+		return (error);
+
+	/* extract greens */
+	c = ss->ss_cmap + 1 + index * 3;
+	for (i = count, r = ramp; i != 0; i--)
+		*r++ = *c, c += 3;
+	if ((error = copyout(ramp, cm->green, count)) != 0)
+		return (error);
+
+	/* extract blues */
+	c = ss->ss_cmap + 2 + index * 3;
+	for (i = count, r = ramp; i != 0; i--)
+		*r++ = *c, c += 3;
+	if ((error = copyout(ramp, cm->blue, count)) != 0)
+		return (error);
+
+	return (0);
+}
+
+int
+lcg_putcmap(struct lcg_screen *ss, struct wsdisplay_cmap *cm)
+{
+	u_int index = cm->index, count = cm->count;
+	u_int colcount = 1 << ss->ss_depth;
+	int i, error;
+	u_int8_t r[256], g[256], b[256], *nr, *ng, *nb, *c;
+
+	if (index >= colcount || count > colcount - index)
+		return (EINVAL);
+
+	if ((error = copyin(cm->red, r, count)) != 0)
+		return (error);
+	if ((error = copyin(cm->green, g, count)) != 0)
+		return (error);
+	if ((error = copyin(cm->blue, b, count)) != 0)
+		return (error);
+
+	nr = r, ng = g, nb = b;
+	c = ss->ss_cmap + index * 3;
+	for (i = count; i != 0; i--) {
+		*c++ = *nr++;
+		*c++ = *ng++;
+		*c++ = *nb++;
+	}
+
+	return (0);
+}
+
+/* Fill the given colormap (LUT) entry.  */
+#define lcg_set_lut_entry(lutptr, cmap, idx, shift)			\
+do {									\
+	*(lutptr)++ = LUT_ADRS_REG;					\
+	*(lutptr)++ = (idx);						\
+	*(lutptr)++ = LUT_COLOR_AUTOINC;				\
+	*(lutptr)++ = (*(cmap)++) >> (shift);				\
+	*(lutptr)++ = LUT_COLOR_AUTOINC;				\
+	*(lutptr)++ = (*(cmap)++) >> (shift);				\
+	*(lutptr)++ = LUT_COLOR_AUTOINC;				\
+	*(lutptr)++ = (*(cmap)++) >> (shift);				\
+} while (0)
+
+void
+lcg_loadcmap(struct lcg_screen *ss, int from, int count)
+{
+	const u_int8_t *cmap;
+	u_int i;
+	volatile u_int8_t *lutptr;
+	u_int32_t vidcfg;
+
+	/* partial updates ignored for now */
+	cmap = ss->ss_cmap;
+	lutptr = ss->ss_lut;
+	if (ss->ss_depth == 8) {
+		for (i = 0; i < 256; i++) {
+			lcg_set_lut_entry(lutptr, cmap, i, 0);
+		}
+	} else {
+		for (i = 0; i < 16; i++) {
+			lcg_set_lut_entry(lutptr, cmap, i, 4);
+		}
+	}
+
+	/*
+	 * Wait for retrace
+	 */
+	while (((vidcfg = lcg_read_reg(ss, LCG_REG_VIDEO_CONFIG)) &
+	    VIDEO_VSTATE) != VIDEO_VSYNC)
+		DELAY(1);
+
+	vidcfg &= ~(VIDEO_SHIFT_SEL | VIDEO_MEM_REFRESH_SEL_MASK |
+	    VIDEO_LUT_SHIFT_SEL);
+	/* Do full loads if width is 1024 or 2048, split loads otherwise. */
+	if (ss->ss_width == 1024 || ss->ss_width == 2048)
+		vidcfg |= VIDEO_SHIFT_SEL | (1 << VIDEO_MEM_REFRESH_SEL_SHIFT) |
+		    VIDEO_LUT_SHIFT_SEL;
+	else
+		vidcfg |= (2 << VIDEO_MEM_REFRESH_SEL_SHIFT);
+	vidcfg |= VIDEO_LUT_LOAD_SIZE;	/* 2KB lut */
+	lcg_write_reg(ss, LCG_REG_VIDEO_CONFIG, vidcfg);
+	lcg_write_reg(ss, LCG_REG_LUT_CONSOLE_SEL, LUT_SEL_COLOR);
+	lcg_write_reg(ss, LCG_REG_LUT_COLOR_BASE_W, LCG_LUT_OFFSET);
+	/* Wait for end of retrace */
+	while (((vidcfg = lcg_read_reg(ss, LCG_REG_VIDEO_CONFIG)) &
+	    VIDEO_VSTATE) == VIDEO_VSYNC)
+		DELAY(1);
+	lcg_write_reg(ss, LCG_REG_LUT_CONSOLE_SEL, LUT_SEL_CONSOLE);
 }
 
 void
 lcg_resetcmap(struct lcg_screen *ss)
 {
-	const u_char *color;
-	u_int i;
-	volatile u_int8_t *lutptr;
-	u_int32_t vidcfg;
-
-	vidcfg = lcg_read_reg(ss, LCG_REG_VIDEO_CONFIG);
-	color = rasops_cmap;
-	lutptr = ss->ss_lut;
-	if (ss->ss_depth == 8) {
-		for (i = 0; i < 256; i++) {
-			lcg_set_lut_entry(lutptr, color, i, 0);
-			lutptr += 8;
-			color += 3;
-		}
-	} else {
-		for (i = 0; i < 8; i++) {
-			lcg_set_lut_entry(lutptr, color, i, 4);
-			lutptr += 8;
-			color += 3;
-		}
-		color = rasops_cmap + 0xf8 * 3;
-		for (i = 0xf8; i < 0x100; i++) {
-			lcg_set_lut_entry(lutptr, color, i & 0x0f, 4);
-			lutptr += 8;
-			color += 3;
-		}
+	if (ss->ss_depth == 8)
+		bcopy(rasops_cmap, ss->ss_cmap, sizeof(ss->ss_cmap));
+	else {
+		bcopy(rasops_cmap, ss->ss_cmap, 8 * 3);
+		bcopy(rasops_cmap + 0xf8 * 3, ss->ss_cmap + 8 * 3, 8 * 3);
 	}
-	vidcfg &= ~((1 << 5) | (3 << 8) | (1 << 11));
-	if (ss->ss_width == 1280)	/* XXX is this right? */
-		vidcfg |= (0 << 5) | (2 << 8) | (0 << 11);
-	else
-		vidcfg |= (1 << 5) | (1 << 8) | (1 << 11);
-	lcg_write_reg(ss, LCG_REG_VIDEO_CONFIG, vidcfg);
-	lcg_write_reg(ss, LCG_REG_LUT_CONSOLE_SEL, 1);
-	lcg_write_reg(ss, LCG_REG_LUT_COLOR_BASE_W, LCG_LUT_OFFSET);
-	DELAY(1000);	/* XXX should wait on a status bit */
-	lcg_write_reg(ss, LCG_REG_LUT_CONSOLE_SEL, 0);
+	lcg_loadcmap(ss, 0, 1 << ss->ss_depth);
 }
 
 /*
@@ -596,7 +719,7 @@ lcgcnprobe()
 		cfg = *(volatile u_int32_t *)
 		    (tmp + (LCG_CONFIG_ADDR & VAX_PGOFSET));
 
-		if (lcg_probe_screen(cfg, NULL, NULL) == 0)
+		if (lcg_probe_screen(cfg, NULL, NULL) <= 0)
 			break;	/* unsupported configuration */
 
 		/*
