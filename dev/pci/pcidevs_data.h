@@ -2,7 +2,7 @@
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
- *	OpenBSD: pcidevs,v 1.1129 2006/08/08 02:44:41 brad Exp 
+ *	OpenBSD: pcidevs,v 1.1131 2006/08/09 03:57:51 brad Exp 
  */
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
 
@@ -4791,6 +4791,10 @@ static const struct pci_known_product pci_known_products[] = {
 	    "PRO/1000 AF (82571EB)",
 	},
 	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82571EB_QUAD_CPR,
+	    "PRO/1000 QP (82571EB)",
+	},
+	{
 	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82573L_PL_1,
 	    "PRO/1000 PL (82573L)",
 	},
@@ -5491,6 +5495,10 @@ static const struct pci_known_product pci_known_products[] = {
 	    "5000 PCIE",
 	},
 	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_5000_PCIE_5,
+	    "5000 PCIE",
+	},
+	{
 	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_5000_ERR_REG,
 	    "5000 Error Reporting",
 	},
@@ -5511,11 +5519,11 @@ static const struct pci_known_product pci_known_products[] = {
 	    "5000 FBD",
 	},
 	{
-	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_5000_PCIE_5,
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_5000_PCIE_6,
 	    "5000 PCIE",
 	},
 	{
-	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_5000_PCIE_6,
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_5000_PCIE_7,
 	    "5000 PCIE",
 	},
 	{
@@ -5768,6 +5776,10 @@ static const struct pci_known_product pci_known_products[] = {
 	},
 	{
 	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_USB_4,
+	    "6321ESB USB",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_USB_5,
 	    "6321ESB USB",
 	},
 	{

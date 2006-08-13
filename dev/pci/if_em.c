@@ -31,7 +31,7 @@ POSSIBILITY OF SUCH DAMAGE.
 
 ***************************************************************************/
 
-/* $OpenBSD: if_em.c,v 1.140 2006/08/04 02:44:50 brad Exp $ */
+/* $OpenBSD: if_em.c,v 1.143 2006/08/09 04:44:06 brad Exp $ */
 /* $FreeBSD: if_em.c,v 1.46 2004/09/29 18:28:28 mlaier Exp $ */
 
 #include <dev/pci/if_em.h>
@@ -45,7 +45,7 @@ int             em_display_debug_stats = 0;
  *  Driver version
  *********************************************************************/
 
-char em_driver_version[] = "6.0.5";
+char em_driver_version[] = "6.1.4";
 
 /*********************************************************************
  *  PCI Device ID Table
@@ -96,6 +96,7 @@ const struct pci_matchid em_devices[] = {
 	{ PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82571EB_AT },
 	{ PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82571EB_COPPER },
 	{ PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82571EB_FIBER },
+	{ PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82571EB_QUAD_CPR },
 	{ PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82571EB_SERDES },
 	{ PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82572EI_COPPER },
 	{ PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82572EI_FIBER },
@@ -789,6 +790,7 @@ void
 em_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 {
 	struct em_softc *sc= ifp->if_softc;
+	u_char fiber_type = IFM_1000_SX;
 
 	INIT_DEBUGOUT("em_media_status: begin");
 
@@ -805,8 +807,11 @@ em_media_status(struct ifnet *ifp, struct ifmediareq *ifmr)
 
 	ifmr->ifm_status |= IFM_ACTIVE;
 
-	if (sc->hw.media_type == em_media_type_fiber) {
-		ifmr->ifm_active |= IFM_1000_SX | IFM_FDX;
+	if (sc->hw.media_type == em_media_type_fiber ||
+	    sc->hw.media_type == em_media_type_internal_serdes) {
+		if (sc->hw.mac_type == em_82545)
+			fiber_type = IFM_1000_LX;
+		ifmr->ifm_active |= fiber_type | IFM_FDX;
 	} else {
 		switch (sc->link_speed) {
 		case 10:
@@ -850,8 +855,9 @@ em_media_change(struct ifnet *ifp)
 		sc->hw.autoneg = DO_AUTO_NEG;
 		sc->hw.autoneg_advertised = AUTONEG_ADV_DEFAULT;
 		break;
+	case IFM_1000_LX:
 	case IFM_1000_SX:
-        case IFM_1000_T:
+	case IFM_1000_T:
 		sc->hw.autoneg = DO_AUTO_NEG;
 		sc->hw.autoneg_advertised = ADVERTISE_1000_FULL;
 		break;
@@ -1023,7 +1029,8 @@ em_encap(struct em_softc *sc, struct mbuf *m_head)
 	 * that this frame is available to transmit.
 	 */
 	bus_dmamap_sync(sc->txdma.dma_tag, sc->txdma.dma_map, 0,
-	    sc->txdma.dma_size, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	    sc->txdma.dma_map->dm_mapsize,
+	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	if (sc->hw.mac_type == em_82547 &&
 	    sc->link_duplex == HALF_DUPLEX) {
 		em_82547_move_tail_locked(sc);
@@ -1060,7 +1067,7 @@ em_82547_move_tail_locked(struct em_softc *sc)
 		tx_desc = &sc->tx_desc_base[hw_tdt];
 		length += tx_desc->lower.flags.length;
 		eop = tx_desc->lower.data & E1000_TXD_CMD_EOP;
-		if(++hw_tdt == sc->num_tx_desc)
+		if (++hw_tdt == sc->num_tx_desc)
 			hw_tdt = 0;
 
 		if (eop) {
@@ -1562,6 +1569,7 @@ void
 em_setup_interface(struct em_softc *sc)
 {
 	struct ifnet   *ifp;
+	u_char fiber_type = IFM_1000_SX;
 	INIT_DEBUGOUT("em_setup_interface: begin");
 
 	ifp = &sc->interface_data.ac_if;
@@ -1584,10 +1592,13 @@ em_setup_interface(struct em_softc *sc)
 	 */
 	ifmedia_init(&sc->media, IFM_IMASK, em_media_change,
 		     em_media_status);
-	if (sc->hw.media_type == em_media_type_fiber) {
-		ifmedia_add(&sc->media, IFM_ETHER | IFM_1000_SX | IFM_FDX, 
+	if (sc->hw.media_type == em_media_type_fiber ||
+	    sc->hw.media_type == em_media_type_internal_serdes) {
+		if (sc->hw.mac_type == em_82545)
+			fiber_type = IFM_1000_LX;
+		ifmedia_add(&sc->media, IFM_ETHER | fiber_type | IFM_FDX, 
 			    0, NULL);
-		ifmedia_add(&sc->media, IFM_ETHER | IFM_1000_SX, 
+		ifmedia_add(&sc->media, IFM_ETHER | fiber_type, 
 			    0, NULL);
 	} else {
 		ifmedia_add(&sc->media, IFM_ETHER | IFM_10_T, 0, NULL);
@@ -1621,27 +1632,28 @@ em_smartspeed(struct em_softc *sc)
 {
 	uint16_t phy_tmp;
  
-	if(sc->link_active || (sc->hw.phy_type != em_phy_igp) || 
-	   !sc->hw.autoneg || !(sc->hw.autoneg_advertised & ADVERTISE_1000_FULL))
+	if (sc->link_active || (sc->hw.phy_type != em_phy_igp) || 
+	    !sc->hw.autoneg || !(sc->hw.autoneg_advertised & ADVERTISE_1000_FULL))
 		return;
 
-	if(sc->smartspeed == 0) {
+	if (sc->smartspeed == 0) {
 		/* If Master/Slave config fault is asserted twice,
 		 * we assume back-to-back */
 		em_read_phy_reg(&sc->hw, PHY_1000T_STATUS, &phy_tmp);
-		if(!(phy_tmp & SR_1000T_MS_CONFIG_FAULT)) return;
+		if (!(phy_tmp & SR_1000T_MS_CONFIG_FAULT))
+			return;
 		em_read_phy_reg(&sc->hw, PHY_1000T_STATUS, &phy_tmp);
-		if(phy_tmp & SR_1000T_MS_CONFIG_FAULT) {
+		if (phy_tmp & SR_1000T_MS_CONFIG_FAULT) {
 			em_read_phy_reg(&sc->hw, PHY_1000T_CTRL,
 					&phy_tmp);
-			if(phy_tmp & CR_1000T_MS_ENABLE) {
+			if (phy_tmp & CR_1000T_MS_ENABLE) {
 				phy_tmp &= ~CR_1000T_MS_ENABLE;
 				em_write_phy_reg(&sc->hw,
 						    PHY_1000T_CTRL, phy_tmp);
 				sc->smartspeed++;
-				if(sc->hw.autoneg &&
-				   !em_phy_setup_autoneg(&sc->hw) &&
-				   !em_read_phy_reg(&sc->hw, PHY_CTRL,
+				if (sc->hw.autoneg &&
+				    !em_phy_setup_autoneg(&sc->hw) &&
+				    !em_read_phy_reg(&sc->hw, PHY_CTRL,
 						       &phy_tmp)) {
 					phy_tmp |= (MII_CR_AUTO_NEG_EN |  
 						    MII_CR_RESTART_AUTO_NEG);
@@ -1651,21 +1663,21 @@ em_smartspeed(struct em_softc *sc)
 			}
 		}
 		return;
-	} else if(sc->smartspeed == EM_SMARTSPEED_DOWNSHIFT) {
+	} else if (sc->smartspeed == EM_SMARTSPEED_DOWNSHIFT) {
 		/* If still no link, perhaps using 2/3 pair cable */
 		em_read_phy_reg(&sc->hw, PHY_1000T_CTRL, &phy_tmp);
 		phy_tmp |= CR_1000T_MS_ENABLE;
 		em_write_phy_reg(&sc->hw, PHY_1000T_CTRL, phy_tmp);
-		if(sc->hw.autoneg &&
-		   !em_phy_setup_autoneg(&sc->hw) &&
-		   !em_read_phy_reg(&sc->hw, PHY_CTRL, &phy_tmp)) {
+		if (sc->hw.autoneg &&
+		    !em_phy_setup_autoneg(&sc->hw) &&
+		    !em_read_phy_reg(&sc->hw, PHY_CTRL, &phy_tmp)) {
 			phy_tmp |= (MII_CR_AUTO_NEG_EN |
 				    MII_CR_RESTART_AUTO_NEG);
 			em_write_phy_reg(&sc->hw, PHY_CTRL, phy_tmp);
 		}
 	}
 	/* Restart process after EM_SMARTSPEED_MAX iterations */
-	if(sc->smartspeed++ == EM_SMARTSPEED_MAX)
+	if (sc->smartspeed++ == EM_SMARTSPEED_MAX)
 		sc->smartspeed = 0;
 }
 
@@ -1844,7 +1856,8 @@ em_initialize_transmit_unit(struct em_softc *sc)
 		reg_tipg |= DEFAULT_80003ES2LAN_TIPG_IPGR2 << E1000_TIPG_IPGR2_SHIFT;
 		break;
 	default:
-		if (sc->hw.media_type == em_media_type_fiber)
+		if (sc->hw.media_type == em_media_type_fiber ||
+		    sc->hw.media_type == em_media_type_internal_serdes)
 			reg_tipg = DEFAULT_82543_TIPG_IPGT_FIBER;
 		else
 			reg_tipg = DEFAULT_82543_TIPG_IPGT_COPPER;
@@ -1854,7 +1867,7 @@ em_initialize_transmit_unit(struct em_softc *sc)
 
 	E1000_WRITE_REG(&sc->hw, TIPG, reg_tipg);
 	E1000_WRITE_REG(&sc->hw, TIDV, sc->tx_int_delay);
-	if(sc->hw.mac_type >= em_82540)
+	if (sc->hw.mac_type >= em_82540)
 		E1000_WRITE_REG(&sc->hw, TADV, sc->tx_abs_int_delay);
 
 	/* Do adapter specific tweaks before we enable the transmitter */
@@ -1869,8 +1882,6 @@ em_initialize_transmit_unit(struct em_softc *sc)
 	} else if (sc->hw.mac_type == em_80003es2lan) {
 		reg_tarc = E1000_READ_REG(&sc->hw, TARC0);
 		reg_tarc |= 1;
-		if (sc->hw.media_type == em_media_type_internal_serdes)
-			reg_tarc |= (1 << 20);
 		E1000_WRITE_REG(&sc->hw, TARC0, reg_tarc);
 		reg_tarc = E1000_READ_REG(&sc->hw, TARC1);
 		reg_tarc |= 1;
@@ -2033,8 +2044,8 @@ em_txeof(struct em_softc *sc)
 	tx_desc = &sc->tx_desc_base[i];
 
 	bus_dmamap_sync(sc->txdma.dma_tag, sc->txdma.dma_map, 0,
-	    sc->txdma.dma_size, BUS_DMASYNC_POSTREAD);
-	while(tx_desc->upper.fields.status & E1000_TXD_STAT_DD) {
+	    sc->txdma.dma_map->dm_mapsize, BUS_DMASYNC_POSTREAD);
+	while (tx_desc->upper.fields.status & E1000_TXD_STAT_DD) {
 
 		tx_desc->upper.data = 0;
 		num_avail++;
@@ -2055,7 +2066,8 @@ em_txeof(struct em_softc *sc)
 		tx_desc = &sc->tx_desc_base[i];
 	}
 	bus_dmamap_sync(sc->txdma.dma_tag, sc->txdma.dma_map, 0,
-	    sc->txdma.dma_size, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	    sc->txdma.dma_map->dm_mapsize,
+	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
 	sc->oldest_used_tx_desc = i;
 
@@ -2180,7 +2192,8 @@ em_allocate_receive_structures(struct em_softc *sc)
                 }
         }
 	bus_dmamap_sync(sc->rxdma.dma_tag, sc->rxdma.dma_map, 0,
-	    sc->rxdma.dma_size, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	    sc->rxdma.dma_map->dm_mapsize,
+	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
         return (0);
 
@@ -2233,7 +2246,7 @@ em_initialize_receive_unit(struct em_softc *sc)
 	E1000_WRITE_REG(&sc->hw, RDTR, 
 			sc->rx_int_delay | E1000_RDT_FPDB);
 
-	if(sc->hw.mac_type >= em_82540) {
+	if (sc->hw.mac_type >= em_82540) {
 		E1000_WRITE_REG(&sc->hw, RADV, sc->rx_abs_int_delay);
 
 		/* Set the interrupt throttling rate.  Value is calculated
@@ -2352,7 +2365,7 @@ em_rxeof(struct em_softc *sc, int count)
 	i = sc->next_rx_desc_to_check;
 	current_desc = &sc->rx_desc_base[i];
 	bus_dmamap_sync(sc->rxdma.dma_tag, sc->rxdma.dma_map, 0,
-	    sc->rxdma.dma_size, BUS_DMASYNC_POSTREAD);
+	    sc->rxdma.dma_map->dm_mapsize, BUS_DMASYNC_POSTREAD);
 
 	if (!((current_desc->status) & E1000_RXD_STAT_DD))
 		return;
@@ -2463,7 +2476,8 @@ em_rxeof(struct em_softc *sc, int count)
 		/* Zero out the receive descriptors status. */
 		current_desc->status = 0;
 		bus_dmamap_sync(sc->rxdma.dma_tag, sc->rxdma.dma_map, 0,
-		    sc->rxdma.dma_size, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+		    sc->rxdma.dma_map->dm_mapsize,
+		    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
 		/* Advance our pointers to the next descriptor. */
 		if (++i == sc->num_rx_desc)
@@ -2708,7 +2722,7 @@ em_update_stats_counters(struct em_softc *sc)
 {
 	struct ifnet   *ifp;
 
-	if(sc->hw.media_type == em_media_type_copper ||
+	if (sc->hw.media_type == em_media_type_copper ||
 	    (E1000_READ_REG(&sc->hw, STATUS) & E1000_STATUS_LU)) {
 		sc->stats.symerrs += E1000_READ_REG(&sc->hw, SYMERRS);
 		sc->stats.sec += E1000_READ_REG(&sc->hw, SEC);
