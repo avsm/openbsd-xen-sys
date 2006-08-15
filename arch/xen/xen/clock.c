@@ -56,6 +56,7 @@ volatile static struct timeval shadow_tv; /* Time since 00:00:00 UTC, Jan 1, 197
 static int timeset;
 
 static uint64_t processed_system_time;
+static struct timeval cc_time;
 static int64_t cc_ms_delta;
 static int64_t cc_denom;
 
@@ -132,10 +133,10 @@ inittodr(time_t base)
 	get_time_values_from_xen();
 	splx(s);
 
-	t = shadow_tv.tv_sec * 1000000 +
+	t = shadow_tv.tv_sec * 1000000ULL +
 	    shadow_tv.tv_usec + processed_system_time / 1000;
-	time.tv_usec = t % 1000000;
-	time.tv_sec = t / 1000000;
+	time.tv_usec = t % 1000000ULL;
+	time.tv_sec = t / 1000000ULL;
 #ifdef XEN_CLOCK_DEBUG
 	printf("readclock: %ld (%ld)\n", time.tv_sec, base);
 #endif
@@ -215,6 +216,7 @@ resettodr(void)
 {
 	resettodr_i();
 
+	timerclear(&cc_time);
 	/* XXX: On SMP iterate over all cpu's and clear the time
 	 */
 }
@@ -276,16 +278,20 @@ xen_delay(int n)
 void
 xen_microtime(struct timeval *tv)
 {
-	struct timeval t;
 	int64_t cycles;
 	int s;
 
 	s = splclock();
-	t = shadow_tv;
 	*tv = time;
 	cycles = cpu_counter() - shadow_tsc_stamp;
 	KDASSERT(cycles > 0);
 	cycles += cc_denom * pentium_mhz / 1000LL;
+#ifdef XEN_CLOCK_DEBUG
+	if (cycles <= 0) {
+		printf("xen_microtime: CPU counter has decreased by %lli"
+			" since last hardclock(9)\n", -cycles);
+	}
+#endif
 	tv->tv_usec += cycles * cc_ms_delta * hz / (pentium_mhz * 1000000);
 	KDASSERT(tv->tv_usec < 2000000);
 	while (tv->tv_usec >= 1000000) {
@@ -293,13 +299,13 @@ xen_microtime(struct timeval *tv)
 		tv->tv_sec++;
 	}
 	/* Avoid small backsteps, e.g. at the beginning of a negative adjustment. */
-	if (timerisset(&t) &&
-	    timercmp(tv, &t, <)) {
+	if (timerisset(&cc_time) &&
+	    timercmp(tv, &cc_time, <)) {
 		struct timeval backstep;
 
-		timersub(&t, tv, &backstep);
+		timersub(&cc_time, tv, &backstep);
 		if (backstep.tv_sec == 0) {	/* if it was < 1sec */
-			*tv = t;
+			*tv = cc_time;
 #ifdef XEN_CLOCK_DEBUG
 			printf("xen_microtime: clamping at %ld.%06ld (-%ldus)\n",
 				tv->tv_sec, tv->tv_usec, backstep.tv_usec);
@@ -310,6 +316,8 @@ xen_microtime(struct timeval *tv)
 #endif
 		}
 	}
+
+	cc_time = *tv;
 	splx(s);
 }
 
@@ -379,8 +387,9 @@ xen_initclocks(void)
 
 	get_time_values_from_xen();
 	processed_system_time = shadow_system_time;
-	cc_ms_delta = 1000000;
-	cc_denom = pentium_mhz * 1000000;
+	cc_time = time;
+	cc_ms_delta = 1;
+	cc_denom = pentium_mhz * 1;
 
 	event_set_handler(evtch, (int (*)(void *))xen_timer_handler,
 	    NULL, IPL_CLOCK, "clock");
@@ -411,8 +420,8 @@ xen_timer_handler(void *arg, struct intrframe *regs)
 
 	delta = (int64_t)(shadow_system_time + get_tsc_offset_ns() -
 	    processed_system_time);
-	KASSERT(processed_system_time <= shadow_system_time);
-	while (delta >= NS_PER_TICK) {
+//	KASSERT(processed_system_time <= shadow_system_time);
+	while (delta >= (int64_t)NS_PER_TICK) {
 		/* Have hardclock do its thing. */
 		oldtime = time;
 		hardclock((struct clockframe *)regs);
