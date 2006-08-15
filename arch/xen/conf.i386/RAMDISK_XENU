@@ -54,10 +54,10 @@ xenbus*		at hypervisor?	# Xen virtual bus
 
 
 # PCI bus support
-pci*		at hypervisor? bus ?
+#pci*		at hypervisor? bus ?
 
-pchb*		at pci? dev ? function ?	# PCI-Host bridges
-ppb*		at pci? dev ? function ?	# PCI-PCI bridges
+#pchb*		at pci? dev ? function ?	# PCI-Host bridges
+#ppb*		at pci? dev ? function ?	# PCI-PCI bridges
 
 pseudo-device	rd	1		# ramdisk
 
