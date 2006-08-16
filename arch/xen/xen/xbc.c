@@ -68,7 +68,6 @@
 #include <machine/xen.h>
 #include <machine/hypervisor.h>
 #include <machine/evtchn.h>
-#include <machine/ctrl_if.h>
 
 void	control_send(blkif_request_t *, blkif_response_t *);
 void	send_interface_connect(void);
