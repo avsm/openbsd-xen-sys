@@ -39,7 +39,7 @@ npx0		at hypervisor?	# x86 math coprocessor
 xencons*	at hypervisor?	# Xen virtual console
 xenbus*		at hypervisor?	# Xen virtual bus
 
-#xennet*		at xenbus?	# Xen virtual network interface
+xennet*		at xenbus?	# Xen virtual network interface
 
 #xbc*		at xenbus?  # Xen virtual block controller (SCSI)
 #scsibus*	at xbc?

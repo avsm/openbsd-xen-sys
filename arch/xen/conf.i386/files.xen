@@ -121,7 +121,8 @@ pseudo-device xenevt
 # Xen network driver
 device  xennet: ether, ifnet
 attach  xennet at xenbus
-file	arch/xen/xen/if_xennet_xenbus.c	xennet needs-flag
+file	arch/xen/xen/if_xennet_xenbus.c	xennet
+file	arch/xen/xen/xennet_checksum.c	xennet
 
 # Xen block device controller
 device  xbc: scsi

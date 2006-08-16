@@ -1357,7 +1357,7 @@ int
 xennet_reset(struct ifnet *ifp)
 {
 #ifdef XENNET_DEBUG
-	struct xennet_softc *sc = ifp->if_softc;
+	struct xennet_xenbus_softc *sc = ifp->if_softc;
 
 	DPRINTFN(XEDB_FOLLOW, ("%s: xennet_reset()\n", sc->sc_dev.dv_xname));
 #endif
@@ -1402,7 +1402,7 @@ int
 xennet_bootstatic_callback(struct nfs_diskless *nd)
 {
 	struct ifnet *ifp = nd->nd_ifp;
-	struct xennet_softc *sc = (struct xennet_softc *)ifp->if_softc;
+	struct xennet_xenbus_softc *sc = ifp->if_softc;
 	union xen_cmdline_parseinfo xcp;
 	struct sockaddr_in *sin;
 

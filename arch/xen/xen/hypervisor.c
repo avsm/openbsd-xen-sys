@@ -70,7 +70,6 @@
 #include <sys/malloc.h>
 
 #include "xencons.h"
-#include "xennet.h"
 #include "xbc.h"
 #include "npx.h"
 #include "isa.h"
@@ -96,14 +95,6 @@
 #endif
 #endif
 #include <machine/xenbus.h>
-
-#if NXENNET > 0
-#include <sys/socket.h>
-#include <net/if.h>
-#include <netinet/in.h>
-#include <netinet/if_ether.h>
-#include <machine/if_xennetvar.h>
-#endif
 
 #if NXBC > 0
 #include <scsi/scsi_all.h>
@@ -138,9 +129,6 @@ union hypervisor_attach_cookie {
 	struct xenbus_attach_args hac_xenbus;
 #if NXENCONS > 0
 	struct xencons_attach_args hac_xencons;
-#endif
-#if NXENNET > 0
-	struct xennet_attach_args hac_xennet;
 #endif
 #if NXBC > 0
 	struct xbc_attach_args hac_xbc;
@@ -221,10 +209,6 @@ hypervisor_attach(struct device *parent, struct device *self, void *aux)
 #if NXENCONS > 0
 	hac.hac_xencons.xa_device = "xencons";
 	config_found(self, &hac.hac_xencons, hypervisor_print);
-#endif
-#if NXENNET > 0
-	hac.hac_xennet.xa_device = "xennet";
-	xennet_scan(self, &hac.hac_xennet, hypervisor_print);
 #endif
 #if NXBC > 0
 	hac.hac_xbc.xa_device = "xbc";
