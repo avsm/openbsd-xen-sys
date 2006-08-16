@@ -81,6 +81,7 @@
 
 #include <uvm/uvm_extern.h>
 #include <uvm/uvm_page.h>
+#include <machine/uvm_km_kmemalloc.h>
 
 #include <machine/xen.h>
 #include <machine/hypervisor.h>
@@ -299,21 +300,22 @@ xennet_xenbus_attach(struct device *parent, struct device *self, void *aux)
 	SLIST_INIT(&sc->sc_rxreq_head);
 	s = splvm();
 	for (i = 0; i < NET_RX_RING_SIZE; i++) {
-                struct xennet_rxreq *rxreq = &sc->sc_rxreqs[i];
-                rxreq->rxreq_id = i;
-                rxreq->rxreq_sc = sc;
-                rxreq->rxreq_va = uvm_km_zalloc(kernel_map,
-                    PAGE_SIZE);
-                if (rxreq->rxreq_va == 0)
-                        break;
-                if (!pmap_extract(pmap_kernel(), rxreq->rxreq_va,
-                    &rxreq->rxreq_pa))
-                        panic("xennet: no pa for mapped va ?");
-                rxreq->rxreq_gntref = GRANT_INVALID_REF;
-                SLIST_INSERT_HEAD(&sc->sc_rxreq_head, rxreq, rxreq_next);
-        }
-        splx(s);
-        sc->sc_free_rxreql = i;
+		struct xennet_rxreq *rxreq = &sc->sc_rxreqs[i];
+		rxreq->rxreq_id = i;
+		rxreq->rxreq_sc = sc;
+		rxreq->rxreq_va = uvm_km_kmemalloc1(kernel_map, NULL,
+			PAGE_SIZE, PAGE_SIZE, UVM_UNKNOWN_OFFSET, 0);
+		memset((void *)rxreq->rxreq_va, 0, PAGE_SIZE);
+		if (rxreq->rxreq_va == 0)
+			break;
+		if (!pmap_extract(pmap_kernel(), rxreq->rxreq_va,
+		    &rxreq->rxreq_pa))
+			panic("xennet: no pa for mapped va ?");
+		rxreq->rxreq_gntref = GRANT_INVALID_REF;
+		SLIST_INSERT_HEAD(&sc->sc_rxreq_head, rxreq, rxreq_next);
+	}
+	splx(s);
+	sc->sc_free_rxreql = i;
 	if (sc->sc_free_rxreql == 0) {
 		printf("%s: failed to allocate rx memory\n",
 		    sc->sc_dev.dv_xname);
