@@ -52,7 +52,9 @@ struct xbc_softc {
 
 struct xbc_attach_args {
 	const char 		*xa_device;
+#if 0
 	vdisk_t			*xa_xd;
+#endif
 	struct sysctlnode	*xa_diskcookies;
 };
 

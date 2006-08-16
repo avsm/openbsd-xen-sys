@@ -55,9 +55,11 @@
 #include <uvm/uvm.h>
 #include <machine/uvm_km_kmemalloc.h>
 
-#if NRND > 0
-#include <sys/rnd.h>
-#endif
+#include <machine/xen-public/io/ring.h>
+#include <machine/xen-public/io/blkif.h>
+
+#include <machine/granttables.h>
+#include <machine/xenbus.h>
 
 #include <scsi/scsi_all.h>
 #include <scsi/scsi_disk.h>
@@ -69,16 +71,76 @@
 #include <machine/hypervisor.h>
 #include <machine/evtchn.h>
 
+#ifdef XBC_DEBUG
+#define DPRINTF(x) printf x;
+#else
+#define DPRINTF(x)
+#endif
+
+#define GRANT_INVALID_REF	-1
+
+#define XBC_RING_SIZE __RING_SIZE((blkif_sring_t *)0, PAGE_SIZE)
+
+#define XEN_BSHIFT	9	/* log2(XEN_BSIZE) */
+#define XEN_BSIZE	(1 << XEN_BSHIFT)
+
+struct xbc_req {
+	SLIST_ENTRY(xbc_req) req_next;
+	uint16_t req_id; /* ID passed to backed */
+	grant_ref_t req_gntref[BLKIF_MAX_SEGMENTS_PER_REQUEST];
+	int req_nr_segments; /* number of segments in this request */
+	struct buf *req_bp; /* buffer associated with this request */
+	void *req_data; /* pointer to the data buffer */
+};
+
+struct xbc_xenbus_softc {
+	struct device sc_dev;		/* base device glue */
+	struct scsi_link sc_link;	/* scsi link */
+	struct scsi_xfer *sc_xs;
+	struct xenbus_device *sc_xbusd;
+
+	blkif_front_ring_t sc_ring;
+
+	unsigned int sc_evtchn;
+
+	grant_ref_t sc_ring_gntref;
+
+	struct xbc_req sc_reqs[XBC_RING_SIZE];
+	SLIST_HEAD(,xbc_req) sc_xbcreq_head; /* list of free requests */
+
+	int sc_backend_status;		/* our status with backend */
+#define BLKIF_STATE_DISCONNECTED	0
+#define BLKIF_STATE_CONNECTED		1
+#define BLKIF_STATE_SUSPENDED		2
+	int sc_shutdown;
+
+	u_long sc_sectors;	/* number of sectors for this device */
+	u_long sc_secsize;	/* sector size */
+	u_long sc_info;		/* VDISK_* */
+	u_long sc_handle;	/* from backend */
+};
+
 void	control_send(blkif_request_t *, blkif_response_t *);
 void	send_interface_connect(void);
 
-int xbc_match(struct device *, void *, void *);
-void xbc_attach(struct device *, struct device *, void *);
+int xbc_xenbus_match(struct device *, void *, void *);
+void xbc_xenbus_attach(struct device *, struct device *, void *);
+int xbc_xenbus_detach(struct device *, int);
 
+int xbc_xenbus_resume(void *);
+int xbc_handler(void *);
+int xbcstart(struct xbc_xenbus_softc *, struct buf *);
+void xbc_backend_changed(void *, XenbusState);
+void xbc_connect(struct xbc_xenbus_softc *);
+
+int xbc_map_align(struct xbc_req *);
+void xbc_unmap_align(struct xbc_req *);
+
+#if 0
 void xbc_ctrlif_rx(ctrl_msg_t *msg, unsigned long id);
 void send_driver_status(int ok);
 vdisk_t *get_vdisk(uint8_t target);
-
+#endif
 
 int xbc_scsi_cmd(struct scsi_xfer *);
 int xbc_cmd(struct xbc_softc *sc, int command, void *data,
@@ -107,15 +169,16 @@ struct scsi_device xbc_dev = {
 
 struct cfattach xbc_ca = {
 	sizeof(struct xbc_softc),
-	xbc_match, xbc_attach,
-	NULL,	/* detach */
+	xbc_xenbus_match, xbc_xenbus_attach,
+	xbc_xenbus_detach,	/* detach */
 	NULL	/* activate */
 };
 
 
-int	xbcstart(struct xbc_softc *, struct buf *);
+#if 0
 int	xbc_response_handler(void *);
 void	xbc_iodone(struct xbc_softc *);
+#endif
 
 int xbcinit(struct xbc_softc *, struct xbc_attach_args *);
 void xbc_copy_internal_data(struct scsi_xfer *xs, void *v, size_t size);
@@ -157,50 +220,8 @@ struct xbcreq *xbc_allxr;
 #endif
 
 
-struct xbcreq {
-	union {
-		SLIST_ENTRY(xbcreq) _unused;	/* ptr. to next free xbcreq */
-		SIMPLEQ_ENTRY(xbcreq) _suspended;
-					/* link when on suspended queue. */
-	} _link;
-	struct xbcreq		*xr_parent;	/* ptr. to parent xbcreq */
-	struct buf		*xr_bp;		/* ptr. to original I/O buf */
-	daddr_t			xr_bn;		/* block no. to process */
-	long			xr_bqueue;	/* bytes left to queue */
-	long			xr_bdone;	/* bytes left */
-	vaddr_t			xr_data;	/* ptr. to data to be proc. */
-	vaddr_t			xr_aligned;	/* ptr. to aligned data */
-	long			xr_breq;	/* bytes in this req. */
-	struct xbc_softc	*xr_sc;		/* ptr. to xbc softc */
-	vdisk_t			*xr_vdisk;	/* ptr. to vdisk */
-	struct scsi_xfer	*xr_xs;		/* ptr. to scsi xfer */
-};
-#define	xr_unused	_link._unused
-#define	xr_suspended	_link._suspended
-
-SLIST_HEAD(,xbcreq) xbcreqs =
-	SLIST_HEAD_INITIALIZER(xbcreqs);
-static SIMPLEQ_HEAD(, xbcreq) xbdr_suspended =
-	SIMPLEQ_HEAD_INITIALIZER(xbdr_suspended);
-
-#define	CANGET_XBCREQ() (!SLIST_EMPTY(&xbcreqs))
-
-#define	GET_XBCREQ(_xr) do {				\
-	(_xr) = SLIST_FIRST(&xbcreqs);			\
-	if (__predict_true(_xr))			\
-		SLIST_REMOVE_HEAD(&xbcreqs, xr_unused);	\
-} while (/*CONSTCOND*/0)
-
-#define	PUT_XBCREQ(_xr) do {				\
-	DEBUG_MARK_UNUSED(_xr);				\
-	SLIST_INSERT_HEAD(&xbcreqs, _xr, xr_unused);	\
-} while (/*CONSTCOND*/0)
-
 static struct bufq *bufq;
 static int bufq_users = 0;
-
-#define	XEN_BSHIFT	9		/* log2(XEN_BSIZE) */
-#define	XEN_BSIZE	(1 << XEN_BSHIFT)
 
 #define MAX_VBDS 64
 static int nr_vbds;
@@ -210,11 +231,6 @@ static blkif_ring_t *blk_ring = NULL;
 static BLKIF_RING_IDX resp_cons; /* Response consumer for comms ring. */
 static BLKIF_RING_IDX req_prod;  /* Private request producer.         */
 static BLKIF_RING_IDX last_req_prod;  /* Request producer at last trap. */
-
-#define STATE_CLOSED		0
-#define STATE_DISCONNECTED	1
-#define STATE_CONNECTED		2
-static unsigned int state = STATE_CLOSED;
 
 static int in_autoconf; /* we are still in autoconf ? */
 static unsigned int blkif_evtchn = 0;
@@ -274,27 +290,28 @@ xbc_scan(struct device *self, struct xbc_attach_args *mainbus_xbca,
 
 
 int
-xbc_match(struct device *parent, void *match, void *aux)
+xbc_xenbus_match(struct device *parent, void *match, void *aux)
 {
-	struct xbc_attach_args *xa = (struct xbc_attach_args *)aux;
+	struct xenbusdev_attach_args *xa = aus;
 
-	if (strcmp(xa->xa_device, "xbc") == 0)
-		return 1;
-	return 0;
+	if (strcmp(xa->xa_type, "vbd") != 0)
+		return 0;
+
+	return 1;
 }
 
 
 void
-xbc_attach(struct device *parent, struct device *self, void *aux)
+xbc_xenbus_attach(struct device *parent, struct device *self, void *aux)
 {
-	struct xbc_attach_args *xbda = (struct xbc_attach_args *)aux;
-	struct xbc_softc *xs = (struct xbc_softc *)self;
+	struct xbc_attach_args *xbca = (struct xbc_attach_args *)aux;
+	struct xbc_xenbus_softc *xs = (struct xbc_xenbus_softc *)self;
 	struct scsi_link *sl = &xs->sc_link;
 
 	printf(": Xen Virtual Block Controller\n");
 
 	simple_lock_init(&xs->sc_slock);
-	xbcinit(xs, xbda);
+	xbcinit(xs, xbca);
 
 	/* No need to run vbd_update() here.
 	 * connect_interface() probes for drives and
