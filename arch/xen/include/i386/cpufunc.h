@@ -43,6 +43,7 @@
 #include <sys/cdefs.h>
 #include <sys/types.h>
 
+#include <machine/segments.h>
 #include <machine/specialreg.h>
 #include <machine/xen.h>
 #include <machine/hypervisor.h>
@@ -51,7 +52,7 @@
 
 static __inline void x86_lfence(void);
 static __inline void x86_sfence(void);
-static __inline void lidt(void *);
+static __inline void lidt(struct region_descriptor *region);
 static __inline u_int rcr2(void);
 static __inline void lcr4(u_int);
 static __inline u_int rcr4(void);
@@ -82,9 +83,9 @@ x86_sfence(void)
 }
 
 static __inline void
-lidt(void *p)
+lidt(struct region_descriptor *region)
 {
-	__asm __volatile("lidt (%0)" : : "r" (p));
+	__asm __volatile("lidt %0" : : "m" (*region));
 }
 
 static __inline u_int
