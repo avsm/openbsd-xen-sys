@@ -1509,6 +1509,7 @@ intel686_common_cpu_setup(struct cpu_info *ci)
 {
 
 #if !defined(SMALL_KERNEL) && defined(I686_CPU)
+#ifdef DOM0OPS
 	int model = (ci->ci_signature >> 4) & 15;
 	int step = ci->ci_signature & 15;
 
@@ -1521,6 +1522,7 @@ intel686_common_cpu_setup(struct cpu_info *ci)
 	} else if ((cpu_feature & (CPUID_ACPI | CPUID_TM)) ==
 	    (CPUID_ACPI | CPUID_TM))
 		p4tcc_init(model, step);
+#endif /* DOM0OPS */
 
 	{
 	extern void (*pagezero)(void *, size_t);
