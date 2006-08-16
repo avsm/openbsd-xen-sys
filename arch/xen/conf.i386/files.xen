@@ -50,6 +50,7 @@ file	arch/i386/i386/lock_machdep.c	multiprocessor
 file	arch/i386/i386/ipifuncs.c	multiprocessor
 file	arch/i386/i386/db_mp.c		multiprocessor & ddb
 file	arch/xen/i386/softintr.c
+file	arch/xen/xen/uvm_km_kmemalloc.c
 
 file	arch/xen/xen/clock.c
 file	arch/xen/xen/evtchn.c

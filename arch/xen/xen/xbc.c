@@ -56,6 +56,7 @@
 #include <sys/kernel.h>
 
 #include <uvm/uvm.h>
+#include <machine/uvm_km_kmemalloc.h>
 
 #if NRND > 0
 #include <sys/rnd.h>
@@ -651,129 +652,6 @@ send_interface_connect(void)
 	ctrl_if_send_message_block(&cmsg, NULL, 0, 0);
 }
 
-
-/*
- * XXX move uvm_km_kmemalloc1() to uvm/uvm_km.c and replace
- * uvm_km_kmemalloc() with
- *  #define uvm_km_kmemalloc(map, obj, size, flags)	\
- *	uvm_km_kmemalloc1(map, obj, 0, UVM_UNKNOWN_OFFSET, flags)
- *
- * uvm_km_kmemalloc1() is needed to meet the alignment requirements
- *   for the ring buffer. It only differs in the two align and prefer
- *   arguments which are just passed through to uvm_map().
- */
-
-vaddr_t
-uvm_km_kmemalloc1(struct vm_map *map, struct uvm_object *obj,
-		vsize_t size, vsize_t align, voff_t prefer, int flags);
-vaddr_t
-uvm_km_kmemalloc1(struct vm_map *map, struct uvm_object *obj,
-		vsize_t size, vsize_t align, voff_t prefer, int flags)
-{
-	vaddr_t kva, loopva;
-	vaddr_t offset;
-	size_t loopsize;
-	struct vm_page *pg;
-	UVMHIST_FUNC("uvm_km_kmemalloc1"); UVMHIST_CALLED(maphist);
-
-	UVMHIST_LOG(maphist,"  (map=0x%x, obj=0x%x, size=0x%x, flags=%d)",
-		map, obj, size, flags);
-	KASSERT(vm_map_pmap(map) == pmap_kernel());
-
-	/*
-	 * setup for call
-	 */
-
-	size = round_page(size);
-	kva = vm_map_min(map);	/* hint */
-
-	/*
-	 * allocate some virtual space
-	 */
-	if (__predict_false(uvm_map(map, &kva, size, obj, prefer, align,
-		UVM_MAPFLAG(UVM_PROT_RW, UVM_PROT_RW, UVM_INH_NONE,
-			UVM_ADV_RANDOM, (flags & UVM_KMF_TRYLOCK)))
-			!= KERN_SUCCESS)) {
-		UVMHIST_LOG(maphist, "<- done (no VM)", 0,0,0,0);
-		return (0);
-	}
-
-	/*
-	 * if all we wanted was VA, return now
-	 */
-
-	if (flags & UVM_KMF_VALLOC) {
-		UVMHIST_LOG(maphist, "<- done valloc (kva=0x%x)", kva,0,0,0);
-		return (kva);
-	}
-
-	/*
-	 * recover object offset from virtual address
-	 */
-
-	offset = kva - vm_map_min(kernel_map);
-	UVMHIST_LOG(maphist, "  kva=0x%x, offset=%x", kva, offset,0,0);
-
-	/*
-	 * now allocate and map in the memory... note that we are the only ones
-	 * whom should ever get a handle on this area of VM.
-	 */
-
-	loopva = kva;
-	loopsize = size;
-	while (loopsize) {
-		if (obj) {
-			simple_lock(&obj->vmobjlock);
-		}
-		pg = uvm_pagealloc(obj, offset, NULL, 0);
-		if (pg) {
-			pg->flags &= ~PG_BUSY; /* new page */
-			UVM_PAGE_OWN(pg, NULL);
-		}
-		if (obj) {
-			simple_unlock(&obj->vmobjlock);
-		}
-
-		/*
-		 * out of memory?
-		 */
-
-		if (__predict_false(pg == NULL)) {
-			if ((flags & UVM_KMF_NOWAIT) ||
-			    ((flags & UVM_KMF_CANFAIL) &&
-			    uvmexp.swpgonly == uvmexp.swpages)) {
-				/* free everything! */
-				uvm_unmap(map, kva, kva + size);
-				return (0);
-			} else {
-				uvm_wait("km_getwait2");	/* sleep here */
-				continue;
-			}
-		}
-
-		/* map it in: note that we call pmap_enter with the map and
-		 * object unlocked in case we are kmem_map/kmem_object
-		 * (because if pmap_enter wants to allocate out of kmem_object
-		 * it will need to lock it itself!)
-		 */
-
-		if ((obj != NULL) && (UVM_OBJ_IS_INTRSAFE_OBJECT(obj))) {
-			pmap_kenter_pa(loopva, VM_PAGE_TO_PHYS(pg),
-				UVM_PROT_RW);
-		} else {
-			pmap_enter(map->pmap, loopva, VM_PAGE_TO_PHYS(pg),
-				UVM_PROT_RW,
-				PMAP_WIRED | VM_PROT_READ | VM_PROT_WRITE);
-		}
-		loopva += PAGE_SIZE;
-		offset += PAGE_SIZE;
-		loopsize -= PAGE_SIZE;
-	}
-	pmap_update(pmap_kernel());
-
-	UVMHIST_LOG(maphist, "<- done (kva=0x%x)", kva, 0,0,0);
-	return (kva);
-}
 
 static int
 get_vbd_info(vdisk_t *disk_info)
