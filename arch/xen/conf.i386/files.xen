@@ -128,7 +128,7 @@ file	arch/xen/xen/xennet_checksum.c	xennet
 # Xen block device controller
 device  xbc: scsi
 attach  xbc at xenbus
-file	arch/xen/xen/xbc.c		xbc needs-flag
+file	arch/xen/xen/xbc.c		xbc
 
 #
 # PCI-only drivers

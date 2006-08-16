@@ -32,9 +32,6 @@
  */
 
 
-#include "xbc.h"
-//#include "rnd.h"
-
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/systm.h>

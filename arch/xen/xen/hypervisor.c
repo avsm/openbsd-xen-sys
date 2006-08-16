@@ -70,7 +70,6 @@
 #include <sys/malloc.h>
 
 #include "xencons.h"
-#include "xbc.h"
 #include "npx.h"
 #include "isa.h"
 #include "pci.h"
@@ -95,12 +94,6 @@
 #endif
 #endif
 #include <machine/xenbus.h>
-
-#if NXBC > 0
-#include <scsi/scsi_all.h>
-#include <scsi/scsiconf.h>
-#include <machine/xbcvar.h>
-#endif
 
 #if NPCI > 0
 extern u_int32_t pci_bus_attached[];
@@ -129,9 +122,6 @@ union hypervisor_attach_cookie {
 	struct xenbus_attach_args hac_xenbus;
 #if NXENCONS > 0
 	struct xencons_attach_args hac_xencons;
-#endif
-#if NXBC > 0
-	struct xbc_attach_args hac_xbc;
 #endif
 #if NNPX > 0
 	struct xen_npx_attach_args hac_xennpx;
@@ -209,10 +199,6 @@ hypervisor_attach(struct device *parent, struct device *self, void *aux)
 #if NXENCONS > 0
 	hac.hac_xencons.xa_device = "xencons";
 	config_found(self, &hac.hac_xencons, hypervisor_print);
-#endif
-#if NXBC > 0
-	hac.hac_xbc.xa_device = "xbc";
-	xbc_scan(self, &hac.hac_xbc, hypervisor_print);
 #endif
 #if NNPX > 0
 	hac.hac_xennpx.xa_device = "npx";
