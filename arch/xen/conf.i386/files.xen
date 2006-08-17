@@ -96,10 +96,19 @@ attach	mainbus at root
 file	arch/xen/i386/mainbus.c
 
 # Xen hypervisor
-
 device	hypervisor {}: isabus, pcibus, xendevbus
 attach	hypervisor at hypervisorbus
 file	arch/xen/xen/hypervisor.c	hypervisor needs-flag
+
+# Xenbus
+device xenbus {[id = -1]}
+attach xenbus at xendevbus
+file    arch/xen/xenbus/strtoul.c
+file    arch/xen/xenbus/xenbus_client.c
+file    arch/xen/xenbus/xenbus_comms.c
+file    arch/xen/xenbus/xenbus_dev.c
+file    arch/xen/xenbus/xenbus_probe.c
+file    arch/xen/xenbus/xenbus_xs.c
 
 # Xen console support
 device  xencons: tty
@@ -111,12 +120,12 @@ pseudo-device xenevt
 
 # Xen network driver
 device  xennet: ether, ifnet
-attach  xennet at xendevbus
-file	arch/xen/xen/if_xennet.c	xennet needs-flag
+attach  xennet at xenbus
+file	arch/xen/xen/if_xennet_xenbus.c	xennet needs-flag
 
 # Xen block device controller
 device  xbc: scsi
-attach  xbc at hypervisor
+attach  xbc at xenbus
 file	arch/xen/xen/xbc.c		xbc needs-flag
 
 #
@@ -156,16 +165,6 @@ major	{wd = 0}
 
 include "../../../dev/isa/files.isa"
 file	arch/xen/xen/isa_machdep.c	isabus & dom0ops
-
-# Xenbus
-device xenbus {[id = -1]}
-attach xenbus at xendevbus
-file	arch/xen/xenbus/strtoul.c
-file	arch/xen/xenbus/xenbus_client.c
-file	arch/xen/xenbus/xenbus_comms.c
-file	arch/xen/xenbus/xenbus_dev.c
-file	arch/xen/xenbus/xenbus_probe.c
-file	arch/xen/xenbus/xenbus_xs.c
 
 # Numeric Processing Extension; Math Co-processor
 device	npx
