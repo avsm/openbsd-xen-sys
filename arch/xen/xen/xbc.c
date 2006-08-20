@@ -90,6 +90,7 @@ struct xbc_req {
 	grant_ref_t req_gntref[BLKIF_MAX_SEGMENTS_PER_REQUEST];
 	int req_nr_segments; /* number of segments in this request */
 	struct buf *req_bp; /* buffer associated with this request */
+	void *req_aligned; /* pointer to aligned data buffer */
 	void *req_data; /* pointer to the data buffer */
 };
 
@@ -120,8 +121,21 @@ struct xbc_xenbus_softc {
 	u_long sc_handle;	/* from backend */
 };
 
-void	control_send(blkif_request_t *, blkif_response_t *);
-void	send_interface_connect(void);
+
+struct vdisk_t {
+	struct xenbus_device *sc_xbusd;
+	int used;			/* boolean flag, if entry is used or not. Consider,
+					 * devices attaches and detaches dynamically
+					 * and this is a static array */
+	blkif_sector_t capacity;	/* Size in terms of 512-byte sectors. */
+	blkif_vdev_t   device_id;	/* Xen unique device number */
+	uint16_t       flags;		/* VDISK_* */	
+};
+
+#define MAX_VBDS 64
+static int nr_vbds;
+struct vdisk_t *vbd_info; 
+
 
 int xbc_xenbus_match(struct device *, void *, void *);
 void xbc_xenbus_attach(struct device *, struct device *, void *);
@@ -137,14 +151,12 @@ int xbc_map_align(struct xbc_req *);
 void xbc_unmap_align(struct xbc_req *);
 
 #if 0
-void xbc_ctrlif_rx(ctrl_msg_t *msg, unsigned long id);
-void send_driver_status(int ok);
 vdisk_t *get_vdisk(uint8_t target);
 #endif
 
 int xbc_scsi_cmd(struct scsi_xfer *);
-int xbc_cmd(struct xbc_softc *sc, int command, void *data,
-		int datasize, vdisk_t *vd, int blkno, int flags,
+int xbc_cmd(struct xbc_xenbus_softc *sc, int command, void *data,
+		int datasize, struct vdisk_t *vd, int blkno, int flags,
 		struct scsi_xfer *xs);
 
 
@@ -168,7 +180,7 @@ struct scsi_device xbc_dev = {
 
 
 struct cfattach xbc_ca = {
-	sizeof(struct xbc_softc),
+	sizeof(struct xbc_xenbus_softc),
 	xbc_xenbus_match, xbc_xenbus_attach,
 	xbc_xenbus_detach,	/* detach */
 	NULL	/* activate */
@@ -177,39 +189,13 @@ struct cfattach xbc_ca = {
 
 #if 0
 int	xbc_response_handler(void *);
-void	xbc_iodone(struct xbc_softc *);
+void	xbc_iodone(struct xbc_xenbus_softc *);
 #endif
 
-int xbcinit(struct xbc_softc *, struct xbc_attach_args *);
+int xbcinit(struct xbc_xenbus_softc *, struct xenbusdev_attach_args *);
 void xbc_copy_internal_data(struct scsi_xfer *xs, void *v, size_t size);
 void vbd_update(void);
 void signal_requests_to_xen(void);
-
-#if defined(XBDDEBUG) && !defined(DEBUG)
-#define DEBUG
-#endif
-
-#ifdef DEBUG
-#define XBCB_FOLLOW	0x1
-#define XBCB_IO		0x2
-#define XBCB_SETUP	0x4
-#define XBCB_HOTPLUG	0x8
-
-#define IFDEBUG(x,y)		if (xbddebug & (x)) y
-#define DPRINTF(x,y)		IFDEBUG(x, printf y)
-#define DPRINTF_FOLLOW(y)	DPRINTF(XBCB_FOLLOW, y)
-
-int xbddebug = 0x0;
-
-#define	DEBUG_MARK_UNUSED(_xr)	(_xr)->xr_sc = (void *)0xdeadbeef
-
-struct xbcreq *xbc_allxr;
-#else
-#define IFDEBUG(x,y)
-#define DPRINTF(x,y)
-#define DPRINTF_FOLLOW(y)
-#define	DEBUG_MARK_UNUSED(_xr)
-#endif
 
 #ifdef DIAGNOSTIC
 #define DIAGPANIC(x)		panic x
@@ -219,13 +205,6 @@ struct xbcreq *xbc_allxr;
 #define DIAGCONDPANIC(x,y)
 #endif
 
-
-static struct bufq *bufq;
-static int bufq_users = 0;
-
-#define MAX_VBDS 64
-static int nr_vbds;
-static vdisk_t *vbd_info;
 
 static blkif_ring_t *blk_ring = NULL;
 static BLKIF_RING_IDX resp_cons; /* Response consumer for comms ring. */
@@ -239,6 +218,14 @@ static unsigned int blkif_handle = 0;
 static int blkif_control_rsp_valid = 0;
 static blkif_response_t blkif_control_rsp;
 
+/* The xbc_xenbus_attach function gets called everytime, a new block device
+ * attaches (i.e. CD, DVD, etc.). To prevent that the controller attaches
+ * multiple times, we ensure with xbc_attached that it gets only attached
+ * the first time. */
+static int xbc_attached = 0;
+
+
+
 /* block device interface info. */
 struct xbd_ctrl {
 
@@ -246,15 +233,32 @@ struct xbd_ctrl {
 	struct device *xc_parent;
 	cfmatch_t xc_cfmatch;
 	void *match;
-	struct xbc_attach_args *mainbus_xbca;
+	struct xenbusdev_attach_args *mainbus_xbca;
 };
 
 static struct xbd_ctrl blkctrl;
 
 
+int xbc_register_controller(struct device *self, struct xenbusdev_attach_args *xa)
+{
+}
 
+int xbc_add_subdevice(struct xenbusdev_attach_args *xa)
+{
+}
+
+int xbc_del_subdevice(struct xenbusdev_attach_args *xa)
+{
+}
+
+int xbc_find_subdevice(struct xenbusdev_attach_args *xa)
+{
+}
+
+
+#if 0
 int
-xbc_scan(struct device *self, struct xbc_attach_args *mainbus_xbca,
+xbc_scan(struct device *self, struct xenbusdev_attach_args *mainbus_xbca,
     cfprint_t print)
 {
 	struct xbcreq *xr;
@@ -286,13 +290,13 @@ xbc_scan(struct device *self, struct xbc_attach_args *mainbus_xbca,
 
 	return 0;
 }
-
+#endif
 
 
 int
 xbc_xenbus_match(struct device *parent, void *match, void *aux)
 {
-	struct xenbusdev_attach_args *xa = aus;
+	struct xenbusdev_attach_args *xa = aux;
 
 	if (strcmp(xa->xa_type, "vbd") != 0)
 		return 0;
@@ -301,17 +305,83 @@ xbc_xenbus_match(struct device *parent, void *match, void *aux)
 }
 
 
+
+
 void
 xbc_xenbus_attach(struct device *parent, struct device *self, void *aux)
 {
-	struct xbc_attach_args *xbca = (struct xbc_attach_args *)aux;
-	struct xbc_xenbus_softc *xs = (struct xbc_xenbus_softc *)self;
-	struct scsi_link *sl = &xs->sc_link;
+	struct xenbusdev_attach_args *xa = aux;
+	struct xbc_xenbus_softc *sc = (struct xbc_xenbus_softc *)self;
+	struct scsi_link *sl = &sc->sc_link;
+	RING_IDX i;
+#ifdef XBC_DEBUG
+	char **dir, *val;
+	int dir_n = 0;
+	char id_str[20];
+	int err;
+#endif
 
-	printf(": Xen Virtual Block Controller\n");
+	config_pending_incr();
+#ifdef XBC_DEBUG
+	printf("xbc: path: %s\n", xa->xa_xbusd->xbusd_path);
+	snprintf(id_str, sizeof(id_str), "%d", xa->xa_id);
+	err = xenbus_directory(NULL, "device/vbd", id_str, &dir_n, &dir);
+	if (err) {
+		printf("%s: xenbus_directory err %d\n",
+			sc->sc_dev.dv_xname, err);
+	} else {
+		printf("%s/\n", xa->xa_xbusd->xbusd_path);
+		for (i = 0; i < dir_n; i++) {
+			printf("\t/%s", dir[i]);
+			err = xenbus_read(NULL, xa->xa_xbusd->xbusd_path, dir[i],
+				NULL, &val);
+			if (err) {
+				printf("%s: xenbus_read err %d\n",
+					sc->sc_dev.dv_xname, err);
+			} else {
+				printf(" = %s\n", val);
+				free(val, M_DEVBUF);
+			}
 
-	simple_lock_init(&xs->sc_slock);
-	xbcinit(xs, xbca);
+		} 
+	}
+#endif /* XBC_DEBUG */			 
+
+	if (!xbc_attached) {
+		/* Attach the controller */
+
+		printf(": Xen Virtual Block Controller\n");
+
+		sc->sc_xbusd = xa->xa_xbusd;
+		sc->sc_xbusd->xbusd_otherend_changed = xbc_backend_changed;
+
+		/* initialize free requests list */
+		SLIST_INIT(&sc->sc_xbcreq_head);
+		for (i = 0; i < XBC_RING_SIZE; i++) {
+			sc->sc_reqs[i].req_id = i;
+			SLIST_INSERT_HEAD(&sc->sc_xbcreq_head, &sc->sc_reqs[i],
+			    req_next);
+		}
+
+		sc->sc_backend_status = BLKIF_STATE_DISCONNECTED;
+		sc->sc_shutdown = 1;
+
+		sl->adapter_softc = sc;
+		sl->adapter = &xbc_switch;
+		sl->adapter_buswidth = nr_vbds;
+		sl->adapter_target = nr_vbds;
+		sl->device = &xbc_dev;
+		sl->openings = XBC_RING_SIZE - 1;
+
+		config_found(&sc->sc_dev, &sc->sc_link, scsiprint);
+
+		/* initialise shared structures and tell backend that we are ready */
+		xbc_xenbus_resume(sc);
+
+		xbcinit(sc, xa);
+		xbc_attached = 1;
+	}
+
 
 	/* No need to run vbd_update() here.
 	 * connect_interface() probes for drives and
@@ -321,42 +391,257 @@ xbc_xenbus_attach(struct device *parent, struct device *self, void *aux)
 
 	if (nr_vbds <= 0) {
 		printf("%s: No virtual block devices found/available\n",
-			xs->sc_dev.dv_xname);
+			sc->sc_dev.dv_xname);
 		return;
 	}
 
-	sl->adapter_softc = xs;
-	sl->adapter = &xbc_switch;
-	sl->adapter_buswidth = nr_vbds;
-	sl->adapter_target = nr_vbds;
-	sl->device = &xbc_dev;
-	sl->openings = BLKIF_RING_SIZE - 1;
-
-	config_found(&xs->sc_dev, &xs->sc_link, scsiprint);
 
 	return;
 }
+
+
+int
+xbc_xenbus_detach(struct device *dev, int flags)
+{
+	struct xbc_xenbus_softc *sc = (void *)dev;
+	int s, bmaj, cmaj, i, mn;
+	s = splbio();
+
+	DPRINTF(("%s: xbd_detach\n", dev->dv_xname));
+	if (sc->sc_shutdown == 0) {
+		sc->sc_shutdown = 1;
+		/* wait for requests to complete */
+		while (sc->sc_backend_status == BLKIF_STATE_CONNECTED &&
+		    sc->sc_dksc.sc_dkdev.dk_stats->io_busy > 0)
+			tsleep(xbc_xenbus_detach, PRIBIO, "xbddetach", hz/2);
+	}
+	splx(s);
+
+	/* locate the major number */
+	bmaj = bdevsw_lookup_major(&xbd_bdevsw);
+	cmaj = cdevsw_lookup_major(&xbd_cdevsw);
+
+	/* Nuke the vnodes for any open instances. */
+	for (i = 0; i < MAXPARTITIONS; i++) {
+		mn = DISKMINOR(device_unit(dev), i);
+		vdevgone(bmaj, mn, mn, VBLK);
+		vdevgone(cmaj, mn, mn, VCHR);
+	}
+	if (sc->sc_backend_status == BLKIF_STATE_CONNECTED) {
+		/* Delete all of our wedges. */
+		dkwedge_delall(&sc->sc_dksc.sc_dkdev);
+
+		s = splbio();
+		/* Kill off any queued buffers. */
+		bufq_drain(sc->sc_dksc.sc_bufq);
+		bufq_free(sc->sc_dksc.sc_bufq);
+		splx(s);
+
+		/* detach disk */
+		disk_detach(&sc->sc_dksc.sc_dkdev);
+	}
+
+	event_remove_handler(sc->sc_evtchn, &xbd_handler, sc);
+	while (xengnt_status(sc->sc_ring_gntref)) {
+		tsleep(xbc_xenbus_detach, PRIBIO, "xbc_ref", hz/2);
+	}
+	xengnt_revoke_access(sc->sc_ring_gntref);
+	uvm_km_free(kernel_map, (vaddr_t)sc->sc_ring.sring,
+	    PAGE_SIZE, UVM_KMF_WIRED);
+	return 0;
+}
+
+
+
+int
+xbc_xenbus_resume(void *p)
+{
+	struct xbc_xenbus_softc *sc = p;
+	struct xenbus_transaction *xbt;
+	int error;
+	blkif_sring_t *ring;
+	paddr_t ma;
+	const char *errmsg;
+
+	sc->sc_ring_gntref = GRANT_INVALID_REF;
+
+
+	/* setup device: alloc event channel and shared ring */
+	ring = (void *)uvm_km_zalloc(kernel_map, PAGE_SIZE);
+	if (ring == NULL)
+		panic("xbd_xenbus_resume: can't alloc rings");
+
+	SHARED_RING_INIT(ring);
+	FRONT_RING_INIT(&sc->sc_ring, ring, PAGE_SIZE);
+
+	(void)pmap_extract_ma(pmap_kernel(), (vaddr_t)ring, &ma);
+	error = xenbus_grant_ring(sc->sc_xbusd, ma, &sc->sc_ring_gntref);
+	if (error)
+		return error;
+	error = xenbus_alloc_evtchn(sc->sc_xbusd, &sc->sc_evtchn);
+	if (error)
+		return error;
+	aprint_verbose("%s: using event channel %d\n",
+	    sc->sc_dev.dv_xname, sc->sc_evtchn);
+	event_set_handler(sc->sc_evtchn, &xbd_handler, sc,
+	    IPL_BIO, sc->sc_dev.dv_xname);
+
+again:
+	xbt = xenbus_transaction_start();
+	if (xbt == NULL)
+		return ENOMEM;
+	error = xenbus_printf(xbt, sc->sc_xbusd->xbusd_path,
+	    "ring-ref","%u", sc->sc_ring_gntref);
+	if (error) {
+		errmsg = "writing ring-ref";
+		goto abort_transaction;
+	}
+	error = xenbus_printf(xbt, sc->sc_xbusd->xbusd_path,
+	    "event-channel", "%u", sc->sc_evtchn);
+	if (error) {
+		errmsg = "writing event channel";
+		goto abort_transaction;
+	}
+	error = xenbus_switch_state(sc->sc_xbusd, xbt, XenbusStateInitialised);
+	if (error) {
+		errmsg = "writing frontend XenbusStateInitialised";
+		goto abort_transaction;
+	}
+	error = xenbus_transaction_end(xbt, 0);
+	if (error == EAGAIN)
+		goto again;
+	if (error) {
+		xenbus_dev_fatal(sc->sc_xbusd, error, "completing transaction");
+		return -1;
+	}
+	return 0;
+
+abort_transaction:
+	xenbus_transaction_end(xbt, 1);
+	xenbus_dev_fatal(sc->sc_xbusd, error, "%s", errmsg);
+	return error;
+}
+
+
+void xbc_backend_changed(void *arg, XenbusState new_state)
+{
+	struct xbc_xenbus_softc *sc = arg;
+	struct dk_geom *pdg;
+	char buf[9];
+	int s;
+	DPRINTF(("%s: new backend state %d\n", sc->sc_dev.dv_xname, new_state));
+
+	switch (new_state) {
+	case XenbusStateUnknown:
+	case XenbusStateInitialising:
+	case XenbusStateInitWait:
+	case XenbusStateInitialised:
+		break;
+	case XenbusStateClosing:
+		s = splbio();
+		sc->sc_shutdown = 1;
+		/* wait for requests to complete */
+		while (sc->sc_backend_status == BLKIF_STATE_CONNECTED &&
+		    sc->sc_dksc.sc_dkdev.dk_stats->io_busy > 0)
+			tsleep(xbd_xenbus_detach, PRIBIO, "xbddetach",
+			    hz/2);
+		splx(s);
+		xenbus_switch_state(sc->sc_xbusd, NULL, XenbusStateClosed);
+		break;
+	case XenbusStateConnected:
+		s = splbio();
+		if (sc->sc_backend_status == BLKIF_STATE_CONNECTED)
+			/* already connected */
+			return;
+		sc->sc_backend_status = BLKIF_STATE_CONNECTED;
+		splx(s);
+		xbd_connect(sc);
+		sc->sc_shutdown = 0;
+		hypervisor_enable_event(sc->sc_evtchn);
+
+		sc->sc_dksc.sc_size =
+		    (uint64_t)sc->sc_sectors * (uint64_t)sc->sc_secsize /
+		    DEV_BSIZE;
+		pdg = &sc->sc_dksc.sc_geom;
+		pdg->pdg_secsize = DEV_BSIZE;
+		pdg->pdg_ntracks = 1;
+		pdg->pdg_nsectors = 1024 * (1024 / pdg->pdg_secsize);
+		pdg->pdg_ncylinders = sc->sc_dksc.sc_size / pdg->pdg_nsectors;
+
+		bufq_alloc(&sc->sc_dksc.sc_bufq, "fcfs", 0);
+		sc->sc_dksc.sc_flags |= DKF_INITED;
+
+		disk_attach(&sc->sc_dksc.sc_dkdev);
+		/* try to read the disklabel */
+		dk_getdisklabel(sc->sc_di, &sc->sc_dksc, 0 /* XXX ? */);
+		format_bytes(buf, sizeof(buf), (uint64_t)sc->sc_dksc.sc_size *
+		    pdg->pdg_secsize);
+		printf("%s: %s, %d bytes/sect x %llu sectors\n",
+		    sc->sc_dev.dv_xname, buf, (int)pdg->pdg_secsize,
+		    (unsigned long long)sc->sc_dksc.sc_size);
+		/* Discover wedges on this disk. */
+		dkwedge_discover(&sc->sc_dksc.sc_dkdev);
+
+		/* the disk should be working now */
+		config_pending_decr();
+		break;
+	default:
+		panic("bad backend state %d", new_state);
+	}
+}
+
+
+void
+xbc_connect(struct xbd_xenbus_softc *sc)
+{
+	int err;
+
+	err = xenbus_read_ul(NULL,
+	    sc->sc_xbusd->xbusd_path, "virtual-device", &sc->sc_handle, 10);
+	if (err)
+	panic("%s: can't read number from %s/virtual-device\n",
+	    sc->sc_dev.dv_xname, sc->sc_xbusd->xbusd_otherend);
+	err = xenbus_read_ul(NULL,
+	    sc->sc_xbusd->xbusd_otherend, "sectors", &sc->sc_sectors, 10);
+	if (err)
+		panic("%s: can't read number from %s/sectors\n",
+		    sc->sc_dev.dv_xname, sc->sc_xbusd->xbusd_otherend);
+	err = xenbus_read_ul(NULL,
+	    sc->sc_xbusd->xbusd_otherend, "info", &sc->sc_info, 10);
+	if (err)
+		panic("%s: can't read number from %s/info\n",
+		    sc->sc_dev.dv_xname, sc->sc_xbusd->xbusd_otherend);
+	err = xenbus_read_ul(NULL,
+	    sc->sc_xbusd->xbusd_otherend, "sector-size", &sc->sc_secsize, 10);
+	if (err)
+		panic("%s: can't read number from %s/sector-size\n",
+		    sc->sc_dev.dv_xname, sc->sc_xbusd->xbusd_otherend);
+
+	xenbus_switch_state(sc->sc_xbusd, NULL, XenbusStateConnected);
+}
+
+
 
 /*
  * Execute a [polled] command.
  */
 int
-xbc_cmd(struct xbc_softc *sc, int command, void *data,
-	int datasize, vdisk_t *vd, int blkno, int flags,
+xbc_cmd(struct xbc_xenbus_softc *sc, int command, void *data,
+	int datasize, /* vdisk_t *vd, */ int blkno, int flags,
 	struct scsi_xfer *xs)
 {
 	struct buf *bp;
 	int rv;
 
-	DPRINTF(XBCB_IO, ("xbc_cmd: op=%x, xen dev=%i blk=%i data=%p[%x] xs=%p\n",
-		command, vd->device, blkno, data, datasize, xs));
+	DPRINTF(/* XBCB_IO, */ ("xbc_cmd: op=%x, xen dev=%i blk=%i data=%p[%x] xs=%p\n",
+		command, /* vd->device */, blkno, data, datasize, xs));
 
 
 	bp = xs->bp;
 	if (bp == NULL)
 		panic("No buf available");
 
-	DPRINTF(XBCB_IO, ("xbc_cmd: bp: flags=%d, bufsize=%d, bcount=%d,"
+	DPRINTF(/* XBCB_IO, */ ("xbc_cmd: bp: flags=%d, bufsize=%d, bcount=%d,"
 		" error=%d, dev=%d, blkno=%d, data=%p\n",
 			bp->b_flags, bp->b_bufsize, bp->b_bcount,
 			bp->b_error, bp->b_dev, bp->b_blkno, bp->b_data));
@@ -372,7 +657,7 @@ xbc_cmd(struct xbc_softc *sc, int command, void *data,
 		xbc_iodone(sc);
 	}
 
-	DPRINTF(XBCB_IO, ("xbc_cmd: leave with %i\n", rv));
+	DPRINTF(/* XBCB_IO, */ ("xbc_cmd: leave with %i\n", rv));
 	return rv;
 }
 
@@ -382,7 +667,7 @@ int
 xbc_scsi_cmd(struct scsi_xfer *xs)
 {
 	struct scsi_link *link = xs->sc_link;
-	struct xbc_softc *sc = link->adapter_softc;
+	struct xbc_xenbus_softc *sc = link->adapter_softc;
 	struct scsi_inquiry_data inq;
 	struct scsi_sense_data sd;
 	struct scsi_read_cap_data rcd;
@@ -409,30 +694,30 @@ xbc_scsi_cmd(struct scsi_xfer *xs)
 	 */
 
 	case TEST_UNIT_READY:
-		DPRINTF(XBCB_SETUP, ("scsi cmd TEST_UNIT_READY tgt %d\n",
+		DPRINTF(/* XBCB_SETUP, */ ("scsi cmd TEST_UNIT_READY tgt %d\n",
 			target));
 		break;
 	case START_STOP:
-		DPRINTF(XBCB_SETUP, ("scsi cmd START_STOP tgt %d\n",
+		DPRINTF(/* XBCB_SETUP, */ ("scsi cmd START_STOP tgt %d\n",
 			target));
 		break;
 #if 0
 	case VERIFY:
 #endif
-		DPRINTF(XBCB_SETUP, ("scsi cmd VERIFY tgt %d\n", target));
+		DPRINTF(/* XBCB_SETUP, */ ("scsi cmd VERIFY tgt %d\n", target));
 		break;
 
 	case MODE_SENSE:
-		DPRINTF(XBCB_SETUP, ("scsi cmd MODE_SENSE tgt %d\n", target));
+		DPRINTF(/* XBCB_SETUP, */ ("scsi cmd MODE_SENSE tgt %d\n", target));
 		break;
 
 	case MODE_SENSE_BIG:
-		DPRINTF(XBCB_SETUP, ("scsi cmd MODE_SENSE_BIG tgt %d\n",
+		DPRINTF(/* XBCB_SETUP, */ ("scsi cmd MODE_SENSE_BIG tgt %d\n",
 			target));
 		break;
 
 	case REQUEST_SENSE:
-		DPRINTF(XBCB_SETUP, ("scsi cmd REQUEST_SENSE tgt %d\n",
+		DPRINTF(/* XBCB_SETUP, */ ("scsi cmd REQUEST_SENSE tgt %d\n",
 			target));
 		bzero(&sd, sizeof(sd));
 		sd.error_code = 0x70;
@@ -444,32 +729,32 @@ xbc_scsi_cmd(struct scsi_xfer *xs)
 		break;
 
 	case INQUIRY:
-		DPRINTF(XBCB_SETUP, ("scsi cmd INCQUIRY tgt %d\n", target));
-		DPRINTF(XBCB_SETUP, ("vdisk type: "));
+		DPRINTF(/* XBCB_SETUP, */ ("scsi cmd INCQUIRY tgt %d\n", target));
+		DPRINTF(/* XBCB_SETUP, */ ("vdisk type: "));
 		bzero(&inq, sizeof(inq));
 		switch (VDISK_TYPE(vd->info)) {
 		case VDISK_TYPE_TAPE:
 			inq.device = T_SEQUENTIAL;
-			DPRINTF(XBCB_SETUP, ("sequential, "));
+			DPRINTF(/* XBCB_SETUP, */ ("sequential, "));
 			break;
 		case VDISK_TYPE_CDROM:
 			inq.device = T_CDROM;
-			DPRINTF(XBCB_SETUP, ("cdrom, "));
+			DPRINTF(/* XBCB_SETUP, */ ("cdrom, "));
 			break;
 		case VDISK_TYPE_OPTICAL:
 			inq.device = T_OPTICAL;
-			DPRINTF(XBCB_SETUP, ("optical, "));
+			DPRINTF(/* XBCB_SETUP, */ ("optical, "));
 			break;
 		case VDISK_TYPE_DISK:
 		default:
 			inq.device = T_DIRECT;
-			DPRINTF(XBCB_SETUP, ("disk: %x, \n",
+			DPRINTF(/* XBCB_SETUP, */ ("disk: %x, \n",
 				VDISK_TYPE(vd->info)));
 			break;
 		} 
-		DPRINTF(XBCB_SETUP, ("%s, ",
+		DPRINTF(/* XBCB_SETUP, */ ("%s, ",
 			VDISK_READONLY(vd->info) ? "readonly" : "writable"));
-		DPRINTF(XBCB_SETUP, ("%s drive\n",
+		DPRINTF(/* XBCB_SETUP, */ ("%s drive\n",
 			VDISK_VIRTUAL(vd->info) ? "virtual" : "real"));
 		inq.dev_qual2 = 0;
 		inq.version = SID_ANSII_SCSI2;
@@ -483,7 +768,7 @@ xbc_scsi_cmd(struct scsi_xfer *xs)
 		break;
 
 	case PREVENT_ALLOW:
-		DPRINTF(XBCB_SETUP, ("scsi cmd PREVENT_ALLOW tgt %d\n",
+		DPRINTF(/* XBCB_SETUP, */ ("scsi cmd PREVENT_ALLOW tgt %d\n",
 			target));
 		goto notyet;
 
@@ -492,7 +777,7 @@ xbc_scsi_cmd(struct scsi_xfer *xs)
 	 */
 
 	case READ_CAPACITY:
-		DPRINTF(XBCB_SETUP, ("scsi cmd READ_CAPACITY tgt %d\n",
+		DPRINTF(/* XBCB_SETUP, */ ("scsi cmd READ_CAPACITY tgt %d\n",
 			target));
 		bzero(&rcd, sizeof(rcd));
 		_lto4b(vd->capacity - 1, rcd.addr);	/* disk size */
@@ -501,7 +786,7 @@ xbc_scsi_cmd(struct scsi_xfer *xs)
 		break;
 
 	case SYNCHRONIZE_CACHE:
-		DPRINTF(XBCB_IO, ("scsi cmd SYNCHRONIZE_CACHE tgt %d\n",
+		DPRINTF(/* XBCB_IO, */ ("scsi cmd SYNCHRONIZE_CACHE tgt %d\n",
 			target));
 		xbc_iodone(sc);
 		break;
@@ -519,19 +804,19 @@ xbc_scsi_cmd(struct scsi_xfer *xs)
 		flags = 0;
 		switch (xs->cmd->opcode) {
 		case READ_COMMAND:
-			DPRINTF(XBCB_IO, ("scsi cmd READ_COMMAND tgt %d\n",
+			DPRINTF(/* XBCB_IO, */ ("scsi cmd READ_COMMAND tgt %d\n",
 				target));
 			op = BLKIF_OP_READ;
 			flags = B_READ;
 			break;
 		case READ_BIG:
-			DPRINTF(XBCB_IO, ("scsi cmd READ_BIG tgt %d\n",
+			DPRINTF(/* XBCB_IO, */ ("scsi cmd READ_BIG tgt %d\n",
 				target));
 			op = BLKIF_OP_READ;
 			flags = B_READ;
 			break;
 		case WRITE_COMMAND:
-			DPRINTF(XBCB_IO, ("scsi cmd WRITE_COMMAND tgt %d\n",
+			DPRINTF(/* XBCB_IO, */ ("scsi cmd WRITE_COMMAND tgt %d\n",
 				target));
 			op = BLKIF_OP_WRITE;
 			flags = B_WRITE;
@@ -544,7 +829,7 @@ xbc_scsi_cmd(struct scsi_xfer *xs)
 			}
 			break;
 		case WRITE_BIG:
-			DPRINTF(XBCB_IO, ("scsi cmd WRITE_BIG tgt %d\n",
+			DPRINTF(/* XBCB_IO, */ ("scsi cmd WRITE_BIG tgt %d\n",
 				target));
 			op = BLKIF_OP_WRITE;
 			flags = B_WRITE;
@@ -599,11 +884,11 @@ xbc_scsi_cmd(struct scsi_xfer *xs)
 
 		splx(s);
 		if (poll) {
-			DPRINTF(XBCB_IO,
+			DPRINTF(/* XBCB_IO, */
 				("xbc_scsi_cmd: (polling) COMPLETE\n"));
 			return (COMPLETE);
 		} else {
-			DPRINTF(XBCB_IO,
+			DPRINTF(/* XBCB_IO, */
 				("xbc_scsi_cmd: SUCCESSFULLY_QUEUED\n"));
 			return (SUCCESSFULLY_QUEUED);
 		}
@@ -707,37 +992,12 @@ get_vdisk(uint8_t target)
 	return &vbd_info[target];
 }
 
-#ifdef todo
-static struct device *
-find_device(vdisk_t *vd)
-{
-	struct device *dv;
-	struct device *dv_parent;
-	struct xbc_softc *xs = NULL;
-
-	for (dv = alldevs.tqh_first; dv != NULL; dv = dv->dv_list.tqe_next) {
-		dv_parent = dv->dv_parent;
-		/* Our SCSI children devices have us as parent
-		 */
-		if (dv_parent == NULL ||
-		    dv_parent->dv_cfdata == NULL ||
-		    dv_parent->dv_cfdata->cf_attach == NULL ||
-		    dv_parent->dv_cfdata->cf_attach->ca_attach != xbc_attach)
-			continue;
-		xs = (struct xbc_softc *)dv;
-		if (vd == NULL || xs->sc_xd_device == vd->device)
-			break;
-	}
-	return dv;
-}
-#endif
-
 extern int hypervisor_print(void *, const char *);
 
 void
 vbd_update(void)
 {
-	struct xbc_attach_args *xbda;
+	struct xenbusdev_attach_args *xbda;
 #ifdef todo
 	struct device *dev;
 #endif
@@ -759,7 +1019,7 @@ vbd_update(void)
 
 	for (i = 0, j = 0; i < nr_vbds && j < new_nr_vbds;)  {
 		if (vbd_info[i].device > vbd_info_update[j].device) {
-			DPRINTF(XBCB_HOTPLUG,
+			DPRINTF(/* XBCB_HOTPLUG, */
 			    ("delete device %x size %lx\n",
 				vbd_info[i].device,
 				(u_long)vbd_info[i].capacity));
@@ -771,7 +1031,7 @@ vbd_update(void)
 #endif
 			i++;
 		} else if (vbd_info_update[j].device > vbd_info[i].device) {
-			DPRINTF(XBCB_HOTPLUG,
+			DPRINTF(/* XBCB_HOTPLUG, */
 			    ("add device %x size %lx\n",
 				vbd_info_update[j].device,
 				(u_long)vbd_info_update[j].capacity));
@@ -785,7 +1045,7 @@ vbd_update(void)
 			j++;
 		} else {
 			i++; j++;
-			DPRINTF(XBCB_HOTPLUG,
+			DPRINTF(/* XBCB_HOTPLUG, */
 			    ("update device %x size %lx size %lx\n",
 				vbd_info_update[i].device,
 				(u_long)vbd_info[j].capacity,
@@ -794,7 +1054,7 @@ vbd_update(void)
 	}
 #ifdef todo
 	for (; i < nr_vbds; i++) {
-		DPRINTF(XBCB_HOTPLUG,
+		DPRINTF(/* XBCB_HOTPLUG, */
 		    ("delete device %x size %lx\n",
 			vbd_info[i].device,
 			(u_long)vbd_info[i].capacity));
@@ -805,7 +1065,7 @@ vbd_update(void)
 	}
 #endif
 	for (; j < new_nr_vbds; j++) {
-		DPRINTF(XBCB_HOTPLUG,
+		DPRINTF(/* XBCB_HOTPLUG, */
 		    ("add device %x size %lx\n",
 			vbd_info_update[j].device,
 			(u_long)vbd_info_update[j].capacity));
@@ -825,40 +1085,40 @@ vbd_update(void)
 	FREE(vbd_info_old, M_DEVBUF);
 }
 
-static int
-map_align(struct xbcreq *xr)
+int
+xbc_map_align(struct xbc_req *req)
 {
 	int s;
 
 	s = splvm();
-	xr->xr_aligned = uvm_km_kmemalloc1(kmem_map, NULL,
-		xr->xr_bqueue, XEN_BSIZE, UVM_UNKNOWN_OFFSET, UVM_KMF_NOWAIT);
+	req->req_aligned = uvm_km_kmemalloc1(kmem_map, NULL,
+		req->req_bqueue, XEN_BSIZE, UVM_UNKNOWN_OFFSET, UVM_KMF_NOWAIT);
 	splx(s);
-	if (xr->xr_aligned == 0)
+	if (req->req_aligned == 0)
 		return 0;
-	DPRINTF(XBCB_IO, ("map_align(%p): bp %p addr %p align 0x%08lx "
-	    "size 0x%04lx\n", xr, xr->xr_bp, xr->xr_bp->b_data,
-	    xr->xr_aligned, xr->xr_bqueue));
-	xr->xr_data = xr->xr_aligned;
-	if ((xr->xr_bp->b_flags & B_READ) == 0)
-		memcpy((void *)xr->xr_aligned, xr->xr_bp->b_data,
-		    xr->xr_bqueue);
+	DPRINTF(/* XBCB_IO, */ ("map_align(%p): bp %p addr %p align 0x%08lx "
+	    "size 0x%04lx\n", req, req->xr_bp, req->req_bp->b_data,
+	    req->req_aligned, req->req_bqueue));
+	req->req_data = req->req_aligned;
+	if ((req->req_bp->b_flags & B_READ) == 0)
+		memcpy((void *)req->req_aligned, req->req_bp->b_data,
+		    req->req_bqueue);
 	return 1;
 }
 
-static void
-unmap_align(struct xbcreq *xr)
+void
+xbc_unmap_align(struct xbc_req *req)
 {
 	int s;
 
-	if (xr->xr_bp->b_flags & B_READ)
-		memcpy(xr->xr_bp->b_data, (void *)xr->xr_aligned,
-		    xr->xr_bp->b_bcount);
-	DPRINTF(XBCB_IO, ("unmap_align(%p): bp %p addr %p align 0x%08lx "
-	    "size 0x%04x\n", xr, xr->xr_bp, xr->xr_bp->b_data,
-	    xr->xr_aligned, xr->xr_bp->b_bcount));
+	if (req->req_bp->b_flags & B_READ)
+		memcpy(req->req_bp->b_data, (void *)req->req_aligned,
+		    req->req_bp->b_bcount);
+	DPRINTF(/* XBCB_IO, */ ("unmap_align(%p): bp %p addr %p align 0x%08lx "
+	    "size 0x%04x\n", req, req->req_bp, req->req_bp->b_data,
+	    req->req_aligned, req->req_bp->b_bcount));
 	s = splvm();
-	uvm_km_free(kmem_map, xr->xr_aligned, xr->xr_bp->b_bcount);
+	uvm_km_free(kmem_map, req->req_aligned, req->req_bp->b_bcount);
 	splx(s);
 	xr->xr_aligned = (vaddr_t)0;
 }
@@ -886,7 +1146,7 @@ fill_ring(struct xbcreq *xr)
 	ring_req->sector_number = pxr->xr_bn;
 	ring_req->device = pxr->xr_vdisk->device;
 
-	DPRINTF(XBCB_IO, ("fill_ring(%d): bp %p sector %llu pxr %p xr %p\n",
+	DPRINTF(/* XBCB_IO, */ ("fill_ring(%d): bp %p sector %llu pxr %p xr %p\n",
 		    MASK_BLKIF_IDX(req_prod), pxr->xr_bp,
 		    (unsigned long long)pxr->xr_bn,
 		    pxr, xr));
@@ -920,7 +1180,7 @@ fill_ring(struct xbcreq *xr)
 		DIAGCONDPANIC(fsect > 7, ("xbd request fsect > 7"));
 		DIAGCONDPANIC(lsect > 7, ("xbd request lsect > 7"));
 
-		DPRINTF(XBCB_IO, ("fill_ring(%d): va 0x%08lx pa 0x%08lx "
+		DPRINTF(/* XBCB_IO, */ ("fill_ring(%d): va 0x%08lx pa 0x%08lx "
 		    "ma 0x%08lx, sectors %d, left %ld/%ld\n",
 		    MASK_BLKIF_IDX(req_prod), addr, pa, ma, nr_sectors,
 		    pxr->xr_bqueue >> XEN_BSHIFT, pxr->xr_bqueue));
@@ -945,12 +1205,12 @@ static void
 xbcresume(void)
 {
 	struct xbcreq *pxr, *xr;
-	struct xbc_softc *sc;
+	struct xbc_xenbus_softc *sc;
 	struct buf *bp;
 	struct scsi_xfer *xs;
 
 	while ((pxr = SIMPLEQ_FIRST(&xbdr_suspended)) != NULL) {
-		DPRINTF(XBCB_IO, ("xbcresume: resuming xbcreq %p for bp %p\n",
+		DPRINTF(/* XBCB_IO, */ ("xbcresume: resuming xbcreq %p for bp %p\n",
 		    pxr, pxr->xr_bp));
 		bp = pxr->xr_bp;
 		sc = pxr->xr_sc;
@@ -982,7 +1242,7 @@ xbcresume(void)
 			xr->xr_parent = pxr;
 			fill_ring(xr);
 		}
-		DPRINTF(XBCB_IO, ("xbcresume: resumed xbcreq %p for bp %p\n",
+		DPRINTF(/* XBCB_IO, */ ("xbcresume: resumed xbcreq %p for bp %p\n",
 		    pxr, bp));
 		SIMPLEQ_REMOVE_HEAD(&xbdr_suspended, xr_suspended);
 	}
@@ -995,7 +1255,7 @@ void
 signal_requests_to_xen(void)
 {
 
-	DPRINTF(XBCB_IO, ("signal_requests_to_xen: %x -> %x\n",
+	DPRINTF(/* XBCB_IO, */ ("signal_requests_to_xen: %x -> %x\n",
 		    blk_ring->req_prod, req_prod));
 	blk_ring->req_prod = req_prod;
 	last_req_prod = req_prod;
@@ -1006,7 +1266,7 @@ signal_requests_to_xen(void)
 
 
 int
-xbcstart(struct xbc_softc *sc, struct buf *bp)
+xbcstart(struct xbc_xenbus_softc *sc, struct buf *bp)
 {
 	struct xbcreq *pxr, *xr;
 	daddr_t	bn;
@@ -1030,7 +1290,7 @@ xbcstart(struct xbc_softc *sc, struct buf *bp)
 	bn = bp->b_blkno;
 	vd = get_vdisk(sc->sc_link.target);
 
-	DPRINTF(XBCB_IO, ("xbcstart: addr %p, sector %llu, "
+	DPRINTF(/* XBCB_IO, */ ("xbcstart: addr %p, sector %llu, "
 	    "count %d [%s]\n", bp->b_data, (unsigned long long)bn,
 	    bp->b_bcount, bp->b_flags & B_READ ? "read" : "write"));
 
@@ -1056,7 +1316,7 @@ xbcstart(struct xbc_softc *sc, struct buf *bp)
 
 	if (pxr->xr_data & (XEN_BSIZE - 1)) {
 		if (!map_align(pxr)) { /* No memory; try later. */
-			DPRINTF(XBCB_IO, ("xbdstart: map_align failed\n"));
+			DPRINTF(/* XBCB_IO, */ ("xbdstart: map_align failed\n"));
 			ret = -1;
 			PUT_XBCREQ(pxr);
 			goto out;
@@ -1076,7 +1336,7 @@ xbcstart(struct xbc_softc *sc, struct buf *bp)
 	if (__predict_false(pxr->xr_bqueue > 0)) {
 		SIMPLEQ_INSERT_TAIL(&xbdr_suspended, pxr,
 		    xr_suspended);
-		DPRINTF(XBCB_IO, ("xbcstart: suspended xbcreq %p "
+		DPRINTF(/* XBCB_IO, */ ("xbcstart: suspended xbcreq %p "
 		    "for bp %p\n", pxr, bp));
 	} else if (CANGET_XBCREQ() && BUFQ_GET(bufq) != NULL) {
 		/*
@@ -1095,7 +1355,7 @@ xbcstart(struct xbc_softc *sc, struct buf *bp)
 }
 
 void
-xbc_iodone(struct xbc_softc *xs)
+xbc_iodone(struct xbc_xenbus_softc *xs)
 {
 	struct buf *bp;
 
@@ -1105,7 +1365,7 @@ xbc_iodone(struct xbc_softc *xs)
 	while ((bp = BUFQ_GET(bufq)) != NULL) {
 		printf("xbc_iodone: processing bp = %p\n", bp);
 		if (xbcstart(xs, bp) != 0) {
-			DPRINTF(XBCB_IO, ("xbc_iodone: re-add  bp = %p and abort\n",
+			DPRINTF(/* XBCB_IO, */ ("xbc_iodone: re-add  bp = %p and abort\n",
 				bp));
 			BUFQ_ADD(bufq, bp);
 			break;
@@ -1118,7 +1378,7 @@ int
 xbc_response_handler(void *arg)
 {
 	struct buf *bp;
-	struct xbc_softc *sc;
+	struct xbc_xenbus_softc *sc;
 	struct scsi_xfer *xs;
 	blkif_response_t *ring_resp;
 	struct xbcreq *pxr, *xr;
@@ -1137,7 +1397,7 @@ xbc_response_handler(void *arg)
 		case BLKIF_OP_WRITE:
 			pxr = xr->xr_parent;
 
-			DPRINTF(XBCB_IO, ("xbc_response_handler(%d): pxr %p "
+			DPRINTF(/* XBCB_IO, */ ("xbc_response_handler(%d): pxr %p "
 				    "xr %p bdone %04lx breq %04lx\n", i, pxr,
 				    xr, pxr->xr_bdone, xr->xr_breq));
 			pxr->xr_bdone -= xr->xr_breq;
@@ -1145,7 +1405,7 @@ xbc_response_handler(void *arg)
 			    ("xbc_response_handler: pxr->xr_bdone < 0"));
 
 			if (__predict_false(ring_resp->status)) {
-				DPRINTF(XBCB_IO, ("xbc_response_handler(%d): Operation failed, Xen return code: %i\n",
+				DPRINTF(/* XBCB_IO, */ ("xbc_response_handler(%d): Operation failed, Xen return code: %i\n",
 					i, (int)ring_resp->status));
 				pxr->xr_bp->b_flags |= B_ERROR;
 				pxr->xr_bp->b_error = EIO;
@@ -1161,7 +1421,7 @@ xbc_response_handler(void *arg)
 				bp = pxr->xr_bp;
 				sc = pxr->xr_sc;
 				xs = pxr->xr_xs;
-				DPRINTF(XBCB_IO, ("xbc_response_handler(%d): "
+				DPRINTF(/* XBCB_IO, */ ("xbc_response_handler(%d): "
 					    "completed bp %p\n", i, bp));
 				if (bp->b_flags & B_ERROR) {
 					bp->b_resid = bp->b_bcount;
@@ -1217,7 +1477,7 @@ static void
 connect_interface(blkif_fe_interface_status_t *status)
 {
 	// unsigned long flags;
-	struct xbc_attach_args *xbda;
+	struct xenbusdev_attach_args *xbda;
 	vdisk_t *vd;
 	int i;
 
@@ -1423,49 +1683,8 @@ blkif_status(blkif_fe_interface_status_t *status)
 }
 
 
-/* Send a driver status notification to the domain controller. */
-void
-send_driver_status(int ok)
-{
-	ctrl_msg_t cmsg = {
-		.type    = CMSG_BLKIF_FE,
-		.subtype = CMSG_BLKIF_FE_DRIVER_STATUS,
-		.length  = sizeof(blkif_fe_driver_status_t),
-	};
-	blkif_fe_driver_status_t *msg = (blkif_fe_driver_status_t *)cmsg.msg;
-
-	msg->status = ok ? BLKIF_DRIVER_STATUS_UP : BLKIF_DRIVER_STATUS_DOWN;
-
-	ctrl_if_send_message_block(&cmsg, NULL, 0, 0);
-}
-
-
-
-void
-xbc_ctrlif_rx(ctrl_msg_t *msg, unsigned long id)
-{
-	switch (msg->subtype) {
-	case CMSG_BLKIF_FE_INTERFACE_STATUS:
-		if (msg->length != sizeof(blkif_fe_interface_status_t))
-			goto parse_error;
-		blkif_status((blkif_fe_interface_status_t *)
-		    &msg->msg[0]);
-		break;
-	default:
-		goto parse_error;
-	}
-
-	ctrl_if_send_response(msg);
-	return;
-
- parse_error:
-	msg->length = 0;
-	ctrl_if_send_response(msg);
-}
-
-
 int
-xbcinit(struct xbc_softc *xs, struct xbc_attach_args *xbda)
+xbcinit(struct xbc_xenbus_softc *xs, struct xenbusdev_attach_args *xbda)
 {
 	/*
 	 * We have one shared bufq for all devices because otherwise
