@@ -1158,9 +1158,10 @@ xennet_softstart(void *arg)
 		SLIST_REMOVE_HEAD(&sc->sc_txreq_head, txreq_next);
 		req->txreq_m = m;
 
-		DPRINTFN(XEDB_MBUF, ("xennet_start id %d, mbuf %p, buf %p/%p, "
-			     "size %d\n", bufid, m, mtod(m, void *),
-			     (void *)pa, m->m_pkthdr.len));
+                DPRINTFN(XEDB_MBUF, ("xennet_start id %d, "
+                    "mbuf %p, buf %p/%p/%p, size %d\n",
+                    req->txreq_id, m, mtod(m, void *), (void *)pa,
+                    (void *)xpmap_ptom_masked(pa), m->m_pkthdr.len));
 		pmap_extract_ma(pmap_kernel(), mtod(m, vaddr_t), &pa2);
 		DPRINTFN(XEDB_MBUF, ("xennet_start pa %p ma %p/%p\n",
 		   (void *)pa, (void *)xpmap_ptom_masked(pa), (void *)pa2));
@@ -1190,7 +1191,7 @@ xennet_softstart(void *arg)
 		DPRINTFN(XEDB_MEM, ("id %d gref %d offset %d size %d flags %d"
 		    " prod %d\n",
 		    txreq->id, txreq->gref, txreq->offset, txreq->size,
-		    txreq->flags, req_prod);
+		    txreq->flags, req_prod));
 #endif
 
 #if NBPFILTER > 0
