@@ -306,9 +306,9 @@ xenbus_probe_device_type(struct xen_bus_type *bus, const char *type)
 			bus->root, type, dir[i]);
 
 		if (xenbus_lookup_device_path(xbusd->xbusd_path) != NULL) {
-		/* device already registered */
-		free(xbusd, M_DEVBUF);
-		continue;
+			/* device already registered */
+			free(xbusd, M_DEVBUF);
+			continue;
 		}
 
 		xbusd->xbusd_otherend_watch.xbw_dev = xbusd;
