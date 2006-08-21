@@ -123,7 +123,7 @@ struct xbc_xenbus_softc {
 
 
 struct vdisk_t {
-	struct xenbus_device *sc_xbusd;
+	struct xenbus_device *xbusd;
 	int used;			/* boolean flag, if entry is used or not. Consider,
 					 * devices attaches and detaches dynamically
 					 * and this is a static array */
@@ -189,8 +189,8 @@ struct cfattach xbc_ca = {
 
 #if 0
 int	xbc_response_handler(void *);
-void	xbc_iodone(struct xbc_xenbus_softc *);
 #endif
+void	xbc_iodone(struct xbc_xenbus_softc *);
 
 int xbcinit(struct xbc_xenbus_softc *, struct xenbusdev_attach_args *);
 void xbc_copy_internal_data(struct scsi_xfer *xs, void *v, size_t size);
@@ -205,7 +205,7 @@ void signal_requests_to_xen(void);
 #define DIAGCONDPANIC(x,y)
 #endif
 
-
+#if 0
 static blkif_ring_t *blk_ring = NULL;
 static BLKIF_RING_IDX resp_cons; /* Response consumer for comms ring. */
 static BLKIF_RING_IDX req_prod;  /* Private request producer.         */
@@ -217,6 +217,7 @@ static unsigned int blkif_handle = 0;
 
 static int blkif_control_rsp_valid = 0;
 static blkif_response_t blkif_control_rsp;
+#endif
 
 /* The xbc_xenbus_attach function gets called everytime, a new block device
  * attaches (i.e. CD, DVD, etc.). To prevent that the controller attaches
@@ -238,21 +239,30 @@ struct xbd_ctrl {
 
 static struct xbd_ctrl blkctrl;
 
+int xbc_register_controller(struct device *self, struct xenbusdev_attach_args *xa);
+int xbc_add_subdevice(struct xenbusdev_attach_args *xa);
+int xbc_del_subdevice(struct xenbusdev_attach_args *xa);
+struct vdisk_t *xbc_find_subdevice(struct xbc_xenbus_softc *sc);
+
 
 int xbc_register_controller(struct device *self, struct xenbusdev_attach_args *xa)
 {
+	return 0;
 }
 
 int xbc_add_subdevice(struct xenbusdev_attach_args *xa)
 {
+	return 0;
 }
 
 int xbc_del_subdevice(struct xenbusdev_attach_args *xa)
 {
+	return 0;
 }
 
-int xbc_find_subdevice(struct xenbusdev_attach_args *xa)
+struct vdisk_t *xbc_find_subdevice(struct xbc_xenbus_softc *sc)
 {
+	return NULL;
 }
 
 
@@ -350,6 +360,8 @@ xbc_xenbus_attach(struct device *parent, struct device *self, void *aux)
 	if (!xbc_attached) {
 		/* Attach the controller */
 
+		xbc_register_controller(self, xa);
+
 		printf(": Xen Virtual Block Controller\n");
 
 		sc->sc_xbusd = xa->xa_xbusd;
@@ -374,6 +386,8 @@ xbc_xenbus_attach(struct device *parent, struct device *self, void *aux)
 		sl->openings = XBC_RING_SIZE - 1;
 
 		config_found(&sc->sc_dev, &sc->sc_link, scsiprint);
+
+		/* XXX add subdevices using xbc_add_subdevice */
 
 		/* initialise shared structures and tell backend that we are ready */
 		xbc_xenbus_resume(sc);
@@ -404,33 +418,23 @@ int
 xbc_xenbus_detach(struct device *dev, int flags)
 {
 	struct xbc_xenbus_softc *sc = (void *)dev;
-	int s, bmaj, cmaj, i, mn;
+	int s;
+	struct vdisk_t *vbd;
 	s = splbio();
 
-	DPRINTF(("%s: xbd_detach\n", dev->dv_xname));
+	DPRINTF(("%s: xbc_detach\n", dev->dv_xname));
 	if (sc->sc_shutdown == 0) {
 		sc->sc_shutdown = 1;
 		/* wait for requests to complete */
-		while (sc->sc_backend_status == BLKIF_STATE_CONNECTED &&
-		    sc->sc_dksc.sc_dkdev.dk_stats->io_busy > 0)
-			tsleep(xbc_xenbus_detach, PRIBIO, "xbddetach", hz/2);
+		while (sc->sc_backend_status == BLKIF_STATE_CONNECTED)
+			tsleep(xbc_xenbus_detach, PRIBIO, "xbcdetach", hz/2);
 	}
 	splx(s);
 
-	/* locate the major number */
-	bmaj = bdevsw_lookup_major(&xbd_bdevsw);
-	cmaj = cdevsw_lookup_major(&xbd_cdevsw);
+	vbd = xbc_find_subdevice(sc);
 
-	/* Nuke the vnodes for any open instances. */
-	for (i = 0; i < MAXPARTITIONS; i++) {
-		mn = DISKMINOR(device_unit(dev), i);
-		vdevgone(bmaj, mn, mn, VBLK);
-		vdevgone(cmaj, mn, mn, VCHR);
-	}
 	if (sc->sc_backend_status == BLKIF_STATE_CONNECTED) {
-		/* Delete all of our wedges. */
-		dkwedge_delall(&sc->sc_dksc.sc_dkdev);
-
+#ifdef __NetBSD__
 		s = splbio();
 		/* Kill off any queued buffers. */
 		bufq_drain(sc->sc_dksc.sc_bufq);
@@ -439,15 +443,16 @@ xbc_xenbus_detach(struct device *dev, int flags)
 
 		/* detach disk */
 		disk_detach(&sc->sc_dksc.sc_dkdev);
+#endif
 	}
 
-	event_remove_handler(sc->sc_evtchn, &xbd_handler, sc);
+	event_remove_handler(sc->sc_evtchn, &xbc_handler, sc);
 	while (xengnt_status(sc->sc_ring_gntref)) {
 		tsleep(xbc_xenbus_detach, PRIBIO, "xbc_ref", hz/2);
 	}
 	xengnt_revoke_access(sc->sc_ring_gntref);
 	uvm_km_free(kernel_map, (vaddr_t)sc->sc_ring.sring,
-	    PAGE_SIZE, UVM_KMF_WIRED);
+	    PAGE_SIZE);
 	return 0;
 }
 
@@ -481,9 +486,9 @@ xbc_xenbus_resume(void *p)
 	error = xenbus_alloc_evtchn(sc->sc_xbusd, &sc->sc_evtchn);
 	if (error)
 		return error;
-	aprint_verbose("%s: using event channel %d\n",
+	printf("%s: using event channel %d\n",
 	    sc->sc_dev.dv_xname, sc->sc_evtchn);
-	event_set_handler(sc->sc_evtchn, &xbd_handler, sc,
+	event_set_handler(sc->sc_evtchn, &xbc_handler, sc,
 	    IPL_BIO, sc->sc_dev.dv_xname);
 
 again:
@@ -526,8 +531,9 @@ abort_transaction:
 void xbc_backend_changed(void *arg, XenbusState new_state)
 {
 	struct xbc_xenbus_softc *sc = arg;
-	struct dk_geom *pdg;
+#ifdef __NetBSD__
 	char buf[9];
+#endif
 	int s;
 	DPRINTF(("%s: new backend state %d\n", sc->sc_dev.dv_xname, new_state));
 
@@ -541,9 +547,9 @@ void xbc_backend_changed(void *arg, XenbusState new_state)
 		s = splbio();
 		sc->sc_shutdown = 1;
 		/* wait for requests to complete */
-		while (sc->sc_backend_status == BLKIF_STATE_CONNECTED &&
-		    sc->sc_dksc.sc_dkdev.dk_stats->io_busy > 0)
-			tsleep(xbd_xenbus_detach, PRIBIO, "xbddetach",
+		while (sc->sc_backend_status == BLKIF_STATE_CONNECTED /* &&
+		    sc->sc_dksc.sc_dkdev.dk_stats->io_busy > 0 */)
+			tsleep(xbc_xenbus_detach, PRIBIO, "xbddetach",
 			    hz/2);
 		splx(s);
 		xenbus_switch_state(sc->sc_xbusd, NULL, XenbusStateClosed);
@@ -555,10 +561,11 @@ void xbc_backend_changed(void *arg, XenbusState new_state)
 			return;
 		sc->sc_backend_status = BLKIF_STATE_CONNECTED;
 		splx(s);
-		xbd_connect(sc);
+		xbc_connect(sc);
 		sc->sc_shutdown = 0;
 		hypervisor_enable_event(sc->sc_evtchn);
 
+#ifdef __NetBSD__
 		sc->sc_dksc.sc_size =
 		    (uint64_t)sc->sc_sectors * (uint64_t)sc->sc_secsize /
 		    DEV_BSIZE;
@@ -581,6 +588,7 @@ void xbc_backend_changed(void *arg, XenbusState new_state)
 		    (unsigned long long)sc->sc_dksc.sc_size);
 		/* Discover wedges on this disk. */
 		dkwedge_discover(&sc->sc_dksc.sc_dkdev);
+#endif
 
 		/* the disk should be working now */
 		config_pending_decr();
@@ -592,7 +600,7 @@ void xbc_backend_changed(void *arg, XenbusState new_state)
 
 
 void
-xbc_connect(struct xbd_xenbus_softc *sc)
+xbc_connect(struct xbc_xenbus_softc *sc)
 {
 	int err;
 
@@ -627,7 +635,7 @@ xbc_connect(struct xbd_xenbus_softc *sc)
  */
 int
 xbc_cmd(struct xbc_xenbus_softc *sc, int command, void *data,
-	int datasize, /* vdisk_t *vd, */ int blkno, int flags,
+	int datasize, struct vdisk_t *vd, int blkno, int flags,
 	struct scsi_xfer *xs)
 {
 	struct buf *bp;
@@ -652,7 +660,7 @@ xbc_cmd(struct xbc_xenbus_softc *sc, int command, void *data,
 
 	if (!xs || xs->flags & SCSI_POLL) {
 		/* Synchronous commands mustn't wait. */
-		DPRINTF(XBCB_IO,
+		DPRINTF(/* XBCB_IO, */
 			("xbc_cmd: Synchronous commands mustn't wait.\n"));
 		xbc_iodone(sc);
 	}
@@ -676,7 +684,7 @@ xbc_scsi_cmd(struct scsi_xfer *xs)
 	struct scsi_rw *rw;
 	struct scsi_rw_big *rwb;
 	int op, flags, s, poll, error;
-	vdisk_t *vd = get_vdisk(target);
+	struct vdisk_t *vd = get_vdisk(target);
 
 	if (target >= nr_vbds || link->lun != 0) {
 		xs->error = XS_DRIVER_STUFFUP;
@@ -733,17 +741,9 @@ xbc_scsi_cmd(struct scsi_xfer *xs)
 		DPRINTF(/* XBCB_SETUP, */ ("vdisk type: "));
 		bzero(&inq, sizeof(inq));
 		switch (VDISK_TYPE(vd->info)) {
-		case VDISK_TYPE_TAPE:
-			inq.device = T_SEQUENTIAL;
-			DPRINTF(/* XBCB_SETUP, */ ("sequential, "));
-			break;
-		case VDISK_TYPE_CDROM:
+		case VDISK_CDROM:
 			inq.device = T_CDROM;
 			DPRINTF(/* XBCB_SETUP, */ ("cdrom, "));
-			break;
-		case VDISK_TYPE_OPTICAL:
-			inq.device = T_OPTICAL;
-			DPRINTF(/* XBCB_SETUP, */ ("optical, "));
 			break;
 		case VDISK_TYPE_DISK:
 		default:
@@ -926,28 +926,6 @@ xbc_copy_internal_data(struct scsi_xfer *xs, void *v, size_t size)
 		copy_cnt = MIN(size, xs->datalen);
 		bcopy(v, xs->data, copy_cnt);
 	}
-}
-
-
-/* Tell the controller to bring up the interface. */
-void
-send_interface_connect(void)
-{
-	ctrl_msg_t cmsg = {
-		.type    = CMSG_BLKIF_FE,
-		.subtype = CMSG_BLKIF_FE_INTERFACE_CONNECT,
-		.length  = sizeof(blkif_fe_interface_connect_t),
-	};
-	blkif_fe_interface_connect_t *msg =
-		(blkif_fe_interface_connect_t *)cmsg.msg;
-	paddr_t pa;
-
-	pmap_extract(pmap_kernel(), (vaddr_t)blk_ring, &pa);
-
-	msg->handle = 0;
-	msg->shmem_frame = xpmap_ptom_masked(pa) >> PAGE_SHIFT;
-
-	ctrl_if_send_message_block(&cmsg, NULL, 0, 0);
 }
 
 
