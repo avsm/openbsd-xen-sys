@@ -125,10 +125,6 @@ int xennet_debug = 0x0;
 #define NET_RX_RING_SIZE __RING_SIZE((netif_rx_sring_t *)0, PAGE_SIZE)
 
 
-#ifndef __HAVE_GENERIC_SOFT_INTERRUPTS
-#error This driver assumes, generic softinterrupts are implemented
-#endif
-
 
 struct xennet_txreq {
 	SLIST_ENTRY(xennet_txreq) txreq_next;
@@ -368,11 +364,12 @@ xennet_xenbus_attach(struct device *parent, struct device *self, void *aux)
 	if_attach(ifp);
 	ether_ifattach(ifp);
 
+#ifdef __HAVE_GENERIC_SOFT_INTERRUPTS
 	sc->sc_softintr = softintr_establish(IPL_SOFTNET,
 	    xennet_softstart, sc);
 	if (sc->sc_softintr == NULL)
 		panic(" xennet: can't establish soft interrupt");
-
+#endif
 
 	/* initialise shared structures and tell backend that we are ready */
         xennet_xenbus_resume(sc);
@@ -1057,14 +1054,12 @@ xennet_softstart(void *arg)
 			break;
 		}
 
-#ifdef __NetBSD__
 		if ((m->m_pkthdr.csum_flags &
-		    (M_CSUM_TCPv4 | M_CSUM_UDPv4)) != 0) {
+		    (M_TCPV4_CSUM_OUT | M_UDPV4_CSUM_OUT)) != 0) {
 			txflags = NETTXF_csum_blank;
 		} else {
 			txflags = 0;
 		}
-#endif
 
 		if (m->m_pkthdr.len != m->m_len ||
 		    (pa ^ (pa + m->m_pkthdr.len - 1)) & PG_FRAME) {
