@@ -329,19 +329,24 @@ trap(struct trapframe *frame)
 		return;
 
 	case T_PROTFLT|T_USER:		/* protection fault */
+		KERNEL_PROC_LOCK(p);
 #ifdef VM86
 		if (frame->tf_eflags & PSL_VM) {
 			vm86_gpfault(p, type & ~T_USER);
+			KERNEL_PROC_UNLOCK(p);
 			goto out;
 		}
 #endif
 		/* If pmap_exec_fixup does something, let's retry the trap. */
 		if (pmap_exec_fixup(&p->p_vmspace->vm_map, frame,
-		    &p->p_addr->u_pcb))
+		    &p->p_addr->u_pcb)) {
+			KERNEL_PROC_UNLOCK(p);
 			goto out;
+		}
 
 		sv.sival_int = frame->tf_eip;
 		trapsignal(p, SIGSEGV, vftype, SEGV_MAPERR, sv);
+		KERNEL_PROC_UNLOCK(p);
 		goto out;
 
 	case T_TSSFLT|T_USER:
