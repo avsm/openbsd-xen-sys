@@ -1167,7 +1167,7 @@ xennet_softstart(void *arg)
 		txreq = RING_GET_REQUEST(&sc->sc_tx_ring, req_prod);
 		txreq->id = req->txreq_id;
 		txreq->gref = req->txreq_gntref;
-		txreq->offset = pa & /* tile */ PG_FRAME;
+		txreq->offset = pa & ~PG_FRAME;
 		txreq->size = m->m_pkthdr.len;
 		txreq->flags = txflags;
 
