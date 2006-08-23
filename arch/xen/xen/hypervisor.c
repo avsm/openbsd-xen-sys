@@ -220,21 +220,14 @@ hypervisor_attach(struct device *parent, struct device *self, void *aux)
 #if 0
 		xenkernfs_init();
 		xenprivcmd_init();
+#endif	/* 0 */
 		xen_shm_init();
+#if 0
 		xbdback_init();
 		xennetback_init();
 #endif	/* 0 */
 	}
 #endif	/* DOM0OPS */
-#if 0
-	if (sysmon_pswitch_register(&hysw_reboot) != 0 ||
-	    sysmon_pswitch_register(&hysw_shutdown) != 0)
-		printf("%s: unable to register with sysmon\n",
-		    self->dv_xname);
-	else
-		ctrl_if_register_receiver(CMSG_SHUTDOWN,
-		    hypervisor_shutdown_handler, CALLBACK_IN_BLOCKING_CONTEXT);
-#endif	/* 0 */
 }
 
 static int

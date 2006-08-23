@@ -20,6 +20,7 @@ option		I686_CPU
 
 # disabled, see OpenBSD bug #5042
 #makeoptions   COPTS="-O2 -mcpu=i686 -march=i686"
+makeoptions	COPTS="-O0 -g"
 
 option		RAMDISK_HOOKS
 option		MINIROOTSIZE=3800

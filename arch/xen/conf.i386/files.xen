@@ -16,6 +16,7 @@ file	arch/xen/i386/intr.c
 file	arch/xen/i386/machdep.c
 file	arch/xen/i386/pmap.c
 file	arch/xen/i386/wscons_machdep.c	dom0ops
+file	arch/xen/i386/xen_shm_machdep.c	dom0ops
 file	arch/xen/i386/xen_machdep.c
 file	arch/i386/i386/db_disasm.c	ddb
 file	arch/i386/i386/db_interface.c	ddb
