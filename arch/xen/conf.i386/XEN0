@@ -30,6 +30,9 @@ xencons*	at hypervisor?	# Xen virtual console
 xenbus*		at hypervisor?	# Xen virtual bus
 bios0		at hypervisor?
 
+pseudo-device xvif
+
+
 # PCI bus support
 pci*		at hypervisor? bus ?
 

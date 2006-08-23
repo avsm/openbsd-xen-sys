@@ -67,6 +67,9 @@ int xenstored_ready = 0;
 
 struct device *xenbus_sc;
 SLIST_HEAD(, xenbus_device) xenbus_device_list;
+SLIST_HEAD(, xenbus_backend_driver) xenbus_backend_driver_list =
+	SLIST_HEAD_INITIALIZER(xenbus_backend_driver);
+
 
 static void xenbus_kthread_create(void *);
 static void xenbus_probe_init(void *);
@@ -167,6 +170,7 @@ backend_changed(struct xenbus_watch *watch,
 #if 0
 	printf("backend_changed %s\n", vec[XS_WATCH_PATH]);
 #endif
+	xenbus_probe_devices(&xenbus_backend);
 }
 
 /* We watch for devices appearing and vanishing. */
@@ -190,6 +194,12 @@ xenbus_attach(struct device *parent, struct device *self, void *aux)
 	xenbus_sc = self;
 	config_pending_incr();
 	kthread_create_deferred(xenbus_kthread_create, NULL);
+}
+
+void
+xenbus_backend_register(struct xenbus_backend_driver *xbakd)
+{
+        SLIST_INSERT_HEAD(&xenbus_backend_driver_list, xbakd, xbakd_entries);
 }
 
 void
