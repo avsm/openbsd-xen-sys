@@ -1,23 +1,24 @@
-/*	$NetBSD: xenio.h,v 1.3 2005/05/24 12:07:12 yamt Exp $	*/
-
+/* $NetBSD: xenio3.h,v 1.1 2006/05/07 10:18:28 bouyer Exp $ */
 /******************************************************************************
- * privcmd.h
- *
- * Copyright (c) 2003-2004, K A Fraser
- *
+ * evtchn.h
+ * 
+ * Interface to /dev/xen/evtchn.
+ * 
+ * Copyright (c) 2003-2005, K A Fraser
+ * 
  * This file may be distributed separately from the Linux kernel, or
  * incorporated into other software packages, subject to the following license:
- *
+ * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this source file (the "Software"), to deal in the Software without
  * restriction, including without limitation the rights to use, copy, modify,
  * merge, publish, distribute, sublicense, and/or sell copies of the Software,
  * and to permit persons to whom the Software is furnished to do so, subject to
  * the following conditions:
- *
+ * 
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- *
+ * 
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -27,79 +28,62 @@
  * IN THE SOFTWARE.
  */
 
-#ifndef __PRIVCMD_H__
-#define __PRIVCMD_H__
-
-/* Interface to /proc/xen/privcmd */
-
-typedef struct privcmd_hypercall
-{
-    unsigned long op;
-    unsigned long arg[5];
-} privcmd_hypercall_t;
-
-typedef struct privcmd_mmap_entry {
-    unsigned long va;
-    unsigned long mfn;
-    unsigned long npages;
-} privcmd_mmap_entry_t;
-
-typedef struct privcmd_mmap {
-    int num;
-    domid_t dom; /* target domain */
-    privcmd_mmap_entry_t *entry;
-} privcmd_mmap_t;
-
-typedef struct privcmd_mmapbatch {
-    int num;     /* number of pages to populate */
-    domid_t dom; /* target domain */
-    unsigned long addr;  /* virtual address */
-    unsigned long *arr; /* array of mfns - top nibble set on err */
-} privcmd_mmapbatch_t;
-
-typedef struct privcmd_blkmsg
-{
-    unsigned long op;
-    void         *buf;
-    int           buf_size;
-} privcmd_blkmsg_t;
+#ifndef __LINUX_PUBLIC_EVTCHN_H__
+#define __LINUX_PUBLIC_EVTCHN_H__
 
 /*
- * @cmd: IOCTL_PRIVCMD_HYPERCALL
- * @arg: &privcmd_hypercall_t
- * Return: Value returned from execution of the specified hypercall.
+ * Bind a fresh port to VIRQ @virq.
+ * Return allocated port.
  */
-#define IOCTL_PRIVCMD_HYPERCALL         \
-    _IOWR('P', 0, privcmd_hypercall_t)
-
-#if defined(_KERNEL)
-/* compat */
-#define IOCTL_PRIVCMD_INITDOMAIN_EVTCHN_OLD \
-    _IO('P', 1)
-#endif /* defined(_KERNEL) */
-
-#define IOCTL_PRIVCMD_MMAP             \
-    _IOW('P', 2, privcmd_mmap_t)
-#define IOCTL_PRIVCMD_MMAPBATCH        \
-    _IOW('P', 3, privcmd_mmapbatch_t)
-#define IOCTL_PRIVCMD_GET_MACH2PHYS_START_MFN \
-    _IOW('P', 4, unsigned long)
+#define IOCTL_EVTCHN_BIND_VIRQ				\
+	_IOWR('E', 4, struct ioctl_evtchn_bind_virq)
+struct ioctl_evtchn_bind_virq {
+	unsigned int virq;
+	unsigned int port;
+};
 
 /*
- * @cmd: IOCTL_PRIVCMD_INITDOMAIN_EVTCHN
- * @arg: n/a
- * Return: Port associated with domain-controller end of control event channel
- *         for the initial domain.
+ * Bind a fresh port to remote <@remote_domain, @remote_port>.
+ * Return allocated port.
  */
-#define IOCTL_PRIVCMD_INITDOMAIN_EVTCHN \
-    _IOR('P', 5, int)
+#define IOCTL_EVTCHN_BIND_INTERDOMAIN			\
+	_IOWR('E', 5, struct ioctl_evtchn_bind_interdomain)
+struct ioctl_evtchn_bind_interdomain {
+	unsigned int remote_domain, remote_port;
+	unsigned int port;
+};
 
-/* Interface to /dev/xenevt */
-/* EVTCHN_RESET: Clear and reinit the event buffer. Clear error condition. */
-#define EVTCHN_RESET  _IO('E', 1)
-/* EVTCHN_BIND: Bind to the specified event-channel port. */
-#define EVTCHN_BIND   _IOW('E', 2, unsigned long)
-/* EVTCHN_UNBIND: Unbind from the specified event-channel port. */
-#define EVTCHN_UNBIND _IOW('E', 3, unsigned long)
+/*
+ * Allocate a fresh port for binding to @remote_domain.
+ * Return allocated port.
+ */
+#define IOCTL_EVTCHN_BIND_UNBOUND_PORT			\
+	_IOWR('E', 6, struct ioctl_evtchn_bind_unbound_port)
+struct ioctl_evtchn_bind_unbound_port {
+	unsigned int remote_domain;
+	unsigned int port;
+};
 
-#endif /* __PRIVCMD_H__ */
+/*
+ * Unbind previously allocated @port.
+ */
+#define IOCTL_EVTCHN_UNBIND				\
+	_IOW('E', 7, struct ioctl_evtchn_unbind)
+struct ioctl_evtchn_unbind {
+	unsigned int port;
+};
+
+/*
+ * Send event to previously allocated @port.
+ */
+#define IOCTL_EVTCHN_NOTIFY				\
+	_IOW('E', 8, struct ioctl_evtchn_notify)
+struct ioctl_evtchn_notify {
+	unsigned int port;
+};
+
+/* Clear and reinitialise the event buffer. Clear error condition. */
+#define IOCTL_EVTCHN_RESET				\
+	_IO('E', 9)
+
+#endif /* __LINUX_PUBLIC_EVTCHN_H__ */
