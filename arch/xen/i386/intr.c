@@ -240,7 +240,6 @@ cpu_intr_init(struct cpu_info *ci)
 #endif
 
 #if defined(DOM0OPS)
-#ifdef notyet
 	MALLOC(ipl, struct iplsource *, sizeof (struct iplsource), M_DEVBUF,
 	    M_WAITOK);
 	if (ipl == NULL)
@@ -251,7 +250,6 @@ cpu_intr_init(struct cpu_info *ci)
 	fake_softxenevt_intrhand.ih_level = IPL_SOFTXENEVT;
 	ipl->ipl_handlers = &fake_softxenevt_intrhand;
 	ci->ci_isources[SIR_XENEVT] = ipl;
-#endif
 #ifdef __HAVE_GENERIC_SOFT_INTERRUPTS
 	evcount_attach(&softxenevt_evtcnt, "softxenevt",
 	    (void *)&softxenevt_evtcnt.ec_count, &evcount_intr);

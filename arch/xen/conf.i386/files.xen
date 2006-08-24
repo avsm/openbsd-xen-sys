@@ -58,6 +58,8 @@ file	arch/xen/xen/evtchn.c
 file	arch/xen/xen/xen_debug.c
 
 file	arch/xen/xen/xengnt.c
+file	arch/xen/xen/xenevt.c		xenevt & dom0ops
+
 #
 # Media Independent Interface (mii)
 #
