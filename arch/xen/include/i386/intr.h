@@ -160,6 +160,7 @@ void splassert_check(int, const char *);
 #define	splsoftclock()		splraise(IPL_SOFTCLOCK)
 #define	splsoftnet()		splraise(IPL_SOFTNET)
 #define	splsofttty()		splraise(IPL_SOFTTTY)
+#define splsoftxenevt()		splraise(IPL_SOFTXENEVT)
 
 /*
  * Miscellaneous
