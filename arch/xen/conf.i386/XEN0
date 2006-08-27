@@ -32,6 +32,7 @@ bios0		at hypervisor?
 
 pseudo-device xenevt
 pseudo-device xvif
+pseudo-device xbdback
 
 
 # PCI bus support

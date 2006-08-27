@@ -136,6 +136,7 @@ file	arch/xen/xen/xennetback_xenbus.c xvif
 device  xbc: scsi
 attach  xbc at xenbus
 file	arch/xen/xen/xbc.c		xbc
+file	arch/xen/xen/xbdback_xenbus.c	xbdback
 
 #
 # PCI-only drivers
