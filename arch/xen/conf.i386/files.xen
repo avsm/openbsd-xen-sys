@@ -120,10 +120,10 @@ device  xencons: tty
 attach  xencons at xendevbus
 file    arch/xen/xen/xencons.c          xencons needs-flag
 
-# Xen event peudo-device
-pseudo-device xenevt
-pseudo-device xvif
-pseudo-device xbdback
+pseudo-device xenevt		# Xen event pseudo-device
+pseudo-device xvif		# Xen network backend
+pseudo-device xbdback		# Xen block backend
+pseudo-device xbd		# Xen block frontend
 
 # Xen network driver
 device  xennet: ether, ifnet
@@ -134,8 +134,8 @@ file	arch/xen/xen/xennetback_xenbus.c xvif
 
 # Xen block device controller
 device  xbc: scsi
-attach  xbc at xenbus
-file	arch/xen/xen/xbc.c		xbc
+attach  xbc at xendevbus
+file	arch/xen/xen/xbc.c		xbc needs-flag
 file	arch/xen/xen/xbdback_xenbus.c	xbdback
 
 #

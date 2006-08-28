@@ -73,6 +73,7 @@
 #include "npx.h"
 #include "isa.h"
 #include "pci.h"
+#include "xbc.h"
 
 #include <machine/xen.h>
 #include <machine/hypervisor.h>
@@ -86,13 +87,14 @@
 #if NISA > 0
 #include <dev/isa/isavar.h>
 #endif
-#include <machine/granttables.h>
 #if NPCI > 0
 #include <dev/pci/pcivar.h>
 #if NPCIBIOS > 0
 #include <arch/i386/pci/pcibiosvar.h>
 #endif
 #endif
+
+#include <machine/granttables.h>
 #include <machine/xenbus.h>
 
 #if NPCI > 0
@@ -132,6 +134,9 @@ union hypervisor_attach_cookie {
 	struct isabus_attach_args hac_iba;
 #endif
 #endif /* NPCI */
+#if NXBC > 0
+	struct xenbusdev_attach_args hac_xbc;
+#endif
 };
 
 /*
@@ -147,17 +152,6 @@ struct  x86_isa_chipset x86_isa_chipset;
 #endif	/* 0 */
 #endif
 
-#if 0
-/* shutdown/reboot message stuff */
-static struct sysmon_pswitch hysw_shutdown = {
-	.smpsw_type = PSWITCH_TYPE_POWER,
-	.smpsw_name = "hypervisor",
-};
-static struct sysmon_pswitch hysw_reboot = {
-	.smpsw_type = PSWITCH_TYPE_RESET,
-	.smpsw_name = "hypervisor",
-};
-#endif
 
 /*
  * Probe for the hypervisor; always succeeds.
@@ -215,6 +209,11 @@ hypervisor_attach(struct device *parent, struct device *self, void *aux)
 #endif
 #endif /* NPCI */
 
+#if NXBC > 0
+	hac.hac_xbc.xa_type = "xbc";
+	config_found(self, &hac.hac_xbc, hypervisor_print);
+#endif
+
 #ifdef DOM0OPS
 	if (xen_start_info.flags & SIF_PRIVILEGED) {
 #if 0
@@ -222,10 +221,6 @@ hypervisor_attach(struct device *parent, struct device *self, void *aux)
 		xenprivcmd_init();
 #endif	/* 0 */
 		xen_shm_init();
-#if 0
-		xbdback_init();
-		xennetback_init();
-#endif	/* 0 */
 	}
 #endif	/* DOM0OPS */
 }
@@ -259,22 +254,3 @@ xenkernfs_init(void)
 }
 #endif	/* 0 */
 #endif
-
-#if 0
-/* handler for the shutdown messages */
-static void
-hypervisor_shutdown_handler(ctrl_msg_t *msg, unsigned long id)
-{
-	switch(msg->subtype) {
-	case CMSG_SHUTDOWN_POWEROFF:
-		sysmon_pswitch_event(&hysw_shutdown, PSWITCH_EVENT_PRESSED);
-		break;
-	case CMSG_SHUTDOWN_REBOOT:
-		sysmon_pswitch_event(&hysw_reboot, PSWITCH_EVENT_PRESSED);
-		break;
-	default:
-		printf("shutdown_handler: unknwon message %d\n",
-		    msg->type);
-	}
-}
-#endif	/* 0 */

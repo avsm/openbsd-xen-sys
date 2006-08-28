@@ -42,7 +42,7 @@ xenbus*		at hypervisor?	# Xen virtual bus
 
 xennet*		at xenbus?	# Xen virtual network interface
 
-#xbc*		at xenbus?  # Xen virtual block controller (SCSI)
+#xbc*		at hypervisor?  # Xen virtual block controller (SCSI)
 #scsibus*	at xbc?
 #sd*		at scsibus?	# SCSI disk drives
 #st*		at scsibus?	# SCSI tape drives
