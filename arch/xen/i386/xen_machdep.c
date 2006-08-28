@@ -44,6 +44,8 @@
 #include <machine/gdt.h>
 #include <machine/xenfunc.h>
 
+#include "../xenbus/strtoul.h"
+
 /* #define	XENDEBUG */
 /* #define	XENDEBUG_LOW */
 
@@ -155,11 +157,9 @@ lgdt(struct region_descriptor *rdp)
 void
 xen_parse_cmdline(int what, union xen_cmdline_parseinfo *xcp)
 {
-	char _cmd_line[128], *cmd_line, *opt /*, *s */;
-#ifdef notyet
+	char _cmd_line[128], *cmd_line, *opt, *s;
 	int b, i, ipidx = 0;
 	uint32_t xi_ip[5];
-#endif
 
 	cmd_line = strncpy(_cmd_line, xen_start_info.cmd_line, 128);
 	cmd_line[127] = '\0';
@@ -182,15 +182,17 @@ xen_parse_cmdline(int what, union xen_cmdline_parseinfo *xcp)
 		switch (what) {
 		case XEN_PARSE_BOOTDEV:
 			if (strncasecmp(opt, "bootdev=", 8) == 0)
-				strncpy(xcp->xcp_bootdev, opt + 8,
+				strlcpy(xcp->xcp_bootdev, opt + 8,
 				    sizeof(xcp->xcp_bootdev));
+			if (strncasecmp(opt, "root=", 8) == 0)
+				strlcpy(xcp->xcp_bootdev, opt + 8,
+					sizeof(xcp->xcp_bootdev));
 			break;
 
-#ifdef notyet
 		case XEN_PARSE_NETINFO:
 			if (xcp->xcp_netinfo.xi_root &&
 			    strncasecmp(opt, "nfsroot=", 8) == 0)
-				strncpy(xcp->xcp_netinfo.xi_root, opt + 8,
+				strlcpy(xcp->xcp_netinfo.xi_root, opt + 8,
 				    MNAMELEN);
 
 			if (strncasecmp(opt, "ip=", 3) == 0) {
@@ -244,7 +246,6 @@ xen_parse_cmdline(int what, union xen_cmdline_parseinfo *xcp)
 				}
 			}
 			break;
-#endif	/* notyet */
 
 		case XEN_PARSE_CONSOLE:
 			if (strncasecmp(opt, "console=", 8) == 0)
