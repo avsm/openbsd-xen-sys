@@ -143,10 +143,8 @@ stipending(void)
 						ret = 1;
 				}
 #ifdef DOM0OPS
-#if notyet
 				else
 					xenevt_event(port);
-#endif
 #endif
 			}
 		}
@@ -214,10 +212,8 @@ do_hypervisor_callback(struct intrframe *regs)
 				if (evtsource[port])
 					evtchn_do_event(port, regs);
 #ifdef DOM0OPS
-#if notyet
 				else
 					xenevt_event(port);
-#endif
 #endif
 			}
 		}
