@@ -309,6 +309,7 @@ xbc_xenbus_attach(struct device *parent, struct device *self, void *aux)
 		c_sc->sc_type = XBC_BLK_CONTROLLER;
 		c_sc->nr_vbds = 0;
 
+		printf(": Xen Virtual Block Controller\n");
 		nr_vbds = 0;
 
 		sl = &controller_sc->c_sc_link;
