@@ -1,4 +1,4 @@
-/*	$OpenBSD: arc.c,v 1.45 2006/08/27 09:56:20 dlg Exp $ */
+/*	$OpenBSD: arc.c,v 1.47 2006/08/28 00:53:34 dlg Exp $ */
 
 /*
  * Copyright (c) 2006 David Gwynne <dlg@openbsd.org>
@@ -462,6 +462,8 @@ int			arc_map_pci_resources(struct arc_softc *,
 			    struct pci_attach_args *);
 int			arc_query_firmware(struct arc_softc *);
 
+
+#if NBIO > 0
 /* stuff to do messaging via the doorbells */
 void			arc_lock(struct arc_softc *);
 void			arc_unlock(struct arc_softc *);
@@ -471,7 +473,6 @@ int			arc_msgbuf(struct arc_softc *, void *, size_t,
 			    void *, size_t);
 
 /* bioctl */
-#if NBIO > 0
 int			arc_bioctl(struct device *, u_long, caddr_t);
 int			arc_bio_inq(struct arc_softc *, struct bioc_inq *);
 int			arc_bio_vol(struct arc_softc *, struct bioc_vol *);
@@ -1139,27 +1140,19 @@ int
 arc_bio_vol(struct arc_softc *sc, struct bioc_vol *bv)
 {
 	struct arc_fw_volinfo		*volinfo;
-	struct arc_fw_raidinfo		*raidinfo;
 	struct scsi_link		*sc_link;
 	struct device			*dev;
-	u_int8_t			request[2];
 	u_int32_t			status;
-	int				i;
 	int				error = 0;
 
 	volinfo = malloc(sizeof(struct arc_fw_volinfo), M_TEMP, M_WAITOK);
 	if (volinfo == NULL)
 		return (ENOMEM);
 
-	raidinfo = malloc(sizeof(struct arc_fw_raidinfo), M_TEMP, M_WAITOK);
-	if (raidinfo == NULL) {
-		free(volinfo, M_TEMP);
-		return (ENOMEM);
-	}
-
 	arc_lock(sc);
-
 	error = arc_bio_getvol(sc, bv->bv_volid, volinfo);
+	arc_unlock(sc);
+
 	if (error != 0)
 		goto out;
 
@@ -1168,26 +1161,10 @@ arc_bio_vol(struct arc_softc *sc, struct bioc_vol *bv)
 
 	status = letoh32(volinfo->volume_status);
 	if (status == 0x0) {
-		bv->bv_status = BIOC_SVONLINE;
-		/*
-		 * the stupid firmware doesnt care if a volume is degraded,
-		 * just if it is working or not. go see if any disks are
-		 * missing and figure out if it's degraded for ourselves.
-		 */
-		request[0] = ARC_FW_RAIDINFO;
-		request[1] = volinfo->raid_set_number;
-		error = arc_msgbuf(sc, request, sizeof(request), raidinfo,
-		    sizeof(struct arc_fw_raidinfo));
-		if (error != 0)
-			goto out;
-
-		for (i = 0; i < raidinfo->member_devices; i++) {
-			/* a missing disk shows up as 0xff */
-			if (raidinfo->device_array[i] == 0xff) {
-				bv->bv_status = BIOC_SVDEGRADED;
-				break;
-			}	
-		}
+		if (letoh32(volinfo->fail_mask) == 0x0)
+			bv->bv_status = BIOC_SVONLINE;
+		else
+			bv->bv_status = BIOC_SVDEGRADED;
 	} else if (status & ARC_FW_VOL_STATUS_NEED_REGEN)
 		bv->bv_status = BIOC_SVDEGRADED;
 	else if (status & ARC_FW_VOL_STATUS_FAILED)
@@ -1233,8 +1210,6 @@ arc_bio_vol(struct arc_softc *sc, struct bioc_vol *bv)
 	}
 
 out:
-	arc_unlock(sc);
-	free(raidinfo, M_TEMP);
 	free(volinfo, M_TEMP);
 	return (error);
 }
@@ -1338,7 +1313,6 @@ out:
 	free(volinfo, M_TEMP);
 	return (error);
 }
-#endif /* NBIO > 0 */
 
 u_int8_t
 arc_msg_cksum(void *cmd, u_int16_t len)
@@ -1529,6 +1503,7 @@ arc_wait(struct arc_softc *sc)
 		arc_write(sc, ARC_REG_INTRMASK, ~ARC_REG_INTRMASK_POSTQUEUE);
 	splx(s);
 }
+#endif /* NBIO > 0 */
 
 u_int32_t
 arc_read(struct arc_softc *sc, bus_size_t r)

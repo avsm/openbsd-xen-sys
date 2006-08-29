@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bgereg.h,v 1.51 2006/07/18 01:24:46 brad Exp $	*/
+/*	$OpenBSD: if_bgereg.h,v 1.52 2006/08/16 02:37:00 brad Exp $	*/
 
 /*
  * Copyright (c) 2001 Wind River Systems

@@ -1,4 +1,4 @@
-/*	$OpenBSD: brgphy.c,v 1.49 2006/06/26 04:59:26 brad Exp $	*/
+/*	$OpenBSD: brgphy.c,v 1.50 2006/07/23 06:34:03 brad Exp $	*/
 
 /*
  * Copyright (c) 2000
@@ -339,6 +339,8 @@ setit:
 			break;
 		}
 	}
+
+	/* Callback if something changed. */
 	mii_phy_update(sc, cmd);
 
 	return (0);
