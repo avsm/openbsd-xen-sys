@@ -83,6 +83,10 @@ struct xen_bus_type
 
 static int xenbus_probe_devices(struct xen_bus_type *);
 
+
+#define __UNCONST(x)	((void *)(unsigned long)(const void *)(x))
+
+
 static void
 free_otherend_watch(struct xenbus_device *dev)
 {
@@ -280,6 +284,58 @@ xenbus_lookup_device_path(const char *path)
 	return NULL;
 }
 
+
+static struct xenbus_device *
+xenbus_allocate_device(struct xen_bus_type *bus,
+			const char *type, const char *dir)
+{
+	struct xenbus_device *xbusd;
+	int msize;
+
+	/*
+	 * add size of path to size of xenbus_device. xenbus_device
+	 * already has room for one char in xbusd_path.
+	 */
+	msize = sizeof(*xbusd) + strlen(bus->root) + strlen(type)
+		+ strlen(dir) + 3;
+	xbusd = malloc(msize, M_DEVBUF, M_WAITOK);
+	memset (xbusd, 0, msize);
+
+	if (xbusd == NULL)
+		panic("can't malloc xbusd");
+
+	snprintf(__UNCONST(xbusd->xbusd_path),
+		msize - sizeof(*xbusd) + 1, "%s/%s/%s",
+		bus->root, type, dir);
+
+	return xbusd;
+}
+
+static int
+xenbus_attach_frontend_blk_controller(void)
+{
+	struct xen_bus_type *bus = &xenbus_frontend;
+	struct xenbus_device *xbusd;
+	struct xenbusdev_attach_args xa;
+	const char *type = "vbc";
+	const char *dir = "1";
+	char *ep;
+
+	xbusd = xenbus_allocate_device(bus, type, dir);
+	KASSERT(xbusd != NULL);
+
+	xa.xa_xbusd = xbusd;
+	xa.xa_type = type;
+	xa.xa_id = strtoul(dir, &ep, 0);
+
+	xbusd->xbusd_u.f.f_dev = config_found(xenbus_sc, &xa, xenbus_print);
+	SLIST_INSERT_HEAD(&xenbus_device_list,
+		xbusd, xbusd_entries);
+	return 0;	
+}
+
+
+
 static int
 xenbus_probe_device_type(struct xen_bus_type *bus, const char *type)
 {
@@ -298,22 +354,8 @@ xenbus_probe_device_type(struct xen_bus_type *bus, const char *type)
 		return err;
 
 	for (i = 0; i < dir_n; i++) {
-		int msize;
-		/*
-		 * add size of path to size of xenbus_device. xenbus_device
-		 * already has room for one char in xbusd_path.
-		 */
-		msize = sizeof(*xbusd) + strlen(bus->root) + strlen(type)
-			+ strlen(dir[i]) + 2;
-  		xbusd = malloc(msize, M_DEVBUF, M_WAITOK);
-		memset (xbusd, 0, msize);
-
-		if (xbusd == NULL)
-			panic("can't malloc xbusd");
-			
-		snprintf((void *)(unsigned long)(const void *) xbusd->xbusd_path,
-			msize - sizeof(*xbusd) + 1, "%s/%s/%s",
-			bus->root, type, dir[i]);
+		xbusd = xenbus_allocate_device(bus, type, dir[i]);
+		KASSERT(xbusd != NULL);
 
 		if (xenbus_lookup_device_path(xbusd->xbusd_path) != NULL) {
 			/* device already registered */
@@ -410,6 +452,7 @@ void
 xenbus_probe(void *unused)
 {
 	KASSERT((xenstored_ready > 0)); 
+	xenbus_attach_frontend_blk_controller();
 
 	/* Enumerate devices in xenstore. */
 	xenbus_probe_devices(&xenbus_frontend);

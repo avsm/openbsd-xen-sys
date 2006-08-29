@@ -73,7 +73,6 @@
 #include "npx.h"
 #include "isa.h"
 #include "pci.h"
-#include "xbc.h"
 
 #include <machine/xen.h>
 #include <machine/hypervisor.h>
@@ -134,9 +133,6 @@ union hypervisor_attach_cookie {
 	struct isabus_attach_args hac_iba;
 #endif
 #endif /* NPCI */
-#if NXBC > 0
-	struct xenbusdev_attach_args hac_xbc;
-#endif
 };
 
 /*
@@ -209,10 +205,6 @@ hypervisor_attach(struct device *parent, struct device *self, void *aux)
 #endif
 #endif /* NPCI */
 
-#if NXBC > 0
-	hac.hac_xbc.xa_type = "xbc";
-	config_found(self, &hac.hac_xbc, hypervisor_print);
-#endif
 
 #ifdef DOM0OPS
 	if (xen_start_info.flags & SIF_PRIVILEGED) {

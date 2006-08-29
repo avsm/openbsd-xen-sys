@@ -95,7 +95,7 @@ struct xbc_req {
 	void *req_data; /* pointer to the data buffer */
 };
 
-
+#if 0
 struct xbc_vdisk_t {
 	struct device vd_dev;
 	SLIST_ENTRY(xbc_vdisk_t) vdisk_next;
@@ -122,6 +122,7 @@ struct xbc_vdisk_t {
 	u_long vd_handle;		/* from backend */
 };
 
+
 struct xbc_xenbus_softc {
 	struct device sc_dev;		/* base device glue */
 	struct scsi_link sc_link;	/* scsi link */
@@ -133,60 +134,72 @@ struct xbc_xenbus_softc {
 	struct xbc_vdisk_t *sc_vd;	/* backpointer to vdisk,
 					 * not valid if this is the controller */
 };
-
-
-/* Global variable for controller */
-static struct xbc_xenbus_softc *controller_sc = NULL;
-
-#if 0
-	struct xenbus_device *sc_xbusd;
-
-	blkif_front_ring_t sc_ring;
-
-	unsigned int sc_evtchn;
-
-	grant_ref_t sc_ring_gntref;
-
-	struct xbc_req sc_reqs[XBC_RING_SIZE];
-	SLIST_HEAD(,xbc_req) sc_xbcreq_head; /* list of free requests */
-
-	int sc_backend_status;		/* our status with backend */
-#define BLKIF_STATE_DISCONNECTED	0
-#define BLKIF_STATE_CONNECTED		1
-#define BLKIF_STATE_SUSPENDED		2
-	int sc_shutdown;
-
-	u_long sc_sectors;	/* number of sectors for this device */
-	u_long sc_secsize;	/* sector size */
-	u_long sc_info;		/* VDISK_* */
-	u_long sc_handle;	/* from backend */
-};
 #endif
 
 
-void xbdattach(int n);
+struct xbc_vdisk_softc {
+	struct device vd_sc_dev;	/* base device glue */
+	struct xenbus_device *vd_sc_xbusd;
+
+	blkif_front_ring_t vd_sc_ring;
+	unsigned int vd_sc_evtchn;
+
+	grant_ref_t vd_sc_ring_gntref;
+
+	uint8_t vd_sc_scsi_target;
+	struct xbc_req vd_sc_reqs[XBC_RING_SIZE];
+	SLIST_HEAD(,xbc_req) vd_sc_xbcreq_head; /* list of free requests */
+
+	int vd_sc_backend_status;	/* our status with backend */
+#define BLKIF_STATE_DISCONNECTED	0
+#define BLKIF_STATE_CONNECTED		1
+#define BLKIF_STATE_SUSPENDED		2
+	int vd_sc_shutdown;
+
+	u_long vd_sc_sectors;		/* number of sectors for this device */
+	u_long vd_sc_secsize;		/* sector size */
+	u_long vd_sc_info;		/* VDISK_* */
+	u_long vd_sc_handle;		/* from backend */
+
+	int sc_type;
+};
+
+
+
+/* Global variable for controller */
+struct xbc_controller_softc {
+	struct device c_sc_dev;		/* base device glue */
+	struct scsi_link c_sc_link;	/* scsi link */
+	struct scsi_xfer *c_sc_xs;
+
+	int sc_type;
+	int nr_vbds;
+};
+
+static struct xbc_controller_softc *controller_sc;
+
+
 int xbc_xenbus_match(struct device *, void *, void *);
 void xbc_xenbus_attach(struct device *, struct device *, void *);
 int xbc_xenbus_detach(struct device *, int);
 
 int xbc_xenbus_resume(void *);
 int xbc_handler(void *);
-int xbcstart(struct xbc_xenbus_softc *, struct buf *);
+//int xbcstart(struct xbc_xenbus_softc *, struct buf *);
 void xbc_backend_changed(void *, XenbusState);
-void xbc_connect(struct xbc_vdisk_t *);
+void xbc_connect(struct xbc_vdisk_softc *);
 
 int xbc_map_align(struct xbc_req *);
 void xbc_unmap_align(struct xbc_req *);
 
-uint8_t xbc_vdisk_used(struct xbc_xenbus_softc *sc);
-struct xbc_vdisk_t *xbc_vdisk_get(struct xbc_xenbus_softc *sc, uint8_t scsi_target);
-struct xbc_vdisk_t *xbc_vdisk_create(struct xbc_xenbus_softc *sc,
-				struct xenbusdev_attach_args *xa);
-int xbc_vdisk_destroy(struct xbc_vdisk_t *vd);
+uint8_t xbc_vdisk_used(void);
+int xbc_vdisk_init(struct xbc_vdisk_softc *vd_sc,
+		struct xenbusdev_attach_args *xa);
+int xbc_vdisk_destroy(struct xbc_vdisk_softc *vd_sc);
 
 int xbc_scsi_cmd(struct scsi_xfer *);
-int xbc_cmd(struct xbc_xenbus_softc *sc, int command, void *data,
-		int datasize, struct xbc_vdisk_t *vd, int blkno, int flags,
+int xbc_cmd(struct xbc_vdisk_softc *sc, int command, void *data,
+		int datasize, /* struct xbc_vdisk_t *vd, */ int blkno, int flags,
 		struct scsi_xfer *xs);
 
 
@@ -210,7 +223,7 @@ struct scsi_device xbc_dev = {
 
 
 struct cfattach xbc_ca = {
-	sizeof(struct xbc_xenbus_softc),
+	sizeof(struct xbc_vdisk_softc),	/* take the larger one */
 	xbc_xenbus_match, xbc_xenbus_attach,
 	xbc_xenbus_detach,	/* detach */
 	NULL	/* activate */
@@ -219,10 +232,10 @@ struct cfattach xbc_ca = {
 
 #if 0
 int	xbc_response_handler(void *);
-#endif
 void	xbc_iodone(struct xbc_xenbus_softc *);
+#endif
 
-int xbcinit(struct xbc_xenbus_softc *, struct xenbusdev_attach_args *);
+//int xbcinit(struct xbc_xenbus_softc *, struct xenbusdev_attach_args *);
 void xbc_copy_internal_data(struct scsi_xfer *xs, void *v, size_t size);
 void vbd_update(void);
 void signal_requests_to_xen(void);
@@ -241,16 +254,6 @@ void signal_requests_to_xen(void);
 
 
 static int
-xbc_is_controller(struct xenbusdev_attach_args *xa)
-{
-	if (strcmp(xa->xa_type, "xbc") == 0) {
-		return 1;
-	}
-
-	return 0;
-}
-
-static int
 xbc_is_disk(struct xenbusdev_attach_args *xa)
 {
 	if (strcmp(xa->xa_type, "vbd") == 0) {
@@ -259,6 +262,17 @@ xbc_is_disk(struct xenbusdev_attach_args *xa)
 
 	return 0;
 }
+
+static int
+xbc_is_controller(struct xenbusdev_attach_args *xa)
+{
+	if (strcmp(xa->xa_type, "vbc") == 0) {
+		return 1;
+	}
+
+	return 0;
+}
+
 
 int
 xbc_xenbus_match(struct device *parent, void *match, void *aux)
@@ -273,15 +287,13 @@ xbc_xenbus_match(struct device *parent, void *match, void *aux)
 }
 
 
-
-
 void
 xbc_xenbus_attach(struct device *parent, struct device *self, void *aux)
 {
-	struct xbc_xenbus_softc *sc = (struct xbc_xenbus_softc *)self;
+	struct xbc_controller_softc *c_sc = NULL;
+	struct xbc_vdisk_softc *vd_sc = NULL;
 	struct xenbusdev_attach_args *xa = aux;
 	struct scsi_link *sl = NULL; 
-	struct xbc_vdisk_t *vd;
 	int nr_vbds;
 	RING_IDX i;
 #ifdef XBC_DEBUG
@@ -293,17 +305,17 @@ xbc_xenbus_attach(struct device *parent, struct device *self, void *aux)
 
 	if (xbc_is_controller(xa)) {
 		KASSERT(controller_sc == NULL);
-		controller_sc = sc;
+		controller_sc = c_sc = (struct xbc_controller_softc *)self;
+		c_sc->sc_type = XBC_BLK_CONTROLLER;
+		c_sc->nr_vbds = 0;
 
-		sc->sc_type = XBC_BLK_CONTROLLER;
-		sc->sc_vd = NULL;
 		nr_vbds = 0;
 
-		sl = &sc->sc_link;
-		sl->adapter_softc = sc;
+		sl = &controller_sc->c_sc_link;
+		sl->adapter_softc = controller_sc;
 		sl->adapter = &xbc_switch;
 		sl->adapter_buswidth = nr_vbds;
-		sl->adapter_target = nr_vbds;
+		sl->adapter_target = 255;
 		sl->device = &xbc_dev;
 		sl->openings = XBC_RING_SIZE - 1;
 
@@ -317,8 +329,11 @@ xbc_xenbus_attach(struct device *parent, struct device *self, void *aux)
 		return;
 	}
 
+	vd_sc = (struct xbc_vdisk_softc *)self;
 	KASSERT(xbc_is_disk(xa));
-	KASSERT(sc != controller_sc);
+	KASSERT(controller_sc != NULL); /* Assert, controller has already been attached */
+	KASSERT((void *)vd_sc != (void *)controller_sc);
+	vd_sc->sc_type = XBC_BLK_DEVICE;
 
 	config_pending_incr();
 #ifdef XBC_DEBUG
@@ -327,7 +342,7 @@ xbc_xenbus_attach(struct device *parent, struct device *self, void *aux)
 	err = xenbus_directory(NULL, "device/vbd", id_str, &dir_n, &dir);
 	if (err) {
 		printf("%s: xenbus_directory err %d\n",
-			sc->sc_dev.dv_xname, err);
+			vd_sc->vd_sc_dev.dv_xname, err);
 	} else {
 		printf("%s/\n", xa->xa_xbusd->xbusd_path);
 		for (i = 0; i < dir_n; i++) {
@@ -336,7 +351,7 @@ xbc_xenbus_attach(struct device *parent, struct device *self, void *aux)
 				NULL, &val);
 			if (err) {
 				printf("%s: xenbus_read err %d\n",
-					sc->sc_dev.dv_xname, err);
+					vd_sc->vd_sc_dev.dv_xname, err);
 			} else {
 				printf(" = %s\n", val);
 				free(val, M_DEVBUF);
@@ -346,58 +361,43 @@ xbc_xenbus_attach(struct device *parent, struct device *self, void *aux)
 	}
 #endif /* XBC_DEBUG */			 
 
-	vd = xbc_vdisk_create(sc, xa);
-	if (vd == NULL) {
-		printf("Attaching new xen vdisk failed. Out of memory\n");
-		return;
-	}
+	xbc_vdisk_init(vd_sc, xa);
+	nr_vbds = xbc_vdisk_used();
 
-	nr_vbds = xbc_vdisk_used(controller_sc) + 1;
-
-	sl = &controller_sc->sc_link;
+	sl = &controller_sc->c_sc_link;
 	sl->adapter_buswidth = nr_vbds;
-	sl->adapter_target = nr_vbds;
 
-	config_found(&controller_sc->sc_dev, &controller_sc->sc_link, scsiprint);	
+	config_found(&controller_sc->c_sc_dev, &controller_sc->c_sc_link, scsiprint);	
 
 	/* initialize shared structures and tell backend that we are ready */
-	xbc_xenbus_resume(sc);
+	xbc_xenbus_resume(vd_sc);
 
 	return;
 }
 
-
-
-void xbdattach(int n)
-{
-	printf("xbdattach n = %i\n", n);
-	return;
-}
 
 
 int
 xbc_xenbus_detach(struct device *dev, int flags)
 {
-	struct xbc_xenbus_softc *sc = (void *)dev;
-	struct xbc_vdisk_t *vd;
+	struct xbc_vdisk_softc *vd_sc = (void *)dev;
 	int s;
 
-	KASSERT(sc->sc_type == XBC_BLK_DEVICE);
-	KASSERT(sc->sc_vd != NULL);
+	KASSERT(vd_sc->sc_type == XBC_BLK_DEVICE);
+	KASSERT((void *)dev != controller_sc);
 
-	vd = sc->sc_vd;
 	s = splbio();
 
 	DPRINTF(("%s: xbc_detach\n", dev->dv_xname));
-	if (vd->vd_shutdown == 0) {
-		vd->vd_shutdown = 1;
+	if (vd_sc->vd_sc_shutdown == 0) {
+		vd_sc->vd_sc_shutdown = 1;
 		/* wait for requests to complete */
-		while (vd->vd_backend_status == BLKIF_STATE_CONNECTED)
+		while (vd_sc->vd_sc_backend_status == BLKIF_STATE_CONNECTED)
 			tsleep(xbc_xenbus_detach, PRIBIO, "xbcdetach", hz/2);
 	}
 	splx(s);
 
-	if (vd->vd_backend_status == BLKIF_STATE_CONNECTED) {
+	if (vd_sc->vd_sc_backend_status == BLKIF_STATE_CONNECTED) {
 #ifdef __NetBSD__
 		s = splbio();
 		/* Kill off any queued buffers. */
@@ -410,12 +410,12 @@ xbc_xenbus_detach(struct device *dev, int flags)
 #endif
 	}
 
-	event_remove_handler(vd->vd_evtchn, &xbc_handler, vd);
-	while (xengnt_status(vd->vd_ring_gntref)) {
+	event_remove_handler(vd_sc->vd_sc_evtchn, &xbc_handler, vd_sc);
+	while (xengnt_status(vd_sc->vd_sc_ring_gntref)) {
 		tsleep(xbc_xenbus_detach, PRIBIO, "xbc_ref", hz/2);
 	}
-	xengnt_revoke_access(vd->vd_ring_gntref);
-	uvm_km_free(kernel_map, (vaddr_t)vd->vd_ring.sring,
+	xengnt_revoke_access(vd_sc->vd_sc_ring_gntref);
+	uvm_km_free(kernel_map, (vaddr_t)vd_sc->vd_sc_ring.sring,
 	    PAGE_SIZE);
 	return 0;
 }
@@ -425,19 +425,17 @@ xbc_xenbus_detach(struct device *dev, int flags)
 int
 xbc_xenbus_resume(void *p)
 {
-	struct xbc_xenbus_softc *sc = p;
+	struct xbc_vdisk_softc *vd_sc = p;
 	struct xenbus_transaction *xbt;
-	struct xbc_vdisk_t *vd;
 	int error;
 	blkif_sring_t *ring;
 	paddr_t ma;
 	const char *errmsg;
 
-	KASSERT(sc->sc_type == XBC_BLK_DEVICE);
-	KASSERT(sc->sc_vd != NULL);
-	vd = sc->sc_vd;
+	KASSERT(vd_sc->sc_type == XBC_BLK_DEVICE);
+	KASSERT((void *)vd_sc != (void *)controller_sc);
 
-	vd->vd_ring_gntref = GRANT_INVALID_REF;
+	vd_sc->vd_sc_ring_gntref = GRANT_INVALID_REF;
 
 
 	/* setup device: alloc event channel and shared ring */
@@ -446,37 +444,37 @@ xbc_xenbus_resume(void *p)
 		panic("xbd_xenbus_resume: can't alloc rings");
 
 	SHARED_RING_INIT(ring);
-	FRONT_RING_INIT(&vd->vd_ring, ring, PAGE_SIZE);
+	FRONT_RING_INIT(&vd_sc->vd_sc_ring, ring, PAGE_SIZE);
 
 	(void)pmap_extract_ma(pmap_kernel(), (vaddr_t)ring, &ma);
-	error = xenbus_grant_ring(vd->vd_xbusd, ma, &vd->vd_ring_gntref);
+	error = xenbus_grant_ring(vd_sc->vd_sc_xbusd, ma, &vd_sc->vd_sc_ring_gntref);
 	if (error)
 		return error;
-	error = xenbus_alloc_evtchn(vd->vd_xbusd, &vd->vd_evtchn);
+	error = xenbus_alloc_evtchn(vd_sc->vd_sc_xbusd, &vd_sc->vd_sc_evtchn);
 	if (error)
 		return error;
 	printf("%s: using event channel %d\n",
-	    vd->vd_dev.dv_xname, vd->vd_evtchn);
-	event_set_handler(vd->vd_evtchn, &xbc_handler, vd,
-	    IPL_BIO, vd->vd_dev.dv_xname);
+	    vd_sc->vd_sc_dev.dv_xname, vd_sc->vd_sc_evtchn);
+	event_set_handler(vd_sc->vd_sc_evtchn, &xbc_handler, vd_sc,
+	    IPL_BIO, vd_sc->vd_sc_dev.dv_xname);
 
 again:
 	xbt = xenbus_transaction_start();
 	if (xbt == NULL)
 		return ENOMEM;
-	error = xenbus_printf(xbt, vd->vd_xbusd->xbusd_path,
-	    "ring-ref","%u", vd->vd_ring_gntref);
+	error = xenbus_printf(xbt, vd_sc->vd_sc_xbusd->xbusd_path,
+	    "ring-ref","%u", vd_sc->vd_sc_ring_gntref);
 	if (error) {
 		errmsg = "writing ring-ref";
 		goto abort_transaction;
 	}
-	error = xenbus_printf(xbt, vd->vd_xbusd->xbusd_path,
-	    "event-channel", "%u", vd->vd_evtchn);
+	error = xenbus_printf(xbt, vd_sc->vd_sc_xbusd->xbusd_path,
+	    "event-channel", "%u", vd_sc->vd_sc_evtchn);
 	if (error) {
 		errmsg = "writing event channel";
 		goto abort_transaction;
 	}
-	error = xenbus_switch_state(vd->vd_xbusd, xbt, XenbusStateInitialised);
+	error = xenbus_switch_state(vd_sc->vd_sc_xbusd, xbt, XenbusStateInitialised);
 	if (error) {
 		errmsg = "writing frontend XenbusStateInitialised";
 		goto abort_transaction;
@@ -485,32 +483,30 @@ again:
 	if (error == EAGAIN)
 		goto again;
 	if (error) {
-		xenbus_dev_fatal(vd->vd_xbusd, error, "completing transaction");
+		xenbus_dev_fatal(vd_sc->vd_sc_xbusd, error, "completing transaction");
 		return -1;
 	}
 	return 0;
 
 abort_transaction:
 	xenbus_transaction_end(xbt, 1);
-	xenbus_dev_fatal(vd->vd_xbusd, error, "%s", errmsg);
+	xenbus_dev_fatal(vd_sc->vd_sc_xbusd, error, "%s", errmsg);
 	return error;
 }
 
 
 void xbc_backend_changed(void *arg, XenbusState new_state)
 {
-	struct xbc_xenbus_softc *sc = arg;
-	struct xbc_vdisk_t *vd;
+	struct xbc_vdisk_softc *vd_sc = arg;
 #ifdef __NetBSD__
 	char buf[9];
 #endif
 	int s;
 
-	KASSERT(sc->sc_type == XBC_BLK_DEVICE);
-	KASSERT(sc->sc_vd != NULL);
-	vd = sc->sc_vd;
+	KASSERT(vd_sc->sc_type == XBC_BLK_DEVICE);
+	KASSERT((void *)vd_sc != controller_sc);
 
-	DPRINTF(("%s: new backend state %d\n", vd->vd_dev.dv_xname, new_state));
+	DPRINTF(("%s: new backend state %d\n", vd_sc->vd_sc_dev.dv_xname, new_state));
 
 	switch (new_state) {
 	case XenbusStateUnknown:
@@ -520,49 +516,49 @@ void xbc_backend_changed(void *arg, XenbusState new_state)
 		break;
 	case XenbusStateClosing:
 		s = splbio();
-		vd->vd_shutdown = 1;
+		vd_sc->vd_sc_shutdown = 1;
 		/* wait for requests to complete */
-		while (vd->vd_backend_status == BLKIF_STATE_CONNECTED /* &&
-		    vd->vd_dksc.sc_dkdev.dk_stats->io_busy > 0 */)
+		while (vd_sc->vd_sc_backend_status == BLKIF_STATE_CONNECTED /* &&
+		    vd_sc->vd_sc_dksc.sc_dkdev.dk_stats->io_busy > 0 */)
 			tsleep(xbc_xenbus_detach, PRIBIO, "xbcdetach",
 			    hz/2);
 		splx(s);
-		xenbus_switch_state(vd->vd_xbusd, NULL, XenbusStateClosed);
+		xenbus_switch_state(vd_sc->vd_sc_xbusd, NULL, XenbusStateClosed);
 		break;
 	case XenbusStateConnected:
 		s = splbio();
-		if (vd->vd_backend_status == BLKIF_STATE_CONNECTED)
+		if (vd_sc->vd_sc_backend_status == BLKIF_STATE_CONNECTED)
 			/* already connected */
 			return;
-		vd->vd_backend_status = BLKIF_STATE_CONNECTED;
+		vd_sc->vd_sc_backend_status = BLKIF_STATE_CONNECTED;
 		splx(s);
-		xbc_connect(vd);
-		vd->vd_shutdown = 0;
-		hypervisor_enable_event(vd->vd_evtchn);
+		xbc_connect(vd_sc);
+		vd_sc->vd_sc_shutdown = 0;
+		hypervisor_enable_event(vd_sc->vd_sc_evtchn);
 
 #ifdef __NetBSD__
-		vd->vd_dksc.vd_size =
-		    (uint64_t)vd->vd_sectors * (uint64_t)vd->vd_secsize /
+		vd_sc->vd_dksc.vd_sc_size =
+		    (uint64_t)vd_sc->vd_sc_sectors * (uint64_t)vd_sc->vd_sc_secsize /
 		    DEV_BSIZE;
-		pdg = &vd->vd_dksc.vd_geom;
+		pdg = &vd_sc->vd_sc_dksc.vd_geom;
 		pdg->pdg_secsize = DEV_BSIZE;
 		pdg->pdg_ntracks = 1;
 		pdg->pdg_nsectors = 1024 * (1024 / pdg->pdg_secsize);
-		pdg->pdg_ncylinders = sc->sc_dksc.sc_size / pdg->pdg_nsectors;
+		pdg->pdg_ncylinders = vd_sc->sc_dksc.sc_size / pdg->pdg_nsectors;
 
-		bufq_alloc(&vd->sc_dksc.vd_bufq, "fcfs", 0);
-		vd->vd_dksc.vd_flags |= XBC_INITED;
+		bufq_alloc(&vd_sc->vd_sc_dksc.vd_bufq, "fcfs", 0);
+		vd_sc->vd_sc_dksc.vd_sc_flags |= XBC_INITED;
 
-		disk_attach(&vd->sc_dksc.sc_dkdev);
+		disk_attach(&vd_sc->vd_sc_dksc.sc_dkdev);
 		/* try to read the disklabel */
-		dk_getdisklabel(vd->sc_di, &vd->sc_dksc, 0 /* XXX ? */);
-		format_bytes(buf, sizeof(buf), (uint64_t)vd->sc_dksc.vd_size *
+		dk_getdisklabel(vd_sc->vd_sc_di, &vd->sc_dksc, 0 /* XXX ? */);
+		format_bytes(buf, sizeof(buf), (uint64_t)vd_sc->vd_sc_dksc.vd_size *
 		    pdg->pdg_secsize);
 		printf("%s: %s, %d bytes/sect x %llu sectors\n",
-		    vd->vd_dev.dv_xname, buf, (int)pdg->pdg_secsize,
-		    (unsigned long long)vd->vd_dksc.vd_size);
+		    vd_sc->vd_sc_dev.dv_xname, buf, (int)pdg->pdg_secsize,
+		    (unsigned long long)vd_sc->vd_dksc.vd_sc_size);
 		/* Discover wedges on this disk. */
-		dkwedge_discover(&vd->vd_dksc.vd_dkdev);
+		dkwedge_discover(&vd_sc->vd_dksc.vd_dkdev);
 #endif
 
 		/* the disk should be working now */
@@ -575,32 +571,32 @@ void xbc_backend_changed(void *arg, XenbusState new_state)
 
 
 void
-xbc_connect(struct xbc_vdisk_t *vd)
+xbc_connect(struct xbc_vdisk_softc *vd_sc)
 {
 	int err;
 
 	err = xenbus_read_ul(NULL,
-	    vd->vd_xbusd->xbusd_path, "virtual-device", &vd->vd_handle, 10);
+	    vd_sc->vd_sc_xbusd->xbusd_path, "virtual-device", &vd_sc->vd_sc_handle, 10);
 	if (err)
 	panic("%s: can't read number from %s/virtual-device\n",
-	    vd->vd_dev.dv_xname, vd->vd_xbusd->xbusd_otherend);
+	    vd_sc->vd_sc_dev.dv_xname, vd_sc->vd_sc_xbusd->xbusd_otherend);
 	err = xenbus_read_ul(NULL,
-	    vd->vd_xbusd->xbusd_otherend, "sectors", &vd->vd_sectors, 10);
+	    vd_sc->vd_sc_xbusd->xbusd_otherend, "sectors", &vd_sc->vd_sc_sectors, 10);
 	if (err)
 		panic("%s: can't read number from %s/sectors\n",
-		    vd->vd_dev.dv_xname, vd->vd_xbusd->xbusd_otherend);
+		    vd_sc->vd_sc_dev.dv_xname, vd_sc->vd_sc_xbusd->xbusd_otherend);
 	err = xenbus_read_ul(NULL,
-	    vd->vd_xbusd->xbusd_otherend, "info", &vd->vd_info, 10);
+	    vd_sc->vd_sc_xbusd->xbusd_otherend, "info", &vd_sc->vd_sc_info, 10);
 	if (err)
 		panic("%s: can't read number from %s/info\n",
-		    vd->vd_dev.dv_xname, vd->vd_xbusd->xbusd_otherend);
+		    vd_sc->vd_sc_dev.dv_xname, vd_sc->vd_sc_xbusd->xbusd_otherend);
 	err = xenbus_read_ul(NULL,
-	    vd->vd_xbusd->xbusd_otherend, "sector-size", &vd->vd_secsize, 10);
+	    vd_sc->vd_sc_xbusd->xbusd_otherend, "sector-size", &vd_sc->vd_sc_secsize, 10);
 	if (err)
 		panic("%s: can't read number from %s/sector-size\n",
-		    vd->vd_dev.dv_xname, vd->vd_xbusd->xbusd_otherend);
+		    vd_sc->vd_sc_dev.dv_xname, vd_sc->vd_sc_xbusd->xbusd_otherend);
 
-	xenbus_switch_state(vd->vd_xbusd, NULL, XenbusStateConnected);
+	xenbus_switch_state(vd_sc->vd_sc_xbusd, NULL, XenbusStateConnected);
 }
 
 
@@ -676,67 +672,39 @@ next:
 
 
 
-#define vdisk_FOREACH(idx, head)	SLIST_FOREACH(idx, head, vdisk_next)
-
-uint8_t xbc_vdisk_used(struct xbc_xenbus_softc *sc)
+uint8_t xbc_vdisk_used(void)
 {
-	uint8_t count = 0;
-	struct xbc_vdisk_t *idx;
-
-	vdisk_FOREACH(idx, &sc->sc_vdisk_head) {
-		count++;
-	}
-
-	return count;
+	return controller_sc->nr_vbds;
 }
 
-struct xbc_vdisk_t *xbc_vdisk_get(struct xbc_xenbus_softc *sc, uint8_t scsi_target)
+int xbc_vdisk_init(struct xbc_vdisk_softc *vd_sc,
+		struct xenbusdev_attach_args *xa)
 {
-	struct xbc_vdisk_t *idx;
-
-	vdisk_FOREACH(idx, &sc->sc_vdisk_head) {
-		if (idx->scsi_target == scsi_target)
-			break;
-	}
-
-	return idx;
-}
-
-struct xbc_vdisk_t *xbc_vdisk_create(struct xbc_xenbus_softc *sc,
-				struct xenbusdev_attach_args *xa)
-{
-	struct xbc_vdisk_t *vd;
 	RING_IDX i;
 
-	vd = (struct xbc_vdisk_t *)uvm_km_kmemalloc(kmem_map, NULL,
-                sizeof(struct xbc_vdisk_t), 0);
-	memset(vd, 0, sizeof(struct xbc_vdisk_t));
-
-	vd->vd_xbusd = xa->xa_xbusd;
-	vd->vd_xbusd->xbusd_otherend_changed = xbc_backend_changed;
-	vd->vd_dev = sc->sc_dev;
-	sc->sc_vd = vd;
-	sc->sc_type = XBC_BLK_DEVICE;
+	vd_sc->vd_sc_xbusd = xa->xa_xbusd;
+	vd_sc->vd_sc_xbusd->xbusd_otherend_changed = xbc_backend_changed;
+	vd_sc->vd_sc_dev = vd_sc->vd_sc_dev;
+	vd_sc->sc_type = XBC_BLK_DEVICE;
 
 	/* initialize free requests list */
-	SLIST_INIT(&vd->vd_xbcreq_head);
+	SLIST_INIT(&vd_sc->vd_sc_xbcreq_head);
 	for (i = 0; i < XBC_RING_SIZE; i++) {
-		vd->vd_reqs[i].req_id = i;
-		SLIST_INSERT_HEAD(&vd->vd_xbcreq_head, &vd->vd_reqs[i],
+		vd_sc->vd_sc_reqs[i].req_id = i;
+		SLIST_INSERT_HEAD(&vd_sc->vd_sc_xbcreq_head, &vd_sc->vd_sc_reqs[i],
 		    req_next);
 	}
 
-	vd->vd_backend_status = BLKIF_STATE_DISCONNECTED;
-	vd->vd_shutdown = 1;
+	vd_sc->vd_sc_backend_status = BLKIF_STATE_DISCONNECTED;
+	vd_sc->vd_sc_shutdown = 1;
+	controller_sc->nr_vbds++;
 
-	return vd;
+	return 0;
 }
 
-int xbc_vdisk_destroy(struct xbc_vdisk_t *vd)
+int xbc_vdisk_destroy(struct xbc_vdisk_softc *vd_sc)
 {
 	/* XXX Free SLISTS first */
-
-	uvm_km_free(kmem_map, (vaddr_t)vd, sizeof(struct xbc_vdisk_t));
 
 	return 0;
 }
