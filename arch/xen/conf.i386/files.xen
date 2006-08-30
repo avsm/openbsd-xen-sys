@@ -132,9 +132,13 @@ file	arch/xen/xen/xennet_checksum.c	xennet | xvif
 file	arch/xen/xen/xennetback_xenbus.c xvif
 
 # Xen block device controller
-device  xbc: scsi
-attach  xbc at xenbus
-file	arch/xen/xen/xbc.c		xbc
+#device  xbc: scsi
+#attach  xbc at xenbus
+#file	arch/xen/xen/xbc.c		xbc
+device	xbd: disk
+attach	xbd at xenbus
+file	arch/xen/xen/xbd_xenbus.c	xbd
+file	arch/xen/xen/dksubr.c		xbd
 file	arch/xen/xen/xbdback_xenbus.c	xbdback
 
 #

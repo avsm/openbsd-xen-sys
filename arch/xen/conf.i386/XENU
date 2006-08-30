@@ -36,18 +36,7 @@ npx0		at hypervisor?	# x86 math coprocessor
 xencons*	at hypervisor?	# Xen virtual console
 xenbus*		at hypervisor?	# Xen virtual bus
 xennet*		at xenbus?	# Xen virtual network interface
-
-xbc*		at xenbus?	# Xen virtual block controller (SCSI)
-scsibus*	at xbc?
-sd*		at scsibus?	# SCSI disk drives
-st*		at scsibus?	# SCSI tape drives
-cd*		at scsibus?	# SCSI CD-ROM drives
-ch*		at scsibus?	# SCSI autochangers
-ss*		at scsibus?	# SCSI scanners
-safte*		at scsibus?	# SCSI accessed fault-tolerant enclosures
-ses*		at scsibus?	# SCSI enclosure services
-uk*		at scsibus?	# unknown SCSI
-
+xbd*		at xenbus?	# Xen virtual block interface
 
 # PCI bus support
 #pci*		at hypervisor? bus ?

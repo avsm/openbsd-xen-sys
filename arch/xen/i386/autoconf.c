@@ -308,6 +308,7 @@ extern	struct cfdriver rd_cd;
 extern	struct cfdriver raid_cd;
 #endif
 
+
 struct	genericconf {
 	struct cfdriver *gc_driver;
 	char *gc_name;

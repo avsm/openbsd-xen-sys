@@ -63,13 +63,21 @@ bdev_decl(mcd);
 
 
 
+#if !defined(DOM0OPS)
+bdev_decl(sd);
+#endif
+
 struct bdevsw	bdevsw[] =
 {
 	bdev_disk_init(NWD,wd),		/* 0: ST506/ESDI/IDE disk */
 	bdev_swap_init(1,sw),		/* 1: swap pseudo-device */
 	bdev_disk_init(NFD,fd),		/* 2: floppy diskette */
 	bdev_tape_init(NWT,wt),		/* 3: QIC-02/QIC-36 tape */
+#if defined(DOM0OPS)
 	bdev_disk_init(NSD,sd),		/* 4: SCSI disk */
+#else
+	bdev_disk_init(1,sd),		/* 4: SCSI disk */
+#endif
 	bdev_tape_init(NST,st),		/* 5: SCSI tape */
 	bdev_disk_init(NCD,cd),		/* 6: SCSI CD-ROM */
 	bdev_disk_init(NMCD,mcd),	/* 7: Mitsumi CD-ROM */
@@ -246,7 +254,11 @@ struct cdevsw	cdevsw[] =
 	cdev_notdef(),			/* 11 */
 	cdev_wsdisplay_init(NWSDISPLAY,	/* 12: frame buffers, etc. */
 	    wsdisplay),
+#if defined(DOM0OPS)
 	cdev_disk_init(NSD,sd),		/* 13: SCSI disk */
+#else
+	cdev_disk_init(1,sd),		/* 13: SCSI disk */
+#endif
 	cdev_tape_init(NST,st),		/* 14: SCSI tape */
 	cdev_disk_init(NCD,cd),		/* 15: SCSI CD-ROM */
 	cdev_lpt_init(NLPT,lpt),	/* 16: parallel printer */
