@@ -44,6 +44,11 @@
 #include <machine/xen.h>
 #include "xenbus_comms.h"
 
+
+#if defined(DOM0OPS)
+#include <uvm/uvm_extern.h>
+#endif
+
 #if 0
 #define DPRINTK(fmt, args...) \
 	printf("xenbus_probe (%s:%d) " fmt ".\n", __FUNCTION__, __LINE__, ##args)
@@ -312,31 +317,6 @@ xenbus_allocate_device(struct xen_bus_type *bus,
 }
 
 static int
-xenbus_attach_frontend_blk_controller(void)
-{
-	struct xen_bus_type *bus = &xenbus_frontend;
-	struct xenbus_device *xbusd;
-	struct xenbusdev_attach_args xa;
-	const char *type = "vbc";
-	const char *dir = "1";
-	char *ep;
-
-	xbusd = xenbus_allocate_device(bus, type, dir);
-	KASSERT(xbusd != NULL);
-
-	xa.xa_xbusd = xbusd;
-	xa.xa_type = type;
-	xa.xa_id = strtoul(dir, &ep, 0);
-
-	xbusd->xbusd_u.f.f_dev = config_found(xenbus_sc, &xa, xenbus_print);
-	SLIST_INSERT_HEAD(&xenbus_device_list,
-		xbusd, xbusd_entries);
-	return 0;	
-}
-
-
-
-static int
 xenbus_probe_device_type(struct xen_bus_type *bus, const char *type)
 {
 	int err;
@@ -452,7 +432,6 @@ void
 xenbus_probe(void *unused)
 {
 	KASSERT((xenstored_ready > 0)); 
-	xenbus_attach_frontend_blk_controller();
 
 	/* Enumerate devices in xenstore. */
 	xenbus_probe_devices(&xenbus_frontend);
@@ -477,9 +456,51 @@ xenbus_probe(void *unused)
 static void
 xenbus_probe_init(void *unused)
 {
-	int err;
+	int err = 0, dom0;
 
 	SLIST_INIT(&xenbus_device_list);
+
+
+	/*
+	** Domain0 doesn't have a store_evtchn or store_mfn yet.
+	*/
+	dom0 = (xen_start_info.store_evtchn == 0);
+	if (dom0) {
+#if defined(DOM0OPS)
+		vaddr_t page;
+		paddr_t ma;
+		evtchn_op_t op = { 0 };
+		int ret;
+
+		/* Allocate page. */
+		page = uvm_km_zalloc(kernel_map, PAGE_SIZE);
+		if (!page)
+			panic("can't get xenstore page");
+
+		(void)pmap_extract_ma(pmap_kernel(), page, &ma);
+		xen_start_info.store_mfn = ma >> PAGE_SHIFT;
+		xenstore_interface = (void *)page;
+
+		/* Next allocate a local port which xenstored can bind to */
+		op.cmd = EVTCHNOP_alloc_unbound;
+		op.u.alloc_unbound.dom        = DOMID_SELF;
+		op.u.alloc_unbound.remote_dom = 0;
+
+		ret = HYPERVISOR_event_channel_op(&op);
+		if (ret)
+			panic("can't register xenstore event");
+		xen_start_info.store_evtchn = op.u.alloc_unbound.port;
+
+#ifdef __NetBSD__
+		/* And finally publish the above info in /kern/xen */
+		xenbus_kernfs_init();
+#endif
+
+#else /* DOM0OPS */
+		return ; /* can't get a working xenstore in this case */
+#endif /* DOM0OPS */
+	}
+
 
 	/* register event handler, map shared page */
 	xb_init_comms(xenbus_sc);
