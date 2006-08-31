@@ -114,7 +114,7 @@ int	dk_ioctl(struct dk_intf *, struct dk_softc *, dev_t,
 		 u_long, caddr_t, int, struct proc *);
 int	dk_dump(struct dk_intf *, struct dk_softc *, dev_t,
 		daddr_t, caddr_t, size_t);
-void	dk_getdisklabel(struct dk_intf *, struct dk_softc *, dev_t);
+void	dk_getdisklabel(struct dk_intf *, struct dk_softc *, dev_t, int);
 void	dk_getdefaultlabel(struct dk_intf *, struct dk_softc *,
 			   struct disklabel *);
 

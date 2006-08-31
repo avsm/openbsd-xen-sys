@@ -104,6 +104,7 @@ dk_open(struct dk_intf *di, struct dk_softc *dksc, dev_t dev,
 
 	part = DISKPART(dev);
 
+#ifdef __NetBSD__
 	/*
 	 * If there are wedges, and this is not RAW_PART, then we
 	 * need to fail.
@@ -112,6 +113,7 @@ dk_open(struct dk_intf *di, struct dk_softc *dksc, dev_t dev,
 		ret = EBUSY;
 		goto done;
 	}
+#endif
 
 	pmask = 1 << part;
 
@@ -121,7 +123,7 @@ dk_open(struct dk_intf *di, struct dk_softc *dksc, dev_t dev,
 	 */
 	if ((dksc->sc_flags & DKF_INITED)) {
 		if (dk->dk_openmask == 0) {
-			dk_getdisklabel(di, dksc, dev);
+			dk_getdisklabel(di, dksc, dev, 0);
 		}
 		/* XXX re-discover wedges? */
 	}
@@ -311,8 +313,9 @@ dk_ioctl(struct dk_intf *di, struct dk_softc *dksc, dev_t dev,
 	case DIOCSDINFO:
 	case DIOCWDINFO:
 	case DIOCWLABEL:
-		if ((flag & FWRITE) == 0)
+		if ((flag & FWRITE) == 0) {
 			return EBADF;
+		}
 	}
 
 	/* ensure that the pseudo-disk is initialized for these */
@@ -325,8 +328,9 @@ dk_ioctl(struct dk_intf *di, struct dk_softc *dksc, dev_t dev,
 #ifdef __NetBSD__
 	case DIOCGDEFLABEL:
 #endif
-		if ((dksc->sc_flags & DKF_INITED) == 0)
+		if ((dksc->sc_flags & DKF_INITED) == 0) {
 			return ENXIO;
+		}
 	}
 
 	switch (cmd) {
@@ -422,6 +426,7 @@ dk_ioctl(struct dk_intf *di, struct dk_softc *dksc, dev_t dev,
 #endif
 
 	default:
+		printf("dk_ioctl: ioctl cmd 0x%X not implemented\n", cmd);
 		error = ENOTTY;
 	}
 
@@ -501,7 +506,7 @@ dk_getdefaultlabel(struct dk_intf *di, struct dk_softc *dksc,
 
 /* ARGSUSED */
 void
-dk_getdisklabel(struct dk_intf *di, struct dk_softc *dksc, dev_t dev)
+dk_getdisklabel(struct dk_intf *di, struct dk_softc *dksc, dev_t dev, int spoofonly)
 {
 	struct	 disklabel *lp = dksc->sc_dkdev.dk_label;
 	struct	 cpu_disklabel *clp = dksc->sc_dkdev.dk_cpulabel;
@@ -512,7 +517,7 @@ dk_getdisklabel(struct dk_intf *di, struct dk_softc *dksc, dev_t dev)
 	memset(clp, 0x0, sizeof(*clp));
 	dk_getdefaultlabel(di, dksc, lp);
 	errstring = readdisklabel(DKLABELDEV(dev), di->di_strategy,
-	    dksc->sc_dkdev.dk_label, dksc->sc_dkdev.dk_cpulabel, 0);
+	    dksc->sc_dkdev.dk_label, dksc->sc_dkdev.dk_cpulabel, spoofonly);
 	if (errstring) {
 		dk_makedisklabel(di, dksc);
 		if (dksc->sc_flags & DKF_WARNLABEL)

@@ -420,7 +420,7 @@ static void xbd_backend_changed(void *arg, XenbusState new_state)
 
 		disk_attach(&sc->sc_dksc.sc_dkdev);
 		/* try to read the disklabel */
-		dk_getdisklabel(sc->sc_di, &sc->sc_dksc, 0 /* XXX ? */);
+		dk_getdisklabel(sc->sc_di, &sc->sc_dksc, 0 /* XXX ? */, 0);
 		format_bytes(buf, sizeof(buf), (uint64_t)sc->sc_dksc.sc_size *
 		    pdg->pdg_secsize);
 		printf("%s: %s, %d bytes/sect x %llu sectors\n",
@@ -717,7 +717,7 @@ xbddump(dev_t dev, daddr_t blkno, caddr_t va, size_t size)
 	if (sc == NULL)
 		return (ENXIO);
 
-	DPRINTF(("xbddump(%d, %" PRId64 ", %p, %lu)\n", dev, blkno, va,
+	DPRINTF(("xbddump(%d, %llu, %p, %lu)\n", dev, blkno, va,
 	    (unsigned long)size));
 	return dk_dump(sc->sc_di, &sc->sc_dksc, dev, blkno, va, size);
 }
