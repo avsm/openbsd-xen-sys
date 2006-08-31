@@ -91,7 +91,11 @@
 #define	DEV_BSIZE	(1 << DEV_BSHIFT)
 #define	BLKDEV_IOSIZE	2048
 #ifndef	MAXPHYS
-#define	MAXPHYS		(64 * 1024)	/* max raw I/O transfer size */
+#ifdef DOM0OPS
+#define MAXPHYS		(64 * 1024)	/* max raw I/O transfer size */
+#else
+#define	MAXPHYS		(32 * 1024)	/* max raw I/O transfer size */
+#endif
 #endif
 
 #define	UPAGES		2		/* pages of u-area */

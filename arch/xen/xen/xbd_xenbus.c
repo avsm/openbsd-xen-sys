@@ -127,6 +127,7 @@ static void xbd_connect(struct xbd_xenbus_softc *);
 
 static int  xbd_map_align(struct xbd_req *);
 static void xbd_unmap_align(struct xbd_req *);
+static void xbd_minphys(struct buf *);
 
 struct cfattach xbd_ca = {
 	sizeof(struct xbd_xenbus_softc), /* take the larger one */
@@ -182,7 +183,7 @@ static struct dk_intf dkintf_esdi = {
 static struct dkdriver xbddkdriver = {
         .d_strategy = xbdstrategy,
 #ifdef __NetBSD__
-	.d_minphys = minphys,
+	.d_minphys = xbd_minphys,
 #endif
 };
 
@@ -627,6 +628,13 @@ xbdsize(dev_t dev)
 }
 
 
+void
+xbd_minphys(struct buf *bp)
+{
+	minphys(bp);
+}
+
+
 int
 sdread(dev_t dev, struct uio *uio, int flags)
 {
@@ -641,7 +649,7 @@ xbdread(dev_t dev, struct uio *uio, int flags)
 
 	if ((dksc->sc_flags & DKF_INITED) == 0)
 		return ENXIO;
-	return physio(xbdstrategy, NULL, dev, B_READ, minphys, uio);
+	return physio(xbdstrategy, NULL, dev, B_READ, xbd_minphys, uio);
 }
 
 
@@ -661,7 +669,7 @@ xbdwrite(dev_t dev, struct uio *uio, int flags)
 		return ENXIO;
 	if (__predict_false(sc->sc_info & VDISK_READONLY))
 		return EROFS;
-	return physio(xbdstrategy, NULL, dev, B_WRITE, minphys, uio);
+	return physio(xbdstrategy, NULL, dev, B_WRITE, xbd_minphys, uio);
 }
 
 
@@ -824,7 +832,7 @@ xbdstart(struct dk_softc *dksc, struct buf *bp)
 	xbdreq->req_nr_segments = req->nr_segments = seg;
 	sc->sc_ring.req_prod_pvt++;
 	if (BUFQ_GET(sc->sc_dksc.sc_bufq)) {
-		 /* we will be called again; don't notify guest yet */
+		/* we will be called again; don't notify guest yet */
 		runqueue = 0;
 	}
 
