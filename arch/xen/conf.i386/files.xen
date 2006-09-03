@@ -8,50 +8,6 @@ maxpartitions 16
 
 maxusers 2 16 64
 
-file	arch/xen/i386/autoconf.c
-file	arch/xen/i386/conf.c
-file	arch/xen/i386/gdt.c
-file	arch/xen/i386/hypervisor_machdep.c
-file	arch/xen/i386/intr.c
-file	arch/xen/i386/machdep.c
-file	arch/xen/i386/pmap.c
-file	arch/xen/i386/wscons_machdep.c	dom0ops
-file	arch/xen/i386/xen_shm_machdep.c	dom0ops
-file	arch/xen/i386/xen_machdep.c
-file	arch/i386/i386/db_disasm.c	ddb
-file	arch/i386/i386/db_interface.c	ddb
-file	arch/xen/i386/db_memrw.c	ddb | kgdb
-file	arch/i386/i386/db_trace.c	ddb
-file	arch/i386/i386/db_magic.s	ddb
-file	arch/i386/i386/disksubr.c	disk
-file	arch/i386/i386/est.c		!small_kernel & i686_cpu
-file	arch/i386/i386/in_cksum.s	inet
-file	arch/i386/i386/ipx_cksum.c	ipx
-file	arch/i386/i386/via.c		i686_cpu
-file	arch/i386/i386/kgdb_machdep.c	kgdb
-file	arch/i386/i386/longrun.c	!small_kernel & i586_cpu
-file	arch/i386/i386/mem.c
-file	arch/i386/i386/i686_mem.c	mtrr
-file	arch/i386/i386/k6_mem.c		mtrr
-file	arch/i386/i386/p4tcc.c		!small_kernel & i686_cpu
-file	arch/i386/i386/powernow.c	!small_kernel & i586_cpu
-file	arch/i386/i386/powernow-k7.c	!small_kernel & i686_cpu
-file	arch/i386/i386/powernow-k8.c	!small_kernel & i686_cpu
-file	arch/i386/i386/process_machdep.c
-file	arch/i386/i386/procfs_machdep.c	procfs
-file	arch/i386/i386/random.s
-file	arch/i386/i386/sys_machdep.c
-file	arch/xen/i386/trap.c
-file	arch/xen/i386/vm_machdep.c
-file	arch/xen/i386/dkcsum.c
-file	lib/libz/adler32.c		!ppp_deflate & !ipsec & !crypto
-file	dev/cninit.c
-file	arch/i386/i386/mptramp.s	multiprocessor
-file	arch/i386/i386/lock_machdep.c	multiprocessor
-file	arch/i386/i386/ipifuncs.c	multiprocessor
-file	arch/i386/i386/db_mp.c		multiprocessor & ddb
-file	arch/xen/i386/softintr.c
-
 #
 # Media Independent Interface (mii)
 #
@@ -97,6 +53,9 @@ include "../../../arch/xen/xenbus/files.xen_xenbus"
 # Common files and drivers 
 include "../../../arch/xen/xen/files.xen_xen"
 
+# Xen-i386 files
+include "../../../arch/xen/i386/files.xen_i386"
+
 #
 # PCI-only drivers
 # XXX MUST BE INCLUDED BEFORE files.isa, as long as files.isa attaches
@@ -132,12 +91,6 @@ major {wd = 0}
 
 include "../../../dev/isa/files.isa"
 file	arch/xen/xen/isa_machdep.c	isabus & dom0ops
-
-# Numeric Processing Extension; Math Co-processor
-device	npx
-attach	npx at xendevbus with npx_hv
-file	arch/xen/i386/npx.c		npx needs-flag
-file	arch/xen/i386/npx_hv.c		npx_hv
 
 # attribute used to represent the "keyboard controller"
 # XXX should be a real device
