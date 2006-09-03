@@ -51,14 +51,6 @@ file	arch/i386/i386/lock_machdep.c	multiprocessor
 file	arch/i386/i386/ipifuncs.c	multiprocessor
 file	arch/i386/i386/db_mp.c		multiprocessor & ddb
 file	arch/xen/i386/softintr.c
-file	arch/xen/xen/uvm_km_kmemalloc.c
-
-file	arch/xen/xen/clock.c
-file	arch/xen/xen/evtchn.c
-file	arch/xen/xen/xen_debug.c
-
-file	arch/xen/xen/xengnt.c
-file	arch/xen/xen/xenevt.c		xenevt & dom0ops
 
 #
 # Media Independent Interface (mii)
@@ -99,40 +91,11 @@ device	mainbus: hypervisorbus, mainbus
 attach	mainbus at root
 file	arch/xen/i386/mainbus.c
 
-# Xen hypervisor
-device	hypervisor {}: isabus, pcibus, xendevbus
-attach	hypervisor at hypervisorbus
-file	arch/xen/xen/hypervisor.c	hypervisor needs-flag
-file	arch/xen/xen/shutdown_xenbus.c  hypervisor
-
 # Xenbus
 include "../../../arch/xen/xenbus/files.xen_xenbus"
 
-# Xen console support
-device  xencons: tty
-attach  xencons at xendevbus
-file    arch/xen/xen/xencons.c          xencons needs-flag
-
-pseudo-device xenevt		# Xen event pseudo-device
-pseudo-device xvif		# Xen network backend
-pseudo-device xbdback		# Xen block backend
-
-# Xen network driver
-device  xennet: ether, ifnet
-attach  xennet at xenbus
-file	arch/xen/xen/if_xennet_xenbus.c	xennet
-file	arch/xen/xen/xennet_checksum.c	xennet | xvif
-file	arch/xen/xen/xennetback_xenbus.c xvif
-
-# Xen block device controller
-#device  xbc: scsi
-#attach  xbc at xenbus
-#file	arch/xen/xen/xbc.c		xbc
-device	xbd: disk
-attach	xbd at xenbus
-file	arch/xen/xen/xbd_xenbus.c	xbd
-file	arch/xen/xen/dksubr.c		xbd
-file	arch/xen/xen/xbdback_xenbus.c	xbdback
+# Common files and drivers 
+include "../../../arch/xen/xen/files.xen_xen"
 
 #
 # PCI-only drivers
@@ -142,7 +105,6 @@ file	arch/xen/xen/xbdback_xenbus.c	xbdback
 
 include "../../../dev/pci/files.pci"
 file	arch/i386/pci/pci_machdep.c		pci
-file	arch/xen/xen/pci_intr_machdep.c		pci
 file	arch/i386/pci/agp_machdep.c		pciagp
 file	dev/pci/agp_ali.c			pciagp
 file	dev/pci/agp_amd.c			pciagp
@@ -150,7 +112,6 @@ file	dev/pci/agp_i810.c			pciagp
 file	dev/pci/agp_intel.c			pciagp
 file	dev/pci/agp_sis.c			pciagp
 file	dev/pci/agp_via.c			pciagp
-file	arch/xen/xen/pciide_machdep.c		pciide
 file	arch/i386/pci/pcic_pci_machdep.c	pcic_pci
 
 # PCI-Host bridge chipsets
@@ -167,7 +128,7 @@ file	arch/i386/pci/pcib.c		pcib | ichpcib | gscpcib
 # ISA and mixed ISA+PCI
 #
 
-major	{wd = 0}
+major {wd = 0}
 
 include "../../../dev/isa/files.isa"
 file	arch/xen/xen/isa_machdep.c	isabus & dom0ops
