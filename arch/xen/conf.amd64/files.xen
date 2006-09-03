@@ -1,40 +1,17 @@
-# Xen files
+#
+# System bus types
+#
 
-file	arch/xen/xen/hypercall.S	xen
-file	arch/xen/xen/xen_machdep.c	xen
-file	arch/xen/xen/evtchn.c		xen
-file	arch/xen/xen/clock.c		xen
-file	arch/xen/xen/grant_table.c	xen
+define hypervisorbus {}
+define xendevbus {}
+define mainbus {[apid = -1]}
 
-# Devices
-
-# Xen Hypervisor
-device	hypervisor {}
-attach	hypervisor at mainbus
-file	arch/xen/xen/hypervisor.c	hypervisor needs-flag
-
-# Xen virtual console
-device	xencons: tty
-attach  xencons at hypervisor
-file    arch/xen/xen/xencons.c          xencons needs-flag
+device mainbus: hypervisorbus, mainbus
+attach mainbus at root
+file	arch/xen/amd64/mainbus.c
 
 # Xenbus
-device	xenbus {[id = -1]}
-attach	xenbus at hypervisor
-file arch/xen/xenbus/xenbus_probe.c	xenbus needs-flag
-file arch/xen/xenbus/xenbus_comms.c	xenbus needs-flag
-file arch/xen/xenbus/xenbus_xs.c	xenbus needs-flag
-file arch/xen/xenbus/xenbus_client.c	xenbus needs-flag
-file arch/xen/xenbus/strtoul.c		xenbus needs-flag
+include "../../../arch/xen/xenbus/files.xen_xenbus"
 
-# Xen block device
-device	xbd: disk
-attach	xbd at xenbus
-file	arch/xen/xen/xbd.c		xbd needs-flag
-
-# Xen virtual network interface
-device	xennet: ether, ifnet
-attach	xennet at xenbus
-file	arch/xen/xen/if_xennet.c	xennet needs-flag
-
-
+# Common files and drivers
+include "../../../arch/xen/xen/files.xen_xen"
