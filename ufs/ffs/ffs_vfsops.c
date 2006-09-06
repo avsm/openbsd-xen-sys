@@ -898,7 +898,9 @@ out:
 	devvp->v_specmountpoint = NULL;
 	if (bp)
 		brelse(bp);
+	vn_lock(devvp, LK_EXCLUSIVE | LK_RETRY, p);
 	(void)VOP_CLOSE(devvp, ronly ? FREAD : FREAD|FWRITE, cred, p);
+	VOP_UNLOCK(devvp, 0, p);
 	if (ump) {
 		free(ump->um_fs, M_UFSMNT);
 		free(ump, M_UFSMNT);
