@@ -974,9 +974,11 @@ ffs_unmount(struct mount *mp, int mntflags, struct proc *p)
 	}
 	ump->um_devvp->v_specmountpoint = NULL;
 
+	vn_lock(ump->um_devvp, LK_EXCLUSIVE | LK_RETRY, p);
 	vinvalbuf(ump->um_devvp, V_SAVE, NOCRED, p, 0, 0);
 	error = VOP_CLOSE(ump->um_devvp, fs->fs_ronly ? FREAD : FREAD|FWRITE,
 		NOCRED, p);
+	VOP_UNLOCK(ump->um_devvp, 0, p);
 	vrele(ump->um_devvp);
 	free(fs->fs_csp, M_UFSMNT);
 	free(fs, M_UFSMNT);
