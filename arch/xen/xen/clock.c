@@ -414,13 +414,14 @@ int
 xen_timer_handler(void *arg, struct intrframe *regs)
 {
 	int64_t delta;
+	int ticks_done;
 	struct timeval oldtime, elapsed;
 
 	get_time_values_from_xen();
 
+	ticks_done = 0;
 	delta = (int64_t)(shadow_system_time + get_tsc_offset_ns() -
 	    processed_system_time);
-//	KASSERT(processed_system_time <= shadow_system_time);
 	while (delta >= (int64_t)NS_PER_TICK) {
 		/* Have hardclock do its thing. */
 		oldtime = time;
@@ -433,7 +434,14 @@ xen_timer_handler(void *arg, struct intrframe *regs)
 
 		delta -= NS_PER_TICK;
 		processed_system_time += NS_PER_TICK;
+		ticks_done++;
 	}
+	/* Re-arm the timer here, if needed; Xen's auto-ticking while runable
+	 * is useful only for HZ==100, and even then may be out of phase with
+	 * the processed_system_time steps.
+	 */
+	if (ticks_done != 0)
+		HYPERVISOR_set_timer_op(processed_system_time + NS_PER_TICK);
 
 	/* Right now, delta holds the number of ns elapsed from when the last
 	 * hardclock(9) allegedly was to when this domain was actually
@@ -451,13 +459,16 @@ setstatclockrate(int arg)
 void
 idle_block(void)
 {
-
+	int s, r;
 	/*
 	 * We set the timer to when we expect the next timer
 	 * interrupt.  We could set the timer to later if we could
 	 * easily find out when we will have more work (callouts) to
 	 * process from hardclock.
 	 */
-	if (HYPERVISOR_set_timer_op(processed_system_time + NS_PER_TICK) == 0)
+	s = splclock();
+	r = HYPERVISOR_set_timer_op(processed_system_time + NS_PER_TICK);
+	splx(s);
+	if (r == 0)
 		HYPERVISOR_block();
 }
