@@ -52,6 +52,8 @@ int xen_timer_handler(void *, struct intrframe *);
 volatile static uint64_t shadow_tsc_stamp; /* TSC at last update of time vals. */
 volatile static uint64_t shadow_system_time; /* Time, in nanosecs, since boot. */
 volatile static struct timeval shadow_tv; /* Time since 00:00:00 UTC, Jan 1, 1970 */
+volatile static uint32_t shadow_freq_mul;
+volatile static int8_t shadow_freq_shift;
 
 static int timeset;
 
@@ -90,6 +92,8 @@ get_time_values_from_xen(void)
 		x86_lfence();
 		shadow_tsc_stamp = t->tsc_timestamp;
 		shadow_system_time = t->system_time;
+		shadow_freq_mul = t->tsc_to_system_mul;
+		shadow_freq_shift = t->tsc_shift;
 		x86_lfence();
 	} while ((t->version & 1) || (tversion != t->version));
 	do {
@@ -103,13 +107,38 @@ get_time_values_from_xen(void)
 	shadow_tv.tv_usec = shadow_tv.tv_usec / 1000;
 }
 
+/*
+ * Xen 3 helpfully provides the CPU clock speed in the form of a multiplier
+ * and shift that can be used to convert a cycle count into nanoseconds
+ * without using an actual (slow) divide insn.
+ */
+static inline uint64_t
+scale_delta(uint64_t delta, uint32_t mul_frac, int8_t shift)
+{
+	if (shift < 0)
+		delta >>= -shift;
+	else
+		delta <<= shift;
+
+	/*
+	 * Here, we multiply a 64-bit and a 32-bit value, and take the top
+	 * 64 bits of that 96-bit product.  This is broken up into two
+	 * 32*32=>64-bit multiplies and a 64-bit add.  The casts are needed
+	 * to hint to GCC that both multiplicands really are 32-bit; the
+	 * generated code is still fairly bad, but not insanely so.
+	 */
+	return ((uint64_t)(uint32_t)(delta >> 32) * mul_frac)
+	    + ((((uint64_t)(uint32_t)(delta & 0xFFFFFFFF)) * mul_frac) >> 32);
+}
+
+
 static uint64_t
 get_tsc_offset_ns(void)
 {
 	uint64_t tsc_delta, offset;
 
 	tsc_delta = cpu_counter() - shadow_tsc_stamp;
-	offset = tsc_delta * 1000ULL / pentium_mhz;
+	offset = scale_delta(tsc_delta, shadow_freq_mul, shadow_freq_shift);
 #ifdef XEN_CLOCK_DEBUG
 	if (offset > 10 * NS_PER_TICK)
 		printf("get_tsc_offset_ns: tsc_delta=%llu offset=%llu\n",
