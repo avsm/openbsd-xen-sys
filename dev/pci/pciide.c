@@ -1,4 +1,4 @@
-/*	$OpenBSD: pciide.c,v 1.251 2006/08/19 17:38:56 jsg Exp $	*/
+/*	$OpenBSD: pciide.c,v 1.253 2006/09/16 00:39:54 jsg Exp $	*/
 /*	$NetBSD: pciide.c,v 1.127 2001/08/03 01:31:08 tsutsui Exp $	*/
 
 /*
@@ -492,6 +492,10 @@ const struct pciide_product_desc pciide_intel_products[] =  {
 	{ PCI_PRODUCT_INTEL_82801HBM_SATA_2, /* Intel 82801HBM (ICH8M) SATA */
 	  IDE_PCI_CLASS_OVERRIDE,
 	  piixsata_chip_map
+	},
+	{ PCI_PRODUCT_INTEL_6321ESB_SATA, /* Intel 6321ESB SATA */
+	  0,
+	  piixsata_chip_map
 	}
 };
 
@@ -593,6 +597,10 @@ const struct pciide_product_desc pciide_via_products[] =  {
 	  sata_chip_map
 	},
 	{ PCI_PRODUCT_VIATECH_VT6421_SATA, /* VIA VT6421 SATA */
+	  IDE_PCI_CLASS_OVERRIDE,
+	  sata_chip_map
+	},
+	{ PCI_PRODUCT_VIATECH_VT8237A_SATA, /* VIA VT8237A SATA */
 	  IDE_PCI_CLASS_OVERRIDE,
 	  sata_chip_map
 	},
@@ -2342,6 +2350,8 @@ piixsata_chip_map(struct pciide_softc *sc, struct pci_attach_args *pa)
 	case PCI_PRODUCT_INTEL_82801H_SATA_2:
 	case PCI_PRODUCT_INTEL_82801HBM_SATA_1:
 	case PCI_PRODUCT_INTEL_82801HBM_SATA_2:
+	case PCI_PRODUCT_INTEL_6321ESB_SATA:
+	default:
 		ich = 8;
 		break;
 	}
