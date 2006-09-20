@@ -1,4 +1,4 @@
-/*	$OpenBSD: ar5xxx.c,v 1.32 2005/12/18 17:59:58 reyk Exp $	*/
+/*	$OpenBSD: ar5xxx.c,v 1.34 2006/09/19 13:14:32 reyk Exp $	*/
 
 /*
  * Copyright (c) 2004, 2005 Reyk Floeter <reyk@openbsd.org>
@@ -60,6 +60,12 @@ static const struct {
 	{ PCI_VENDOR_ATHEROS, PCI_PRODUCT_ATHEROS_AR5212_FPGA,
 	    ar5k_ar5212_attach },
 	{ PCI_VENDOR_ATHEROS, PCI_PRODUCT_ATHEROS_AR5212_IBM,
+	    ar5k_ar5212_attach },
+	{ PCI_VENDOR_ATHEROS, PCI_PRODUCT_ATHEROS_AR2413,
+	    ar5k_ar5212_attach },
+	{ PCI_VENDOR_ATHEROS, PCI_PRODUCT_ATHEROS_AR5413,
+	    ar5k_ar5212_attach },
+	{ PCI_VENDOR_ATHEROS, PCI_PRODUCT_ATHEROS_AR5424,
 	    ar5k_ar5212_attach },
 	{ PCI_VENDOR_3COM, PCI_PRODUCT_3COM_3CRDAG675,
 	    ar5k_ar5212_attach },
@@ -466,10 +472,12 @@ ath_hal_init_channels(struct ath_hal *hal, HAL_CHANNEL *channels,
 			continue;
 
 		/* Match modes */
-		if (ar5k_2ghz_channels[i].rc_mode & IEEE80211_CHAN_CCK)
+		if ((hal->ah_capabilities.cap_mode & HAL_MODE_11B) &&
+		    (ar5k_2ghz_channels[i].rc_mode & IEEE80211_CHAN_CCK))
 			all_channels[c].c_channel_flags = CHANNEL_B;
 
-		if (ar5k_2ghz_channels[i].rc_mode & IEEE80211_CHAN_OFDM) {
+		if ((hal->ah_capabilities.cap_mode & HAL_MODE_11G) &&
+		    (ar5k_2ghz_channels[i].rc_mode & IEEE80211_CHAN_OFDM)) {
 			all_channels[c].c_channel_flags |=
 			    hal->ah_version == AR5K_AR5211 ?
 			    CHANNEL_PUREG : CHANNEL_G;
@@ -501,6 +509,14 @@ ar5k_printver(enum ar5k_srev_type type, u_int32_t val)
 	int i;
 
 	for (i = 0; i < AR5K_ELEMENTS(names); i++) {
+		if (type == AR5K_VERSION_DEV) {
+			if (names[i].sr_type == type &&
+			    names[i].sr_val == val) {
+				name = names[i].sr_name;
+				break;
+			}
+			continue;
+		}
 		if (names[i].sr_type != type ||
 		    names[i].sr_val == AR5K_SREV_UNKNOWN)
 			continue;

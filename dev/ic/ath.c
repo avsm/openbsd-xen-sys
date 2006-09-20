@@ -1,4 +1,4 @@
-/*      $OpenBSD: ath.c,v 1.51 2006/06/23 06:27:11 miod Exp $  */
+/*      $OpenBSD: ath.c,v 1.55 2006/09/19 17:08:01 reyk Exp $  */
 /*	$NetBSD: ath.c,v 1.37 2004/08/18 21:59:39 dyoung Exp $	*/
 
 /*-
@@ -235,28 +235,52 @@ ath_attach(u_int16_t devid, struct ath_softc *sc)
 		goto bad;
 	}
 
-	printf("%s: AR%s %u.%u phy %u.%u", ifp->if_xname,
-	    ar5k_printver(AR5K_VERSION_VER, ah->ah_mac_srev),
-	    ah->ah_mac_version, ah->ah_mac_revision,
-	    ah->ah_phy_revision >> 4, ah->ah_phy_revision & 0xf);
-	printf(" rf%s %u.%u",
-	    ar5k_printver(AR5K_VERSION_RAD, ah->ah_radio_5ghz_revision),
-	    ah->ah_radio_5ghz_revision >> 4,
-	    ah->ah_radio_5ghz_revision & 0xf);
-	if (ah->ah_radio_2ghz_revision != 0) {
+	switch (devid) {
+	case PCI_PRODUCT_ATHEROS_AR2413:
+	case PCI_PRODUCT_ATHEROS_AR5413:
+	case PCI_PRODUCT_ATHEROS_AR5424:
+		/*
+		 * Known single chip solutions
+		 */
+		ah->ah_single_chip = AH_TRUE;
+		printf("%s: AR%s %u.%u phy %u.%u rf %u.%u", ifp->if_xname,
+		    ar5k_printver(AR5K_VERSION_DEV, devid),
+		    ah->ah_mac_version, ah->ah_mac_revision,
+		    ah->ah_phy_revision >> 4, ah->ah_phy_revision & 0xf,
+		    ah->ah_radio_5ghz_revision >> 4,
+		    ah->ah_radio_5ghz_revision & 0xf);
+		break;
+	default:
+		/*
+		 * Multi chip solutions
+		 */
+		ah->ah_single_chip = AH_FALSE;
+		printf("%s: AR%s %u.%u phy %u.%u", ifp->if_xname,
+		    ar5k_printver(AR5K_VERSION_VER, ah->ah_mac_srev),
+		    ah->ah_mac_version, ah->ah_mac_revision,
+		    ah->ah_phy_revision >> 4, ah->ah_phy_revision & 0xf);
 		printf(" rf%s %u.%u",
-		    ar5k_printver(AR5K_VERSION_RAD,
-		    ah->ah_radio_2ghz_revision),
-		    ah->ah_radio_2ghz_revision >> 4,
-		    ah->ah_radio_2ghz_revision & 0xf);
+		    ar5k_printver(AR5K_VERSION_RAD, ah->ah_radio_5ghz_revision),
+		    ah->ah_radio_5ghz_revision >> 4,
+		    ah->ah_radio_5ghz_revision & 0xf);
+		if (ah->ah_radio_2ghz_revision != 0) {
+			printf(" rf%s %u.%u",
+			    ar5k_printver(AR5K_VERSION_RAD,
+			    ah->ah_radio_2ghz_revision),
+			    ah->ah_radio_2ghz_revision >> 4,
+			    ah->ah_radio_2ghz_revision & 0xf);
+		}
+		break;
 	}
 
+#if 0
 	if (ah->ah_radio_5ghz_revision >= AR5K_SREV_RAD_UNSUPP ||
 	    ah->ah_radio_2ghz_revision >= AR5K_SREV_RAD_UNSUPP) {
 		printf(": RF radio not supported\n");
 		error = EOPNOTSUPP;
 		goto bad;
 	}
+#endif
 
 	sc->sc_ah = ah;
 	sc->sc_invalid = 0;	/* ready to go, enable interrupt handling */
@@ -670,7 +694,7 @@ ath_chan2flags(struct ieee80211com *ic, struct ieee80211_channel *chan)
 	case IEEE80211_MODE_11B:
 		return CHANNEL_B;
 	case IEEE80211_MODE_11G:
-		return CHANNEL_PUREG;
+		return CHANNEL_G;
 	case IEEE80211_MODE_TURBO:
 		return CHANNEL_T;
 	default:
@@ -725,7 +749,7 @@ ath_init1(struct ath_softc *sc)
 	 */
 	hchan.channel = ic->ic_ibss_chan->ic_freq;
 	hchan.channelFlags = ath_chan2flags(ic, ic->ic_ibss_chan);
-	if (!ath_hal_reset(ah, ic->ic_opmode, &hchan, AH_FALSE, &status)) {
+	if (!ath_hal_reset(ah, ic->ic_opmode, &hchan, AH_TRUE, &status)) {
 		printf("%s: unable to reset hardware; hal status %u\n",
 			ifp->if_xname, status);
 		error = EIO;

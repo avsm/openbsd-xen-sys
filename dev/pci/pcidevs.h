@@ -2,7 +2,7 @@
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
- *	OpenBSD: pcidevs,v 1.1140 2006/09/16 00:35:32 jsg Exp 
+ *	OpenBSD: pcidevs,v 1.1144 2006/09/19 14:06:07 reyk Exp 
  */
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
 
@@ -173,7 +173,7 @@
 #define	PCI_VENDOR_TOSHIBA2	0x1179		/* Toshiba */
 #define	PCI_VENDOR_RICOH	0x1180		/* Ricoh */
 #define	PCI_VENDOR_DLINK	0x1186		/* D-Link Systems */
-#define	PCI_VENDOR_COROLLARY	0x118c		/* Corrollary */
+#define	PCI_VENDOR_COROLLARY	0x118c		/* Corollary */
 #define	PCI_VENDOR_ACARD	0x1191		/* Acard */
 #define	PCI_VENDOR_ZEINET	0x1193		/* Zeinet */
 #define	PCI_VENDOR_OMEGA	0x119b		/* Omega Micro */
@@ -221,6 +221,7 @@
 #define	PCI_VENDOR_DTCTECH	0x134a		/* DTC Tech */
 #define	PCI_VENDOR_PCTEL	0x134d		/* PCTEL */
 #define	PCI_VENDOR_CNET	0x1371		/* CNet */
+#define	PCI_VENDOR_SILICOM	0x1374		/* Silicom */
 #define	PCI_VENDOR_LMC	0x1376		/* LAN Media */
 #define	PCI_VENDOR_NETGEAR	0x1385		/* Netgear */
 #define	PCI_VENDOR_MOXA	0x1393		/* Moxa */
@@ -977,6 +978,8 @@
 #define	PCI_PRODUCT_ATHEROS_AR5311	0x0011		/* AR5211 */
 #define	PCI_PRODUCT_ATHEROS_AR5211	0x0012		/* AR5211 */
 #define	PCI_PRODUCT_ATHEROS_AR5212	0x0013		/* AR5212 */
+#define	PCI_PRODUCT_ATHEROS_AR2413	0x001a		/* AR2413 */
+#define	PCI_PRODUCT_ATHEROS_AR5413	0x001b		/* AR5413 */
 #define	PCI_PRODUCT_ATHEROS_AR5424	0x001c		/* AR5424 */
 #define	PCI_PRODUCT_ATHEROS_AR5210_AP	0x0207		/* AR5210 (Early) */
 #define	PCI_PRODUCT_ATHEROS_AR5212_IBM	0x1014		/* AR5212 (IBM MiniPCI) */
@@ -1191,6 +1194,7 @@
 /* Compaq products */
 #define	PCI_PRODUCT_COMPAQ_PCI_EISA_BRIDGE	0x0001		/* EISA */
 #define	PCI_PRODUCT_COMPAQ_PCI_ISA_BRIDGE	0x0002		/* ISA */
+#define	PCI_PRODUCT_COMPAQ_CSA64XX	0x0046		/* Smart Array 64xx */
 #define	PCI_PRODUCT_COMPAQ_TRIFLEX1	0x1000		/* Triflex PCI */
 #define	PCI_PRODUCT_COMPAQ_TRIFLEX2	0x2000		/* Triflex PCI */
 #define	PCI_PRODUCT_COMPAQ_QVISION_V0	0x3032		/* QVision */
@@ -1207,7 +1211,7 @@
 #define	PCI_PRODUCT_COMPAQ_CSA6400	0x409c		/* Smart Array 6400 */
 #define	PCI_PRODUCT_COMPAQ_CSA6400EM	0x409d		/* Smart Array 6400 EM */
 #define	PCI_PRODUCT_COMPAQ_CSA6422	0x409e		/* Smart Array 6422 */
-#define	PCI_PRODUCT_COMPAQ_CSA64XX	0x0046		/* Smart Array 64xx */
+#define	PCI_PRODUCT_COMPAQ_HOTPLUG_PCI	0x6010		/* Hotplug PCI */
 #define	PCI_PRODUCT_COMPAQ_USB	0x7020		/* USB */
 #define	PCI_PRODUCT_COMPAQ_FXP	0xa0f0		/* Netelligent ASMC */
 #define	PCI_PRODUCT_COMPAQ_PCI_ISA_BRIDGE1	0xa0f3		/* ISA */
@@ -1266,10 +1270,10 @@
 #define	PCI_PRODUCT_COREGA_2CB_TXD	0xa11e		/* FEther II CB-TXD 10/100 */
 #define	PCI_PRODUCT_COREGA_CGLAPCIGT	0xc107		/* CG-LAPCIGT */
 
-/* Corollary Products */
+/* Corollary products */
 #define	PCI_PRODUCT_COROLLARY_CBUSII_PCIB	0x0014		/* C-Bus II-PCI */
 
-/* Creative Labs */
+/* Creative Labs products */
 #define	PCI_PRODUCT_CREATIVELABS_SBLIVE	0x0002		/* SoundBlaster Live */
 #define	PCI_PRODUCT_CREATIVELABS_AWE64D	0x0003		/* SoundBlaster AWE64D */
 #define	PCI_PRODUCT_CREATIVELABS_AUDIGY	0x0004		/* SoundBlaster Audigy */
@@ -1545,7 +1549,9 @@
 #define	PCI_PRODUCT_HIFN_7956	0x001d		/* 7956 */
 #define	PCI_PRODUCT_HIFN_7955	0x0020		/* 7955/7954 */
 
-/* Hint */
+/* Hint products */
+#define	PCI_PRODUCT_HINT_HB6_1	0x0020		/* HB6 PCI-PCI */
+#define	PCI_PRODUCT_HINT_HB6_2	0x0021		/* HB6 PCI-PCI */
 #define	PCI_PRODUCT_HINT_VXPRO_II_HOST	0x8011		/* Host */
 #define	PCI_PRODUCT_HINT_VXPRO_II_ISA	0x8012		/* ISA */
 #define	PCI_PRODUCT_HINT_VXPRO_II_EIDE	0x8013		/* EIDE */
@@ -1592,7 +1598,13 @@
 #define	PCI_PRODUCT_INPROCOMM_IPN2220	0x2220		/* IPN2220 */
 
 /* Integrated Micro Solutions products */
+#define	PCI_PRODUCT_IMS_5026	0x5026		/* 5026 */
+#define	PCI_PRODUCT_IMS_5027	0x5027		/* 5027 */
+#define	PCI_PRODUCT_IMS_5028	0x5028		/* 5028 */
 #define	PCI_PRODUCT_IMS_8849	0x8849		/* 8849 */
+#define	PCI_PRODUCT_IMS_8853	0x8853		/* 8853 */
+#define	PCI_PRODUCT_IMS_TT128	0x9128		/* Twin Turbo 128 */
+#define	PCI_PRODUCT_IMS_TT3D	0x9135		/* Twin Turbo 3D */
 
 /* Intel products */
 #define	PCI_PRODUCT_INTEL_EESISA	0x0008		/* EES ISA */
@@ -2306,6 +2318,7 @@
 #define	PCI_PRODUCT_MARVELL_88SX5081	0x5081		/* 88SX5081 SATA */
 #define	PCI_PRODUCT_MARVELL_88SX6041	0x6041		/* 88SX6041 SATA */
 #define	PCI_PRODUCT_MARVELL_88SX6081	0x6081		/* 88SX6041 SATA */
+#define	PCI_PRODUCT_MARVELL_SATA	0x6101		/* SATA */
 
 /* Matrox products */
 #define	PCI_PRODUCT_MATROX_ATLAS	0x0518		/* MGA PX2085 (Atlas) */
@@ -2964,6 +2977,7 @@
 #define	PCI_PRODUCT_RCC_CSB5	0x0201		/* CSB5 */
 #define	PCI_PRODUCT_RCC_CSB6	0x0203		/* CSB6 */
 #define	PCI_PRODUCT_RCC_HT_1000	0x0205		/* HT-1000 */
+#define	PCI_PRODUCT_RCC_IDE	0x0210		/* IDE */
 #define	PCI_PRODUCT_RCC_OSB4_IDE	0x0211		/* OSB4 IDE */
 #define	PCI_PRODUCT_RCC_CSB5_IDE	0x0212		/* CSB5 IDE */
 #define	PCI_PRODUCT_RCC_CSB6_RAID_IDE	0x0213		/* CSB6 RAID/IDE */

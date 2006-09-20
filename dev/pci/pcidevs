@@ -1,4 +1,4 @@
-$OpenBSD: pcidevs,v 1.1139 2006/08/25 04:26:29 brad Exp $
+$OpenBSD: pcidevs,v 1.1143 2006/09/18 05:48:33 gwk Exp $
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
 
 /*
@@ -168,7 +168,7 @@ vendor	RCC		0x1166	ServerWorks
 vendor	TOSHIBA2	0x1179	Toshiba
 vendor	RICOH		0x1180	Ricoh
 vendor	DLINK		0x1186	D-Link Systems
-vendor	COROLLARY	0x118c	Corrollary
+vendor	COROLLARY	0x118c	Corollary
 vendor	ACARD		0x1191	Acard
 vendor	ZEINET		0x1193	Zeinet
 vendor	OMEGA		0x119b	Omega Micro
@@ -216,6 +216,7 @@ vendor	SIIG		0x131f	SIIG
 vendor	DTCTECH		0x134a	DTC Tech
 vendor	PCTEL		0x134d	PCTEL
 vendor	CNET		0x1371	CNet
+vendor	SILICOM		0x1374	Silicom
 vendor	LMC		0x1376	LAN Media
 vendor	NETGEAR		0x1385	Netgear
 vendor	MOXA		0x1393	Moxa
@@ -972,6 +973,8 @@ product ATHEROS AR5210		0x0007	AR5210
 product ATHEROS AR5311		0x0011	AR5211
 product ATHEROS AR5211		0x0012	AR5211
 product ATHEROS AR5212		0x0013	AR5212
+product ATHEROS AR2413		0x001a	AR2413
+product ATHEROS AR5413		0x001b	AR5413
 product ATHEROS AR5424		0x001c	AR5424
 product ATHEROS AR5210_AP	0x0207	AR5210 (Early)
 product ATHEROS AR5212_IBM	0x1014	AR5212 (IBM MiniPCI)
@@ -1186,6 +1189,7 @@ product COGENT EM110TX		0x1400	EX110TX
 /* Compaq products */
 product COMPAQ PCI_EISA_BRIDGE	0x0001	EISA
 product COMPAQ PCI_ISA_BRIDGE	0x0002	ISA
+product COMPAQ CSA64XX		0x0046	Smart Array 64xx
 product COMPAQ TRIFLEX1		0x1000	Triflex PCI
 product COMPAQ TRIFLEX2		0x2000	Triflex PCI
 product COMPAQ QVISION_V0	0x3032	QVision
@@ -1202,7 +1206,7 @@ product COMPAQ CSA642		0x409b	Smart Array 642
 product COMPAQ CSA6400		0x409c	Smart Array 6400
 product COMPAQ CSA6400EM	0x409d	Smart Array 6400 EM
 product COMPAQ CSA6422		0x409e	Smart Array 6422
-product COMPAQ CSA64XX		0x0046	Smart Array 64xx
+product COMPAQ HOTPLUG_PCI	0x6010	Hotplug PCI
 product COMPAQ USB		0x7020	USB
 product COMPAQ FXP		0xa0f0	Netelligent ASMC
 product COMPAQ PCI_ISA_BRIDGE1	0xa0f3	ISA
@@ -1261,10 +1265,10 @@ product COREGA CB_TXD		0xa117	FEther CB-TXD 10/100
 product COREGA 2CB_TXD		0xa11e	FEther II CB-TXD 10/100
 product COREGA CGLAPCIGT	0xc107	CG-LAPCIGT
 
-/* Corollary Products */
+/* Corollary products */
 product COROLLARY CBUSII_PCIB	0x0014	C-Bus II-PCI
 
-/* Creative Labs */
+/* Creative Labs products */
 product CREATIVELABS SBLIVE	0x0002	SoundBlaster Live
 product CREATIVELABS AWE64D	0x0003	SoundBlaster AWE64D
 product CREATIVELABS AUDIGY	0x0004	SoundBlaster Audigy
@@ -1540,7 +1544,9 @@ product HIFN 8154		0x0018	8154
 product HIFN 7956		0x001d	7956
 product HIFN 7955		0x0020	7955/7954
 
-/* Hint */
+/* Hint products */
+product HINT HB6_1		0x0020	HB6 PCI-PCI
+product HINT HB6_2		0x0021	HB6 PCI-PCI
 product HINT VXPRO_II_HOST	0x8011	Host
 product HINT VXPRO_II_ISA	0x8012	ISA
 product HINT VXPRO_II_EIDE	0x8013	EIDE
@@ -1587,7 +1593,13 @@ product INPROCOMM IPN2120	0x2120	IPN2120
 product INPROCOMM IPN2220	0x2220	IPN2220
 
 /* Integrated Micro Solutions products */
+product IMS 5026		0x5026	5026
+product IMS 5027		0x5027	5027
+product IMS 5028		0x5028	5028
 product IMS 8849		0x8849	8849
+product IMS 8853		0x8853	8853
+product IMS TT128		0x9128	Twin Turbo 128
+product IMS TT3D		0x9135	Twin Turbo 3D
 
 /* Intel products */
 product INTEL EESISA		0x0008	EES ISA
@@ -2301,6 +2313,7 @@ product MARVELL 88SX5080	0x5080	88SX5080 SATA
 product MARVELL 88SX5081	0x5081	88SX5081 SATA
 product MARVELL 88SX6041	0x6041	88SX6041 SATA
 product MARVELL 88SX6081	0x6081	88SX6041 SATA
+product MARVELL SATA		0x6101	SATA
 
 /* Matrox products */
 product MATROX ATLAS		0x0518	MGA PX2085 (Atlas)
@@ -2959,6 +2972,7 @@ product RCC OSB4		0x0200	OSB4
 product RCC CSB5		0x0201	CSB5
 product RCC CSB6		0x0203	CSB6
 product RCC HT_1000		0x0205	HT-1000
+product RCC IDE			0x0210	IDE
 product RCC OSB4_IDE		0x0211	OSB4 IDE
 product RCC CSB5_IDE		0x0212	CSB5 IDE
 product RCC CSB6_RAID_IDE	0x0213	CSB6 RAID/IDE

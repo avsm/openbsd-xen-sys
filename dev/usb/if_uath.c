@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_uath.c,v 1.2 2006/09/16 13:37:41 damien Exp $	*/
+/*	$OpenBSD: if_uath.c,v 1.8 2006/09/18 16:34:23 damien Exp $	*/
 
 /*-
  * Copyright (c) 2006
@@ -89,52 +89,44 @@ int uath_debug = 1;
 #define DPRINTFN(n, x)
 #endif
 
-/* various supported device vendors/products */
+/* 
+ * Various supported device vendors/products
+ * UB51: AR5005UG 802.11b/g, UB52: AR5005UX 802.11a/b/g
+ */
+#define UATH_DEV(v, p, f)						\
+	{ { USB_VENDOR_##v, USB_PRODUCT_##v##_##p }, (f) },		\
+	{ { USB_VENDOR_##v, USB_PRODUCT_##v##_##p##_NF },		\
+	    (f) | UATH_FLAG_PRE_FIRMWARE }
+#define UATH_DEV_UG(v, p)	UATH_DEV(v, p, 0)
+#define UATH_DEV_UX(v, p)	UATH_DEV(v, p, UATH_FLAG_ABG)
 static const struct uath_type {
 	struct usb_devno	dev;
 	unsigned int		flags;
+#define UATH_FLAG_PRE_FIRMWARE	(1 << 0)
+#define UATH_FLAG_ABG		(1 << 1)
 } uath_devs[] = {
-	/* Atheros Communications */
-	{ { USB_VENDOR_ATHEROS,		USB_PRODUCT_ATHEROS_AR5523_1 },
-	    0 },
-	{ { USB_VENDOR_ATHEROS,		USB_PRODUCT_ATHEROS_AR5523_1_NF },
-	    UATH_FLAG_PRE_FIRMWARE },
-	{ { USB_VENDOR_ATHEROS,		USB_PRODUCT_ATHEROS_AR5523_2 },
-	    0 },
-	{ { USB_VENDOR_ATHEROS,		USB_PRODUCT_ATHEROS_AR5523_2_NF },
-	    UATH_FLAG_PRE_FIRMWARE },
-	{ { USB_VENDOR_ATHEROS,		USB_PRODUCT_ATHEROS_AR5523_3 },
-	    UATH_FLAG_DUAL_BAND_RF },
-	{ { USB_VENDOR_ATHEROS,		USB_PRODUCT_ATHEROS_AR5523_3_NF },
-	    UATH_FLAG_PRE_FIRMWARE },
-
-	/* D-Link */
-	{ { USB_VENDOR_DLINK,		USB_PRODUCT_DLINK_DWLAG122 },
-	    UATH_FLAG_DUAL_BAND_RF },
-	{ { USB_VENDOR_DLINK,		USB_PRODUCT_DLINK_DWLAG122_NF },
-	    UATH_FLAG_PRE_FIRMWARE },
-	{ { USB_VENDOR_DLINK,		USB_PRODUCT_DLINK_DWLAG132 },
-	    UATH_FLAG_DUAL_BAND_RF },
-	{ { USB_VENDOR_DLINK,		USB_PRODUCT_DLINK_DWLAG132_NF },
-	    UATH_FLAG_PRE_FIRMWARE },
-	{ { USB_VENDOR_DLINK,		USB_PRODUCT_DLINK_DWLG132 },
-	    0 },
-	{ { USB_VENDOR_DLINK,		USB_PRODUCT_DLINK_DWLG132_NF },
-	    UATH_FLAG_PRE_FIRMWARE },
-
-	/* Netgear */
-	{ { USB_VENDOR_NETGEAR,		USB_PRODUCT_NETGEAR_WG111U },
-	    UATH_FLAG_DUAL_BAND_RF },
-	{ { USB_VENDOR_NETGEAR, 	USB_PRODUCT_NETGEAR_WG111U_NF },
-	    UATH_FLAG_PRE_FIRMWARE },
-	{ { USB_VENDOR_NETGEAR3,	USB_PRODUCT_NETGEAR3_WG111T },
-	    0 },
-	{ { USB_VENDOR_NETGEAR3,	USB_PRODUCT_NETGEAR3_WG111T_NF },
-	    UATH_FLAG_PRE_FIRMWARE },
-	{ { USB_VENDOR_NETGEAR3,	USB_PRODUCT_NETGEAR3_WPN111 },
-	    0 },
-	{ { USB_VENDOR_NETGEAR3,	USB_PRODUCT_NETGEAR3_WPN111_NF },
-	    UATH_FLAG_PRE_FIRMWARE }
+	UATH_DEV_UG(ATHEROS,		AR5523),
+	UATH_DEV_UG(ATHEROS2,		AR5523_1),
+	UATH_DEV_UG(ATHEROS2,		AR5523_2),
+	UATH_DEV_UX(ATHEROS2,		AR5523_3),
+	UATH_DEV_UG(CONCEPTRONIC,	AR5523_1),
+	UATH_DEV_UX(CONCEPTRONIC,	AR5523_2),
+	UATH_DEV_UX(DLINK,		DWLAG122),
+	UATH_DEV_UX(DLINK,		DWLAG132),	
+	UATH_DEV_UG(DLINK,		DWLG132),
+	UATH_DEV_UG(GIGASET,		SMCWUSBTG),
+	UATH_DEV_UG(GIGASET,		AR5523),
+	UATH_DEV_UG(GLOBALSUN,		AR5523_1),
+	UATH_DEV_UX(GLOBALSUN,		AR5523_2),
+	UATH_DEV_UX(NETGEAR,		WG111U),
+	UATH_DEV_UG(NETGEAR3,		WG111T),
+	UATH_DEV_UG(NETGEAR3,		WPN111),
+	UATH_DEV_UG(UMEDIA,		AR5523_1),
+	UATH_DEV_UX(UMEDIA,		AR5523_2),
+	UATH_DEV_UG(UMEDIA,		TEW444UBEU),
+	UATH_DEV_UG(WISTRONNEWEB,	AR5523_1),
+	UATH_DEV_UX(WISTRONNEWEB,	AR5523_2),
+	UATH_DEV_UG(ZCOM,		AR5523)
 };
 #define uath_lookup(v, p)	\
 	((struct uath_type *)usb_lookup(uath_devs, v, p))
@@ -347,8 +339,7 @@ USB_ATTACH(uath)
 	}
 
 	printf("%s: MAC/BBP AR5523, RF AR%c112, address %s\n",
-	    USBDEVNAME(sc->sc_dev),
-	    (sc->sc_flags & UATH_FLAG_DUAL_BAND_RF) ? '5': '2',
+	    USBDEVNAME(sc->sc_dev), (sc->sc_flags & UATH_FLAG_ABG) ? '5': '2',
 	    ether_sprintf(ic->ic_myaddr));
 
 	/*
@@ -1499,14 +1490,14 @@ uath_start(struct ifnet *ifp)
 		} else {
 			if (ic->ic_state != IEEE80211_S_RUN)
 				break;
-			IFQ_DEQUEUE(&ifp->if_snd, m0);
+			IFQ_POLL(&ifp->if_snd, m0);
 			if (m0 == NULL)
 				break;
 			if (sc->tx_queued >= UATH_TX_DATA_LIST_COUNT) {
-				IF_PREPEND(&ifp->if_snd, m0);
 				ifp->if_flags |= IFF_OACTIVE;
 				break;
 			}
+			IFQ_DEQUEUE(&ifp->if_snd, m0);
 #if NBPFILTER > 0
 			if (ifp->if_bpf != NULL)
 				bpf_mtap(ifp->if_bpf, m0, BPF_DIRECTION_OUT);
@@ -1652,6 +1643,8 @@ uath_reset(struct uath_softc *sc)
 	if (error == 0)
 		error = tsleep(UATH_COND_INIT(sc), PCATCH, "uathinit", 5 * hz);
 	splx(s);
+	if (error != 0)
+		return error;
 
 	/* read PHY registers */
 	for (reg = 0x09; reg <= 0x24; reg++) {
@@ -1719,9 +1712,6 @@ uath_wme_init(struct uath_softc *sc)
 Static int
 uath_set_chan(struct uath_softc *sc, struct ieee80211_channel *c)
 {
-#ifdef UATH_DEBUG
-	struct ieee80211com *ic = &sc->sc_ic;
-#endif
 	struct uath_set_chan chan;
 
 	bzero(&chan, sizeof chan);
@@ -1731,7 +1721,8 @@ uath_set_chan(struct uath_softc *sc, struct ieee80211_channel *c)
 	chan.magic2 = htobe32(50);
 	chan.magic3 = htobe32(1);
 
-	DPRINTF(("switching to channel %d\n", ieee80211_chan2ieee(ic, c)));
+	DPRINTF(("switching to channel %d\n",
+	    ieee80211_chan2ieee(&sc->sc_ic, c)));
 	return uath_cmd_write(sc, UATH_CMD_SET_CHAN, &chan, sizeof chan, 0);
 }
 
@@ -1787,13 +1778,12 @@ uath_set_rates(struct uath_softc *sc, const struct ieee80211_rateset *rs)
 
 	bzero(&rates, sizeof rates);
 	rates.magic1 = htobe32(0x02);
-	rates.magic2 = htobe32(0x21);
+	rates.size   = htobe32(1 + UATH_MAX_NRATES);
 	rates.nrates = rs->rs_nrates;
 	bcopy(rs->rs_rates, rates.rates, rs->rs_nrates);
 
 	DPRINTF(("setting supported rates nrates=%d\n", rs->rs_nrates));
-	return uath_cmd_write(sc, UATH_CMD_SET_RATES, &rates,
-	    3 * 4 + 1 + rs->rs_nrates, 0);
+	return uath_cmd_write(sc, UATH_CMD_SET_RATES, &rates, sizeof rates, 0);
 }
 
 Static int
@@ -1865,7 +1855,7 @@ uath_init(struct ifnet *ifp)
 	struct uath_softc *sc = ifp->if_softc;
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct uath_cmd_31 cmd31;
-	uint32_t /*reg,*/ val;
+	uint32_t val;
 	int i, error;
 
 	/* reset data and command rings */

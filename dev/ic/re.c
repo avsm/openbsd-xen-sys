@@ -1,4 +1,4 @@
-/*	$OpenBSD: re.c,v 1.43 2006/08/17 23:08:07 brad Exp $	*/
+/*	$OpenBSD: re.c,v 1.45 2006/09/17 18:18:57 brad Exp $	*/
 /*	$FreeBSD: if_re.c,v 1.31 2004/09/04 07:54:05 ru Exp $	*/
 /*
  * Copyright (c) 1997, 1998-2003
@@ -149,11 +149,10 @@
 #include <dev/pci/pcivar.h>
 
 #include <dev/ic/rtl81x9reg.h>
+#include <dev/ic/revar.h>
 
 int redebug = 0;
 #define DPRINTF(x)	if (redebug) printf x
-
-int	re_attach(struct rl_softc *);
 
 int	re_encap(struct rl_softc *, struct mbuf *, int *);
 
@@ -165,12 +164,9 @@ void	re_fixup_rx(struct mbuf *);
 #endif
 void	re_rxeof(struct rl_softc *);
 void	re_txeof(struct rl_softc *);
-int	re_intr(void *);
 void	re_tick(void *);
 void	re_start(struct ifnet *);
 int	re_ioctl(struct ifnet *, u_long, caddr_t);
-int	re_init(struct ifnet *);
-void	re_stop(struct ifnet *, int);
 void	re_watchdog(struct ifnet *);
 int	re_ifmedia_upd(struct ifnet *);
 void	re_ifmedia_sts(struct ifnet *, struct ifmediareq *);
@@ -400,6 +396,10 @@ re_miibus_readreg(struct device *dev, int phy, int reg)
 		return (0);
 	}
 	rval = CSR_READ_2(sc, re8139_reg);
+	if (sc->rl_type == RL_8139CPLUS && re8139_reg == RL_BMCR) {
+		/* 8139C+ has different bit layout. */
+		rval &= ~(BMCR_LOOP | BMCR_ISO);
+	}
 	splx(s);
 	return (rval);
 }
@@ -427,6 +427,10 @@ re_miibus_writereg(struct device *dev, int phy, int reg, int data)
 	switch(reg) {
 	case MII_BMCR:
 		re8139_reg = RL_BMCR;
+		if (sc->rl_type == RL_8139CPLUS) {
+			/* 8139C+ has different bit layout. */
+			data &= ~(BMCR_LOOP | BMCR_ISO);
+		}
 		break;
 	case MII_BMSR:
 		re8139_reg = RL_BMSR;
@@ -1667,7 +1671,7 @@ re_start(struct ifnet *ifp)
 
 	sc = ifp->if_softc;
 
-	if (ifp->if_flags & IFF_OACTIVE)
+	if (!sc->rl_link || ifp->if_flags & IFF_OACTIVE)
 		return;
 
 	idx = sc->rl_ldata.rl_txq_prodidx;

@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bge.c,v 1.175 2006/08/30 21:28:06 kettenis Exp $	*/
+/*	$OpenBSD: if_bge.c,v 1.179 2006/09/17 22:19:37 brad Exp $	*/
 
 /*
  * Copyright (c) 2001 Wind River Systems
@@ -172,7 +172,7 @@ void bge_free_rx_ring_jumbo(struct bge_softc *);
 void bge_free_tx_ring(struct bge_softc *);
 int bge_init_tx_ring(struct bge_softc *);
 
-int bge_chipinit(struct bge_softc *);
+void bge_chipinit(struct bge_softc *);
 int bge_blockinit(struct bge_softc *);
 
 u_int32_t bge_readmem_ind(struct bge_softc *, int);
@@ -1071,7 +1071,7 @@ bge_setpromisc(struct bge_softc *sc)
  * Do endian, PCI and DMA initialization. Also check the on-board ROM
  * self-test results.
  */
-int
+void
 bge_chipinit(struct bge_softc *sc)
 {
 	struct pci_attach_args	*pa = &(sc->bge_pa);
@@ -1081,18 +1081,6 @@ bge_chipinit(struct bge_softc *sc)
 	/* Set endianness before we access any non-PCI registers. */
 	pci_conf_write(pa->pa_pc, pa->pa_tag, BGE_PCI_MISC_CTL,
 	    BGE_INIT);
-
-	/*
-	 * Check the 'ROM failed' bit on the RX CPU to see if
-	 * self-tests passed.  Skip this check when there's no SEEPROM
-	 * fitted, since in that case it will always fail.
-	 */
-	if (sc->bge_eeprom &&
-	    CSR_READ_4(sc, BGE_RXCPU_MODE) & BGE_RXCPUMODE_ROMFAIL) {
-		printf("%s: RX CPU self-diagnostics failed!\n",
-		    sc->bge_dev.dv_xname);
-		return (ENODEV);
-	}
 
 	/* Clear the MAC control register */
 	CSR_WRITE_4(sc, BGE_MAC_MODE, 0);
@@ -1217,8 +1205,6 @@ bge_chipinit(struct bge_softc *sc)
 
 	/* Set the timer prescaler (always 66MHz) */
 	CSR_WRITE_4(sc, BGE_MISC_CFG, 65 << 1/*BGE_32BITTIME_66MHZ*/);
-
-	return (0);
 }
 
 int
@@ -1661,7 +1647,7 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 	struct pci_attach_args	*pa = aux;
 	pci_chipset_tag_t	pc = pa->pa_pc;
 	const struct bge_revision *br;
-	pcireg_t		pm_ctl, memtype;
+	pcireg_t		pm_ctl, memtype, subid;
 	pci_intr_handle_t	ih;
 	const char		*intrstr = NULL;
 	bus_size_t		size;
@@ -1669,6 +1655,7 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 	int			rseg, gotenaddr = 0;
 	u_int32_t		hwcfg = 0;
 	u_int32_t		mac_addr = 0;
+	u_int32_t		misccfg;
 	struct ifnet		*ifp;
 	caddr_t			kva;
 #ifdef __sparc64__
@@ -1676,6 +1663,8 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 #endif
 
 	sc->bge_pa = *pa;
+
+	subid = pci_conf_read(pc, pa->pa_tag, PCI_SUBSYS_ID_REG);
 
 	/*
 	 * Map control/status registers.
@@ -1705,17 +1694,6 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 	DPRINTFN(5, ("pci_intr_string\n"));
 	intrstr = pci_intr_string(pc, ih);
 
-	DPRINTFN(5, ("pci_intr_establish\n"));
-	sc->bge_intrhand = pci_intr_establish(pc, ih, IPL_NET, bge_intr, sc,
-	    sc->bge_dev.dv_xname);
-	if (sc->bge_intrhand == NULL) {
-		printf(": couldn't establish interrupt");
-		if (intrstr != NULL)
-			printf(" at %s", intrstr);
-		printf("\n");
-		goto fail_1;
-	}
-
 	/*
 	 * Kludge for 5700 Bx bug: a hardware bug (PCIX byte enable?)
 	 * can clobber the chip's PCI config-space power control registers,
@@ -1743,8 +1721,6 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 		printf("unknown ASIC (0x%04x)", sc->bge_chipid >> 16);
 	else
 		printf("%s (0x%04x)", br->br_name, sc->bge_chipid >> 16);
-
-	printf(": %s", intrstr);
 
 	/*
 	 * PCI Express check.
@@ -1774,14 +1750,49 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 	}
 #endif
 
+	/*
+	 * When using the BCM5701 in PCI-X mode, data corruption has
+	 * been observed in the first few bytes of some received packets.
+	 * Aligning the packet buffer in memory eliminates the corruption.
+	 * Unfortunately, this misaligns the packet payloads.  On platforms
+	 * which do not support unaligned accesses, we will realign the
+	 * payloads by copying the received packets.
+	 */
+	sc->bge_rx_alignment_bug = 0;
+	if (BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5701 && sc->bge_pcix)
+		sc->bge_rx_alignment_bug = 1;
+
+	sc->bge_jumbo_cap = 0;
+	if (BGE_IS_JUMBO_CAPABLE(sc))
+		sc->bge_jumbo_cap = 1;
+
+	sc->bge_no_3_led = 0;
+	if ((BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5700 ||
+	    BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5701) &&
+	    PCI_VENDOR(subid) == DELL_VENDORID)
+		sc->bge_no_3_led = 1;
+
+	misccfg = CSR_READ_4(sc, BGE_MISC_CFG);
+	misccfg &= BGE_MISCCFG_BOARD_ID_MASK;
+
+	sc->bge_10_100_only = 0;
+	if ((BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5703 &&
+	     (misccfg == 0x4000 || misccfg == 0x8000)) ||
+	    (BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5705 &&
+	     PCI_VENDOR(pa->pa_id) == PCI_VENDOR_BROADCOM &&
+	     (PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_BROADCOM_BCM5901 ||
+	      PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_BROADCOM_BCM5901A2 ||
+	      PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_BROADCOM_BCM5705F)) ||
+	    (PCI_VENDOR(pa->pa_id) == PCI_VENDOR_BROADCOM &&
+	     (PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_BROADCOM_BCM5751F ||
+	      PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_BROADCOM_BCM5753F)))
+		sc->bge_10_100_only = 1;
+
 	/* Try to reset the chip. */
 	DPRINTFN(5, ("bge_reset\n"));
 	bge_reset(sc);
 
-	if (bge_chipinit(sc)) {
-		printf(": chip initialization failed\n");
-		goto fail_2;
-	}
+	bge_chipinit(sc);
 
 	/*
 	 * Get station address from the EEPROM.
@@ -1819,14 +1830,8 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 
 	if (!gotenaddr) {
 		printf(": failed to read station address\n");
-		goto fail_2;
+		goto fail_1;
 	}
-
-	/*
-	 * A Broadcom chip was detected. Inform the world.
-	 */
-	printf(", address %s\n",
-	    ether_sprintf(sc->arpcom.ac_enaddr));
 
 	/* Allocate the general information block and ring buffers. */
 	sc->bge_dmatag = pa->pa_dmat;
@@ -1834,7 +1839,7 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 	if (bus_dmamem_alloc(sc->bge_dmatag, sizeof(struct bge_ring_data),
 			     PAGE_SIZE, 0, &seg, 1, &rseg, BUS_DMA_NOWAIT)) {
 		printf(": can't alloc rx buffers\n");
-		goto fail_2;
+		goto fail_1;
 	}
 	DPRINTFN(5, ("bus_dmamem_map\n"));
 	if (bus_dmamem_map(sc->bge_dmatag, &seg, rseg,
@@ -1842,20 +1847,20 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 			   BUS_DMA_NOWAIT)) {
 		printf(": can't map dma buffers (%d bytes)\n",
 		    sizeof(struct bge_ring_data));
-		goto fail_3;
+		goto fail_2;
 	}
 	DPRINTFN(5, ("bus_dmamem_create\n"));
 	if (bus_dmamap_create(sc->bge_dmatag, sizeof(struct bge_ring_data), 1,
 	    sizeof(struct bge_ring_data), 0,
 	    BUS_DMA_NOWAIT, &sc->bge_ring_map)) {
 		printf(": can't create dma map\n");
-		goto fail_4;
+		goto fail_3;
 	}
 	DPRINTFN(5, ("bus_dmamem_load\n"));
 	if (bus_dmamap_load(sc->bge_dmatag, sc->bge_ring_map, kva,
 			    sizeof(struct bge_ring_data), NULL,
 			    BUS_DMA_NOWAIT)) {
-		goto fail_5;
+		goto fail_4;
 	}
 
 	DPRINTFN(5, ("bzero\n"));
@@ -1931,14 +1936,32 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 		}
 		hwcfg = ntohl(hwcfg);
 	}
-	
+
+	sc->bge_tbi = 0;
 	if ((hwcfg & BGE_HWCFG_MEDIA) == BGE_MEDIA_FIBER)	    
 		sc->bge_tbi = 1;
 
 	/* The SysKonnect SK-9D41 is a 1000baseSX card. */
-	if ((pci_conf_read(pc, pa->pa_tag, BGE_PCI_SUBSYS) >> 16) ==
-	    SK_SUBSYSID_9D41)
+	if (PCI_PRODUCT(subid) == SK_SUBSYSID_9D41)
 		sc->bge_tbi = 1;
+
+	/* Hookup IRQ last. */
+	DPRINTFN(5, ("pci_intr_establish\n"));
+	sc->bge_intrhand = pci_intr_establish(pc, ih, IPL_NET, bge_intr, sc,
+	    sc->bge_dev.dv_xname);
+	if (sc->bge_intrhand == NULL) {
+		printf(": couldn't establish interrupt");
+		if (intrstr != NULL)
+			printf(" at %s", intrstr);
+		printf("\n");
+		goto fail_5;
+	}
+
+	/*
+	 * A Broadcom chip was detected. Inform the world.
+	 */
+	printf(": %s, address %s\n", intrstr,
+	    ether_sprintf(sc->arpcom.ac_enaddr));
 
 	if (sc->bge_tbi) {
 		ifmedia_init(&sc->bge_ifmedia, IFM_IMASK, bge_ifmedia_upd,
@@ -1970,17 +1993,6 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 	}
 
 	/*
-	 * When using the BCM5701 in PCI-X mode, data corruption has
-	 * been observed in the first few bytes of some received packets.
-	 * Aligning the packet buffer in memory eliminates the corruption.
-	 * Unfortunately, this misaligns the packet payloads.  On platforms
-	 * which do not support unaligned accesses, we will realign the
-	 * payloads by copying the received packets.
-	 */
-	if (BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5701 && sc->bge_pcix)
-		sc->bge_rx_alignment_bug = 1;
-
-	/*
 	 * Call MI attach routine.
 	 */
 	if_attach(ifp);
@@ -1993,17 +2005,17 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 	return;
 
 fail_5:
-	bus_dmamap_destroy(sc->bge_dmatag, sc->bge_ring_map);
+	bus_dmamap_unload(sc->bge_dmatag, sc->bge_ring_map);
 
 fail_4:
+	bus_dmamap_destroy(sc->bge_dmatag, sc->bge_ring_map);
+
+fail_3:
 	bus_dmamem_unmap(sc->bge_dmatag, kva,
 	    sizeof(struct bge_ring_data));
 
-fail_3:
-	bus_dmamem_free(sc->bge_dmatag, &seg, rseg);
-
 fail_2:
-	pci_intr_disestablish(pc, sc->bge_intrhand);
+	bus_dmamem_free(sc->bge_dmatag, &seg, rseg);
 
 fail_1:
 	bus_space_unmap(sc->bge_btag, sc->bge_bhandle, size);
@@ -2037,6 +2049,15 @@ bge_reset(struct bge_softc *sc)
 			reset |= (1<<29);
 		}
 	}
+
+	if (BGE_IS_5705_OR_BEYOND(sc))
+		reset |= BGE_MISCCFG_KEEP_GPHY_POWER;
+
+	/*
+	 * Write the magic number to the firmware mailbox at 0xb50
+	 * so that the driver can synchronize with the firmware.
+	 */
+	bge_writemem_ind(sc, BGE_SOFTWARE_GENCOMM, BGE_MAGIC_NUMBER);
 
 	/* Issue global reset */
 	bge_writereg_ind(sc, BGE_MISC_CFG, reset);
@@ -2072,12 +2093,6 @@ bge_reset(struct bge_softc *sc)
 		CSR_WRITE_4(sc, BGE_MARB_MODE, BGE_MARBMODE_ENABLE | val);
 	} else
 		CSR_WRITE_4(sc, BGE_MARB_MODE, BGE_MARBMODE_ENABLE);
-
-	/*
-	 * Prevent PXE restart: write a magic number to the
-	 * general communications memory at 0xB50.
-	 */
-	bge_writemem_ind(sc, BGE_SOFTWARE_GENCOMM, BGE_MAGIC_NUMBER);
 
 	/*
 	 * Poll the value location we just wrote until

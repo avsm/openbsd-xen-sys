@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bgereg.h,v 1.56 2006/08/28 03:06:47 brad Exp $	*/
+/*	$OpenBSD: if_bgereg.h,v 1.59 2006/09/17 22:19:38 brad Exp $	*/
 
 /*
  * Copyright (c) 2001 Wind River Systems
@@ -1727,7 +1727,8 @@
 /* Misc. config register */
 #define BGE_MISCCFG_RESET_CORE_CLOCKS	0x00000001
 #define BGE_MISCCFG_TIMER_PRESCALER	0x000000FE
-#define BGE_MISCCFG_GPHY_POWER_RESET	0x04000000
+#define BGE_MISCCFG_KEEP_GPHY_POWER	0x04000000
+#define BGE_MISCCFG_BOARD_ID_MASK	0x0001e000
 
 #define BGE_32BITTIME_66MHZ		(0x41 << 1)
 
@@ -1812,10 +1813,11 @@
 	} while(0)
 
 /*
- * This magic number is used to prevent PXE restart when we
- * issue a software reset. We write this magic number to the
- * firmware mailbox at 0xB50 in order to prevent the PXE boot
- * code from running.
+ * This magic number is written to the firmware mailbox at 0xb50
+ * before a software reset is issued.  After the internal firmware
+ * has completed its initialization it will write the opposite of 
+ * this value, ~BGE_MAGIC_NUMBER, to the same location, allowing the
+ * driver to synchronize with the firmware.
  */
 #define BGE_MAGIC_NUMBER                0x4B657654
 
@@ -1964,8 +1966,12 @@ struct bge_status_block {
 /*
  * SysKonnect Subsystem IDs
  */
-#define SK_SUBSYSID_9D21		0x4421
 #define SK_SUBSYSID_9D41		0x4441
+
+/*
+ * Dell PCI vendor ID
+ */
+#define DELL_VENDORID			0x1028
 
 /*
  * Offset of MAC address inside EEPROM.
@@ -2350,6 +2356,7 @@ struct bge_softc {
 	u_int8_t		bge_extram;	/* has external SSRAM */
 	u_int8_t		bge_eeprom;
 	u_int8_t		bge_tbi;
+	u_int8_t		bge_jumbo_cap;
 	u_int8_t		bge_rx_alignment_bug;
 	bus_dma_tag_t		bge_dmatag;
 	u_int32_t		bge_chipid;
@@ -2357,6 +2364,7 @@ struct bge_softc {
 	u_int8_t		bge_asf_mode;
 	u_int8_t		bge_pcie;
 	u_int8_t		bge_pcix;
+	u_int8_t		bge_10_100_only;
 	struct bge_ring_data	*bge_rdata;	/* rings */
 	struct bge_chain_data	bge_cdata;	/* mbufs */
 	bus_dmamap_t		bge_ring_map;

@@ -2,7 +2,7 @@
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
- *	OpenBSD: pcidevs,v 1.1140 2006/09/16 00:35:32 jsg Exp 
+ *	OpenBSD: pcidevs,v 1.1144 2006/09/19 14:06:07 reyk Exp 
  */
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
 
@@ -2391,6 +2391,14 @@ static const struct pci_known_product pci_known_products[] = {
 	    "AR5212",
 	},
 	{
+	    PCI_VENDOR_ATHEROS, PCI_PRODUCT_ATHEROS_AR2413,
+	    "AR2413",
+	},
+	{
+	    PCI_VENDOR_ATHEROS, PCI_PRODUCT_ATHEROS_AR5413,
+	    "AR5413",
+	},
+	{
 	    PCI_VENDOR_ATHEROS, PCI_PRODUCT_ATHEROS_AR5424,
 	    "AR5424",
 	},
@@ -3067,6 +3075,10 @@ static const struct pci_known_product pci_known_products[] = {
 	    "ISA",
 	},
 	{
+	    PCI_VENDOR_COMPAQ, PCI_PRODUCT_COMPAQ_CSA64XX,
+	    "Smart Array 64xx",
+	},
+	{
 	    PCI_VENDOR_COMPAQ, PCI_PRODUCT_COMPAQ_TRIFLEX1,
 	    "Triflex PCI",
 	},
@@ -3131,8 +3143,8 @@ static const struct pci_known_product pci_known_products[] = {
 	    "Smart Array 6422",
 	},
 	{
-	    PCI_VENDOR_COMPAQ, PCI_PRODUCT_COMPAQ_CSA64XX,
-	    "Smart Array 64xx",
+	    PCI_VENDOR_COMPAQ, PCI_PRODUCT_COMPAQ_HOTPLUG_PCI,
+	    "Hotplug PCI",
 	},
 	{
 	    PCI_VENDOR_COMPAQ, PCI_PRODUCT_COMPAQ_USB,
@@ -4163,6 +4175,14 @@ static const struct pci_known_product pci_known_products[] = {
 	    "7955/7954",
 	},
 	{
+	    PCI_VENDOR_HINT, PCI_PRODUCT_HINT_HB6_1,
+	    "HB6 PCI-PCI",
+	},
+	{
+	    PCI_VENDOR_HINT, PCI_PRODUCT_HINT_HB6_2,
+	    "HB6 PCI-PCI",
+	},
+	{
 	    PCI_VENDOR_HINT, PCI_PRODUCT_HINT_VXPRO_II_HOST,
 	    "Host",
 	},
@@ -4291,8 +4311,32 @@ static const struct pci_known_product pci_known_products[] = {
 	    "IPN2220",
 	},
 	{
+	    PCI_VENDOR_IMS, PCI_PRODUCT_IMS_5026,
+	    "5026",
+	},
+	{
+	    PCI_VENDOR_IMS, PCI_PRODUCT_IMS_5027,
+	    "5027",
+	},
+	{
+	    PCI_VENDOR_IMS, PCI_PRODUCT_IMS_5028,
+	    "5028",
+	},
+	{
 	    PCI_VENDOR_IMS, PCI_PRODUCT_IMS_8849,
 	    "8849",
+	},
+	{
+	    PCI_VENDOR_IMS, PCI_PRODUCT_IMS_8853,
+	    "8853",
+	},
+	{
+	    PCI_VENDOR_IMS, PCI_PRODUCT_IMS_TT128,
+	    "Twin Turbo 128",
+	},
+	{
+	    PCI_VENDOR_IMS, PCI_PRODUCT_IMS_TT3D,
+	    "Twin Turbo 3D",
 	},
 	{
 	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_EESISA,
@@ -6955,6 +6999,10 @@ static const struct pci_known_product pci_known_products[] = {
 	    "88SX6041 SATA",
 	},
 	{
+	    PCI_VENDOR_MARVELL, PCI_PRODUCT_MARVELL_SATA,
+	    "SATA",
+	},
+	{
 	    PCI_VENDOR_MATROX, PCI_PRODUCT_MATROX_ATLAS,
 	    "MGA PX2085 (Atlas)",
 	},
@@ -9201,6 +9249,10 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_RCC, PCI_PRODUCT_RCC_HT_1000,
 	    "HT-1000",
+	},
+	{
+	    PCI_VENDOR_RCC, PCI_PRODUCT_RCC_IDE,
+	    "IDE",
 	},
 	{
 	    PCI_VENDOR_RCC, PCI_PRODUCT_RCC_OSB4_IDE,
@@ -12704,7 +12756,7 @@ static const struct pci_known_vendor pci_known_vendors[] = {
 	},
 	{
 	    PCI_VENDOR_COROLLARY,
-	    "Corrollary",
+	    "Corollary",
 	},
 	{
 	    PCI_VENDOR_ACARD,
@@ -12893,6 +12945,10 @@ static const struct pci_known_vendor pci_known_vendors[] = {
 	{
 	    PCI_VENDOR_CNET,
 	    "CNet",
+	},
+	{
+	    PCI_VENDOR_SILICOM,
+	    "Silicom",
 	},
 	{
 	    PCI_VENDOR_LMC,

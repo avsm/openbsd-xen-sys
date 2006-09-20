@@ -32,7 +32,7 @@ POSSIBILITY OF SUCH DAMAGE.
 ***************************************************************************/
 
 /* $FreeBSD: if_em.h,v 1.26 2004/09/01 23:22:41 pdeuskar Exp $ */
-/* $OpenBSD: if_em.h,v 1.26 2006/07/07 02:56:18 brad Exp $ */
+/* $OpenBSD: if_em.h,v 1.28 2006/09/17 17:51:01 brad Exp $ */
 
 #ifndef _EM_H_DEFINED_
 #define _EM_H_DEFINED_
@@ -310,6 +310,12 @@ struct em_softc {
 	void		*sc_powerhook;
 	void		*sc_shutdownhook;
 
+#ifdef __STRICT_ALIGNMENT
+	/* Used for carrying forward alignment adjustments */
+	unsigned char	align_buf[ETHER_ALIGN];	/* tail of unaligned packet */
+	u_int8_t	align_buf_len;		/* bytes in tail */
+#endif /* __STRICT_ALIGNMENT */
+
 	/* Info about the board itself */
 	u_int32_t	part_num;
 	u_int8_t	link_active;
@@ -341,6 +347,7 @@ struct em_softc {
 	u_int32_t		txd_cmd;
 	struct em_buffer	*tx_buffer_area;
 	bus_dma_tag_t		txtag;		/* dma tag for tx */
+	bus_dmamap_t		rx_sparemap;
 
 	/*
 	 * Receive definitions
