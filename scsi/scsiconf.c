@@ -1,4 +1,4 @@
-/*	$OpenBSD: scsiconf.c,v 1.110 2006/07/23 14:34:55 krw Exp $	*/
+/*	$OpenBSD: scsiconf.c,v 1.112 2006/09/21 08:42:11 dlg Exp $	*/
 /*	$NetBSD: scsiconf.c,v 1.57 1996/05/02 01:09:01 neil Exp $	*/
 
 /*
@@ -173,17 +173,25 @@ int
 scsibusdetach(struct device *dev, int type)
 {
 	struct scsibus_softc		*sb = (struct scsibus_softc *)dev;
-	int				i, error;
+	int				i, j, error;
 
 	if ((error = config_detach_children(dev, type)) != 0)
 		return (error);
 
 	for (i = 0; i < sb->sc_buswidth; i++) {
-		if (sb->sc_link[i] != NULL)
+		if (sb->sc_link[i] != NULL) {
+			for (j = 0; j < sb->adapter_link->luns; j++) {
+				if (sb->sc_link[i][j] != NULL)
+					free(sb->sc_link[i][j], M_DEVBUF);
+			}
 			free(sb->sc_link[i], M_DEVBUF);
+		}
 	}
 
 	free(sb->sc_link, M_DEVBUF);
+
+	/* Free shared data. */
+	scsi_deinit();
 
 	return (0);
 }

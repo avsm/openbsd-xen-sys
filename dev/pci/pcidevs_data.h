@@ -2,7 +2,7 @@
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
- *	OpenBSD: pcidevs,v 1.1144 2006/09/19 14:06:07 reyk Exp 
+ *	OpenBSD: pcidevs,v 1.1149 2006/09/22 18:26:11 brad Exp 
  */
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
 
@@ -3347,6 +3347,10 @@ static const struct pci_known_product pci_known_products[] = {
 	    "C-Bus II-PCI",
 	},
 	{
+	    PCI_VENDOR_COROLLARY, PCI_PRODUCT_COROLLARY_CCF,
+	    "Cache Coherency Filter",
+	},
+	{
 	    PCI_VENDOR_CREATIVELABS, PCI_PRODUCT_CREATIVELABS_SBLIVE,
 	    "SoundBlaster Live",
 	},
@@ -4095,8 +4099,8 @@ static const struct pci_known_product pci_known_products[] = {
 	    "Smart Array",
 	},
 	{
-	    PCI_VENDOR_HP, PCI_PRODUCT_HP_HPSA_6,
-	    "Smart Array",
+	    PCI_VENDOR_HP, PCI_PRODUCT_HP_HPSAE500,
+	    "Smart Array E500",
 	},
 	{
 	    PCI_VENDOR_HP, PCI_PRODUCT_HP_HPSAP400,
@@ -4105,6 +4109,10 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_HP, PCI_PRODUCT_HP_HPSAP400I,
 	    "Smart Array P400i",
+	},
+	{
+	    PCI_VENDOR_HP, PCI_PRODUCT_HP_HPSA_6,
+	    "Smart Array",
 	},
 	{
 	    PCI_VENDOR_HP, PCI_PRODUCT_HP_HPSA_7,
@@ -4128,10 +4136,6 @@ static const struct pci_known_product pci_known_products[] = {
 	},
 	{
 	    PCI_VENDOR_HP, PCI_PRODUCT_HP_HPSA_12,
-	    "Smart Array",
-	},
-	{
-	    PCI_VENDOR_HP, PCI_PRODUCT_HP_HPSA_13,
 	    "Smart Array",
 	},
 	{
@@ -5023,6 +5027,10 @@ static const struct pci_known_product pci_known_products[] = {
 	    "82845 AGP",
 	},
 	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_5000_DMA,
+	    "5000 DMA Engine",
+	},
+	{
 	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82597EX_SR,
 	    "PRO/10GbE SR (82597EX)",
 	},
@@ -5527,6 +5535,14 @@ static const struct pci_known_product pci_known_products[] = {
 	    "5000X Host",
 	},
 	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_5000Z_HB,
+	    "5000Z Host",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_5000V_HB,
+	    "5000V Host",
+	},
+	{
 	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_5000_PCIE_1,
 	    "5000 PCIE",
 	},
@@ -5572,6 +5588,10 @@ static const struct pci_known_product pci_known_products[] = {
 	},
 	{
 	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_5000_PCIE_7,
+	    "5000 PCIE",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_5000_PCIE_8,
 	    "5000 PCIE",
 	},
 	{
@@ -5831,19 +5851,19 @@ static const struct pci_known_product pci_known_products[] = {
 	    "6321ESB USB",
 	},
 	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_PCIE_1,
+	    "6321ESB PCIE",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_PCIE_2,
+	    "6321ESB PCIE",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_PCIE_3,
+	    "6321ESB PCIE",
+	},
+	{
 	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_PCIE_4,
-	    "6321ESB PCIE",
-	},
-	{
-	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_PCIE_5,
-	    "6321ESB PCIE",
-	},
-	{
-	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_PCIE_6,
-	    "6321ESB PCIE",
-	},
-	{
-	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_PCIE_7,
 	    "6321ESB PCIE",
 	},
 	{
@@ -6143,7 +6163,7 @@ static const struct pci_known_product pci_known_products[] = {
 	    "82855PE AGP",
 	},
 	{
-	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_PCIE_1,
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_PCIE_5,
 	    "6321ESB PCIE",
 	},
 	{
@@ -6151,11 +6171,27 @@ static const struct pci_known_product pci_known_products[] = {
 	    "6321ESB PCIE-PCIX",
 	},
 	{
-	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_PCIE_2,
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_PCIE_6,
 	    "6321ESB PCIE",
 	},
 	{
-	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_PCIE_3,
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_PCIE_7,
+	    "6321ESB PCIE",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_PCIE_8,
+	    "6321ESB PCIE",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_PCIE_9,
+	    "6321ESB PCIE",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_PCIE_10,
+	    "6321ESB PCIE",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6321ESB_PCIE_11,
 	    "6321ESB PCIE",
 	},
 	{
@@ -6967,8 +7003,12 @@ static const struct pci_known_product pci_known_products[] = {
 	    "Yukon 88E8053",
 	},
 	{
-	    PCI_VENDOR_MARVELL, PCI_PRODUCT_MARVELL_YUKON_3,
-	    "Yukon",
+	    PCI_VENDOR_MARVELL, PCI_PRODUCT_MARVELL_YUKON_8055,
+	    "Yukon 88E8055",
+	},
+	{
+	    PCI_VENDOR_MARVELL, PCI_PRODUCT_MARVELL_YUKON_8056,
+	    "Yukon 88E8056",
 	},
 	{
 	    PCI_VENDOR_MARVELL, PCI_PRODUCT_MARVELL_YUKON_BELKIN,
@@ -8419,6 +8459,10 @@ static const struct pci_known_product pci_known_products[] = {
 	    "nForce LAN",
 	},
 	{
+	    PCI_VENDOR_NVIDIA, PCI_PRODUCT_NVIDIA_GEFORCE7300LE,
+	    "GeForce 7300 LE",
+	},
+	{
 	    PCI_VENDOR_NVIDIA, PCI_PRODUCT_NVIDIA_NFORCE2_PCHB,
 	    "nForce2 PCI",
 	},
@@ -9381,6 +9425,10 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_PLX, PCI_PRODUCT_PLX_1077,
 	    "I/O 1077",
+	},
+	{
+	    PCI_VENDOR_PLX, PCI_PRODUCT_PLX_8532_PCIE,
+	    "8532 PCIE",
 	},
 	{
 	    PCI_VENDOR_PLX, PCI_PRODUCT_PLX_9050,
