@@ -208,6 +208,15 @@
  */
 .section __xen_guest
         .ascii  "GUEST_OS=openbsd,GUEST_VER=3.0,XEN_VER=xen-3.0"
+#ifdef __NetBSD__
+        .ascii	",VIRT_BASE=0xc0100000" /* KERNTEXTOFF */
+#endif
+#ifdef DOM0OPS
+        .ascii	",HYPERCALL_PAGE=0x00000101"
+#else
+        .ascii	",HYPERCALL_PAGE=0x00000001"
+                /* (???+HYPERCALL_PAGE_OFFSET)/PAGE_SIZE) */
+#endif
         .ascii  ",LOADER=generic"
 #if (NKSYMS || defined(DDB) || defined(LKM)) && !defined(SYMTAB_SPACE)
         .ascii  ",BSD_SYMTAB"
@@ -550,6 +559,22 @@ start:
 
 	call	_C_LABEL(main)
 
+
+/* space for the hypercall call page */
+#define HYPERCALL_PAGE_OFFSET 0x1000
+.org HYPERCALL_PAGE_OFFSET
+ENTRY(hypercall_page)
+.skip 0x1000
+
+/*
+ * void proc_trampoline(void);
+ * This is a trampoline function pushed onto the stack of a newly created
+ * process in order to do some additional setup.  The trampoline is entered by
+ * cpu_switch()ing to the process, so we abuse the callee-saved registers used
+ * by cpu_switch() to store the information about the stub to call.
+ * NOTE: This function does not have a normal calling sequence!
+ */
+/* LINTSTUB: Func: void proc_trampoline(void) */
 NENTRY(proc_trampoline)
 #ifdef MULTIPROCESSOR
 	call	_C_LABEL(proc_trampoline_mp)
@@ -1464,9 +1489,8 @@ ENTRY(idle_loop)
 	addl	$4,%esp
 	jmp	idle_start
 1:
-	movl	$HYPERVISOR_sched_op,%eax
 	movl	$SCHEDOP_yield,%ebx
-	TRAP_INSTR
+	call	(hypercall_page + (HYPERVISOR_sched_op * 32))
 ENTRY(idle_start)
 	CLI(%eax)
 	cmpl	$0,_C_LABEL(whichqs)

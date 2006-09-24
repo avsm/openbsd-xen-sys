@@ -131,11 +131,14 @@ void hypervisor_set_ipending(u_int32_t, int, int);
  * Assembler stubs for hyper-calls.
  */
 
+/* hypercall via the hypercall call page */
+#define __str(x) #x
+#define _str(x) __str(x)
 #define _hypercall(name, input_const, output_const)	\
 	__asm volatile (				\
-	    TRAP_INSTR					\
+	    "call hypercall_page + ("_str(name)" * 32)"	\
 	    : output_const 				\
-	    : "0" (name), input_const			\
+	    : input_const				\
 	    : "memory" )
 
 #define _harg(...)	__VA_ARGS__
