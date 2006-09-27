@@ -2,7 +2,7 @@
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
- *	OpenBSD: pcidevs,v 1.1150 2006/09/25 23:09:10 brad Exp 
+ *	OpenBSD: pcidevs,v 1.1149 2006/09/22 18:26:11 brad Exp 
  */
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
 
@@ -3692,6 +3692,7 @@
 #define	PCI_PRODUCT_VIATECH_HDA	0x3288		/* HD Audio */
 #define	PCI_PRODUCT_VIATECH_UNICHROME_2	0x3344		/* S3 Unichrome PRO IGP */
 #define	PCI_PRODUCT_VIATECH_VT8251_SATA	0x3349		/* VT8251 SATA */
+#define	PCI_PRODUCT_VIATECH_VT8237A	0x3337		/* VT8237A South Bridge */
 #define	PCI_PRODUCT_VIATECH_K8M800_4	0x4204		/* K8M800 Host */
 #define	PCI_PRODUCT_VIATECH_K8T890_4	0x4238		/* K8T890 Host */
 #define	PCI_PRODUCT_VIATECH_PT880_4	0x4258		/* PT880 Host */
