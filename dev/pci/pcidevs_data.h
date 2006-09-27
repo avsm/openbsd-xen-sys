@@ -2,7 +2,7 @@
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
- *	OpenBSD: pcidevs,v 1.1151 2006/09/26 19:59:25 matthieu Exp 
+ *	OpenBSD: pcidevs,v 1.1149 2006/09/22 18:26:11 brad Exp 
  */
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
 
@@ -8895,10 +8895,6 @@ static const struct pci_known_product pci_known_products[] = {
 	    "MCP55 SATA",
 	},
 	{
-	    PCI_VENDOR_NVIDIA, PCI_PRODUCT_NVIDIA_GEFORCE7300GT,
-	    "GeForce 7300 GT",
-	},
-	{
 	    PCI_VENDOR_NVIDIA, PCI_PRODUCT_NVIDIA_MCP61_ISA,
 	    "MCP61 ISA",
 	},
@@ -11649,6 +11645,10 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_VIATECH, PCI_PRODUCT_VIATECH_VT8251_SATA,
 	    "VT8251 SATA",
+	},
+	{
+	    PCI_VENDOR_VIATECH, PCI_PRODUCT_VIATECH_VT8237A,
+	    "VT8237A South Bridge",
 	},
 	{
 	    PCI_VENDOR_VIATECH, PCI_PRODUCT_VIATECH_K8M800_4,
