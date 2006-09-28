@@ -115,9 +115,58 @@ static struct consdev xencons = {
 	NULL, NODEV, CN_NORMAL
 };
 
-#if 0
-static struct cnm_state xencons_cnm_state;
+
+/* XXXXXXXX - this is in MI code in NetBSD */
+/*
+ * Stuff to handle debugger magic key sequences.
+ */
+#define CNS_LEN                 128
+#define CNS_MAGIC_VAL(x)        ((x)&0x1ff)
+#define CNS_MAGIC_NEXT(x)       (((x)>>9)&0x7f)
+#define CNS_TERM                0x7f    /* End of sequence */
+
+typedef struct cnm_state {
+        int     cnm_state;
+        u_short *cnm_magic;
+} cnm_state_t;
+
+#ifdef DDB
+#include <ddb/db_var.h>
+#define cn_trap()       do { if (db_console) Debugger(); } while (0)
+#else
+#define cn_trap()
 #endif
+#define cn_isconsole(d) ((d) == cn_tab->cn_dev)
+void cn_init_magic(cnm_state_t *cnm);
+void cn_destroy_magic(cnm_state_t *cnm);
+int cn_set_magic(char *magic);
+int cn_get_magic(char *magic, int len);
+/* This should be called for each byte read */
+#ifndef cn_check_magic
+#define cn_check_magic(d, k, s)                                         \
+	do {                                                            \
+		if (cn_isconsole(d)) {                                  \
+			int v = (s).cnm_magic[(s).cnm_state];           \
+			if ((k) == CNS_MAGIC_VAL(v)) {                  \
+				(s).cnm_state = CNS_MAGIC_NEXT(v);      \
+				if ((s).cnm_state == CNS_TERM) {        \
+					cn_trap();                      \
+					(s).cnm_state = 0;              \
+				}                                       \
+			} else {                                        \
+				(s).cnm_state = 0;                      \
+			}                                               \
+		}                                                       \
+	} while (/* CONSTCOND */ 0)
+#endif
+
+/* Encode out-of-band events this way when passing to cn_check_magic() */
+#define CNC_BREAK               0x100
+
+/* XXXXXXXXXX - end of this part of cnmagic, more at the end of this file. */
+
+
+static struct cnm_state xencons_cnm_state;
 
 void		xenconsstart (struct tty *);
 int		xenconsparam (struct tty *, struct termios *);
@@ -436,9 +485,7 @@ xencons_tty_input(struct xencons_softc *sc, char* buf, int len)
 		return;
 
 	for (i = 0; i < len; i++) {
-#if 0
 		cn_check_magic(sc->sc_tty->t_dev, buf[i], xencons_cnm_state);
-#endif
 		(*linesw[tp->t_line].l_rint)(buf[i], tp);
 	}
 }
@@ -468,10 +515,8 @@ xenconscn_attach(void)
 
 	/* console ring mapped in locore.S */
 
-#if 0
 	cn_init_magic(&xencons_cnm_state);
 	cn_set_magic("+++++");
-#endif
 
 	xencons_isconsole = 1;
 }
@@ -491,9 +536,9 @@ xenconscn_getc(dev_t dev)
 	if (xen_start_info.flags & SIF_INITDOMAIN) {
 		while (HYPERVISOR_console_io(CONSOLEIO_read, 1, &c) == 0)
 			;
-#if 0
+
 		cn_check_magic(dev, c, xencons_cnm_state);
-#endif
+	
 		splx(s);
 		return c;
 	}
@@ -519,9 +564,9 @@ xenconscn_getc(dev_t dev)
 	    xencons_interface->in)];
 	x86_lfence();
 	xencons_interface->in_cons = cons + 1;
-#if 0
+
 	cn_check_magic(dev, c, xencons_cnm_state);
-#endif
+
 	splx(s);
 	return c;
 }
@@ -580,3 +625,128 @@ xenconsparam(struct tty *tp, struct termios *t)
 
 	return (0);
 }
+
+
+/* XXXXXXXX --- more cnmagic stuff. */
+#define ENCODE_STATE(c, n) (short)(((c)&0x1ff)|(((n)&0x7f)<<9))
+
+static unsigned short cn_magic[CNS_LEN];
+
+/*
+ * Initialize a cnm_state_t.
+ */
+void
+cn_init_magic(cnm_state_t *cnm)
+{
+	cnm->cnm_state = 0;
+	cnm->cnm_magic = cn_magic;
+}
+
+/*
+ * Destroy a cnm_state_t.
+ */
+void
+cn_destroy_magic(cnm_state_t *cnm)
+{
+	cnm->cnm_state = 0;
+	cnm->cnm_magic = NULL;
+}
+
+/*
+ * Translate a magic string to a state
+ * machine table.
+ */
+int
+cn_set_magic(char *magic)
+{
+	unsigned int i, c, n;
+	unsigned short m[CNS_LEN];
+
+	for (i=0; i<CNS_LEN; i++) {
+		c = (*magic++)&0xff;
+		n = *magic ? i+1 : CNS_TERM;
+		switch (c) {
+		case 0:
+			/* End of string */
+			if (i == 0) {
+				/* empty string? */
+				cn_magic[0] = 0;
+#ifdef DEBUG
+				printf("cn_set_magic(): empty!\n");
+#endif
+				return (0);
+			}
+			do {
+				cn_magic[i] = m[i];
+			} while (i--);
+			return(0);
+		case 0x27:
+			/* Escape sequence */
+			c = (*magic++)&0xff;
+			n = *magic ? i+1 : CNS_TERM;
+			switch (c) {
+			case 0x27:
+				break;
+			case 0x01:
+				/* BREAK */
+				c = CNC_BREAK;
+				break;
+			case 0x02:
+				/* NUL */
+				c = 0;
+				break;
+			}
+			/* FALLTHROUGH */
+		default:
+			/* Transition to the next state. */
+#ifdef DEBUG
+			if (!cold)
+				printf("mag %d %x:%x\n", i, c, n);
+#endif
+			m[i] = ENCODE_STATE(c, n);
+			break;
+		}
+	}
+	return (EINVAL);
+}
+
+/*
+ * Translate a state machine table back to
+ * a magic string.
+ */
+int
+cn_get_magic(char *magic, int maglen)
+{
+	unsigned int i, c;
+
+	for (i=0; i<CNS_LEN; i++) {
+		c = cn_magic[i];
+		/* Translate a character */
+		switch (CNS_MAGIC_VAL(c)) {
+		case CNC_BREAK:
+			*magic++ = 0x27;
+			*magic++ = 0x01;
+			break;
+		case 0:
+			*magic++ = 0x27;
+			*magic++ = 0x02;
+			break;
+		case 0x27:
+			*magic++ = 0x27;
+			*magic++ = 0x27;
+			break;
+		default:
+			*magic++ = (c&0x0ff);
+			break;
+		}
+		/* Now go to the next state */
+		i = CNS_MAGIC_NEXT(c);
+		if (i == CNS_TERM || i == 0) {
+			/* Either termination state or empty machine */
+			*magic++ = 0;
+			return (0);
+		}
+	}
+	return (EINVAL);
+}
+
