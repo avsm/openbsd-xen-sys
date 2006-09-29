@@ -362,6 +362,7 @@ xenbus_probe_device_type(struct xen_bus_type *bus, const char *type)
 		if (err != 0) {
 			printf("xenbus: can't get backend details "
 			    "for %s (%d)\n", xbusd->xbusd_path, err);
+			free(xbusd, M_DEVBUF);
 			break;
 		}
 		xbusd->xbusd_u.f.f_dev = config_found(xenbus_sc, &xa, xenbus_print);
