@@ -1,4 +1,4 @@
-$OpenBSD: pcidevs,v 1.1151 2006/09/26 19:59:25 matthieu Exp $
+$OpenBSD: pcidevs,v 1.1152 2006/09/29 04:56:31 brad Exp $
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
 
 /*
