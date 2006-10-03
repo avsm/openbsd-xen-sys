@@ -348,7 +348,7 @@ xpmap_init(void)
 	uint32_t i, j;
 #if defined(XENDEBUG_LOW)
 	int bufpos;
-	//extern char kernel_text, _etext, __bss_start, end, *esym;
+	extern char kernel_text, _etext, __bss_start, end, *esym;
 #endif
 
 	xpmap_phys_to_machine_mapping = (void *)xen_start_info.mfn_list;
@@ -572,8 +572,8 @@ xpq_flush_queue(void)
 
 	XENPRINTK2(("flush queue %p entries %d\n", xpq_queue, xpq_idx));
 	for (i = 0; i < xpq_idx; i++)
-		XENPRINTK2(("%d: %p %08x\n", i, xpq_queue[i].pde.ptr,
-		    xpq_queue[i].pde.val));
+		XENPRINTK2(("%d: %p %08x\n", i, xpq_queue[i].ptr,
+		    xpq_queue[i].val));
 	if (xpq_idx != 0 &&
 	    HYPERVISOR_mmu_update_self(xpq_queue, xpq_idx, &ok) < 0) {
 #ifdef XENDEBUG
@@ -763,20 +763,20 @@ xpq_debug_dump(void)
 
 	XENPRINTK2(("idx: %d\n", xpq_idx));
 	for (i = 0; i < xpq_idx; i++) {
-		snprintf(XBUF, sizeof(XBUF), "%p %08x ", xpq_queue[i].pte.ptr,
-		    xpq_queue[i].pte.val);
+		snprintf(XBUF, sizeof(XBUF), "%p %08x ", xpq_queue[i].ptr,
+		    xpq_queue[i].val);
 		if (++i < xpq_idx)
 			snprintf(XBUF + strlen(XBUF), sizeof(XBUF) -
 			    strlen(XBUF), "%p %08x ",
-			    xpq_queue[i].pte.ptr, xpq_queue[i].pte.val);
+			    xpq_queue[i].ptr, xpq_queue[i].val);
 		if (++i < xpq_idx)
 			snprintf(XBUF + strlen(XBUF), sizeof(XBUF) -
 			    strlen(XBUF),"%p %08x ",
-			    xpq_queue[i].pte.ptr, xpq_queue[i].pte.val);
+			    xpq_queue[i].ptr, xpq_queue[i].val);
 		if (++i < xpq_idx)
 			snprintf(XBUF + strlen(XBUF), sizeof(XBUF) -
-			    strlen(XBUF), "%p %08x ", xpq_queue[i].pte.ptr,
-			    xpq_queue[i].pte.val);
+			    strlen(XBUF), "%p %08x ", xpq_queue[i].ptr,
+			    xpq_queue[i].val);
 		XENPRINTK2(("%d: %s\n", xpq_idx, XBUF));
 	}
 }
