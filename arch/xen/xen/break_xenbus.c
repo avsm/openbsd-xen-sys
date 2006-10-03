@@ -116,7 +116,8 @@ again:
 	free(reqstr, M_DEVBUF);
 
 	/* Now enter ddb */
-//	panic("received BREAK. Entering ddb...\n");
+	/* Have a KitKat, have a BREAK */
+
 	Debugger();
 }
 
