@@ -211,6 +211,9 @@
 #ifdef __NetBSD__
         .ascii	",VIRT_BASE=0xc0100000" /* KERNTEXTOFF */
 #endif
+#ifdef __OpenBSD__
+	.ascii	",VIRT_BASE=0xd0100000" /* KERNTEXTOFF */
+#endif
 #ifdef DOM0OPS
         .ascii	",HYPERCALL_PAGE=0x00000101"
 #else
@@ -529,11 +532,12 @@ start:
 
 	call	xpmap_init
 
+	/* cr0 is 0x8005003b */
+
 	/* Relocate atdevbase. */
 	movl	_C_LABEL(avail_start),%edx
 	movl    %edx,_C_LABEL(HYPERVISOR_shared_info)
 	addl    $PAGE_SIZE,%edx
-	movl    %edx,_C_LABEL(atdevbase)
 
 	/* set console and xenstore pages virtual address if not domain0 */
 	movl	RELOC(start_info_union)+START_INFO_FLAGS,%eax
@@ -543,6 +547,8 @@ start:
 	addl	$PAGE_SIZE,%edx			# xencons_interface
 	movl	%edx,_C_LABEL(xenstore_interface)
 	addl	$PAGE_SIZE,%edx			# xenstore_interface
+1:
+	movl    %edx,_C_LABEL(atdevbase)
 
 	/* Set up bootstrap stack. */
 	leal	(PROC0STACK)(%esi),%eax
