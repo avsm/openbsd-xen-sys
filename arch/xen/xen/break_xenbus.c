@@ -114,10 +114,6 @@ again:
 	}
 
 	free(reqstr, M_DEVBUF);
-
-	/* Now enter ddb */
-	/* Have a KitKat, have a BREAK */
-
 	Debugger();
 }
 
