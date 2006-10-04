@@ -16,7 +16,7 @@ device hypervisor {}: isabus, pcibus, xendevbus
 attach hypervisor at hypervisorbus
 file	arch/xen/xen/hypervisor.c	hypervisor needs-flag
 file	arch/xen/xen/shutdown_xenbus.c	hypervisor
-file	arch/xen/xen/break_xenbus.c	hypervisor
+file	arch/xen/xen/sysrq_xenbus.c	hypervisor
 
 # Xen clock driver
 file	arch/xen/xen/clock.c

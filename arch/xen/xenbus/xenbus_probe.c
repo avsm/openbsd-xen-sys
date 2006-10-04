@@ -41,7 +41,7 @@
 #include <machine/xenbus.h>
 #include <machine/evtchn.h>
 #include <machine/shutdown_xenbus.h>
-#include <machine/break_xenbus.h>
+#include <machine/sysrq_xenbus.h>
 #include <machine/xen.h>
 #include "xenbus_comms.h"
 
@@ -449,7 +449,7 @@ xenbus_probe(void *unused)
 	be_watch.xbw_callback = backend_changed;
 	register_xenbus_watch(&be_watch);
 	shutdown_xenbus_setup();
-	break_xenbus_setup();
+	sysrq_xenbus_setup();
 
 	/* Notify others that xenstore is up */
 	//notifier_call_chain(&xenstore_chain, 0, NULL);

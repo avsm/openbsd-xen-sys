@@ -26,9 +26,9 @@
  * SUCH DAMAGE.
  */
 
-#ifndef _XEN_BREAK_XENBUS_H_
-#define	_XEN_BREAK_XENBUS_H_
+#ifndef _XEN_SYSRQ_XENBUS_H_
+#define	_XEN_SYSRQ_XENBUS_H_
 
-void break_xenbus_setup(void);
+void sysrq_xenbus_setup(void);
 
-#endif /* _XEN_BREAK_XENBUS_H_ */
+#endif /* _XEN_SYSRQ_XENBUS_H_ */

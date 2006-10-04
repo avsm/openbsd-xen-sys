@@ -57,7 +57,7 @@
  */
 
 /*
- * watch "control/break" and generate sysmon events.
+ * watch "control/sysrq" and generate sysmon events.
  */
 
 #include <sys/param.h>
@@ -65,14 +65,14 @@
 #include <sys/malloc.h>
 
 #include <machine/xenbus.h>
-#include <machine/break_xenbus.h>
+#include <machine/sysrq_xenbus.h>
 
-#define	BREAK_PATH	"control"
-#define	BREAK_NAME	"break"
+#define	SYSRQ_PATH	"control"
+#define	SYSRQ_NAME	"sysrq"
 
 
 static void
-xenbus_break_handler(struct xenbus_watch *watch, const char **vec,
+xenbus_sysrq_handler(struct xenbus_watch *watch, const char **vec,
     unsigned int len)
 {
 
@@ -80,13 +80,14 @@ xenbus_break_handler(struct xenbus_watch *watch, const char **vec,
 	int error;
 	char *reqstr;
 	unsigned int reqstrlen;
+	char letter;
 
 again:
 	xbt = xenbus_transaction_start();
 	if (xbt == NULL) {
 		return;
 	}
-	error = xenbus_read(xbt, BREAK_PATH, BREAK_NAME,
+	error = xenbus_read(xbt, SYSRQ_PATH, SYSRQ_NAME,
 	    &reqstrlen, &reqstr);
 	if (error) {
 		if (error != ENOENT) {
@@ -100,7 +101,7 @@ again:
 		return;
 	}
 	KASSERT(strlen(reqstr) == reqstrlen);
-	error = xenbus_rm(xbt, BREAK_PATH, BREAK_NAME);
+	error = xenbus_rm(xbt, SYSRQ_PATH, SYSRQ_NAME);
 	if (error) {
 		printf("%s: xenbus_rm %d\n", __func__, error);
 	}
@@ -113,20 +114,85 @@ again:
 		printf("%s: xenbus_transaction_end 2 %d\n", __func__, error);
 	}
 
+	/* We know, xm sysrq only sends one character. So just take the one
+	 * and forget the rest.
+	 */
+	letter = reqstr[0];
 	free(reqstr, M_DEVBUF);
-	Debugger();
+
+	switch (letter) {
+	case 'k':
+		/* Kills all programs on the current virtual console.
+		 */
+		printf("%s: letter '%c' not implemented\n", __func__, letter);
+		break;
+	case 'b':
+		/* Will immediately reboot the system without syncing or unmounting
+		 * your disks.
+		 */
+		printf("%s: letter '%c' not implemented\n", __func__, letter);
+		break;
+	case 'c':
+		/* Perform a crashdump and reboot */
+		printf("%s: letter '%c' not implemented\n", __func__, letter);
+		break;
+	case 'o':
+		/* Will shut your system off */
+		printf("%s: letter '%c' not implemented\n", __func__, letter);
+		break;
+	case 's':
+		/* Will attempt to sync all mounted filesystems. */
+		printf("%s: letter '%c' not implemented\n", __func__, letter);
+		break;
+	case 'u':
+		/* Will attempt to re-mount all filesystems read-only */
+		printf("%s: letter '%c' not implemented\n", __func__, letter);
+		break;
+	case 'p':
+		/* Will dump your current registers and flags to your console. */
+		printf("%s: letter '%c' not implemented\n", __func__, letter);
+		break;
+	case 't':
+		/* Will dump a list of current tasks and their information
+		 * to your console.
+		 */
+		printf("%s: letter '%c' not implemented\n", __func__, letter);
+		break;
+	case 'e':
+		/* Send a SIGTERM to all processes, except for init */
+		printf("%s: letter '%c' not implemented\n", __func__, letter);
+		break;
+	case 'f':
+		/* Send a SIGKILL to all processes, except for init */
+		printf("%s: letter '%c' not implemented\n", __func__, letter);
+		break;
+	case 'l':
+		/* Send a SIGKILL to all processes, INCLUDING init
+		 * (Your system will be non-functional after this.)
+		 */
+		printf("%s: letter '%c' not implemented\n", __func__, letter);
+		break;
+
+	case 'D':
+		Debugger();
+		break;
+	default:
+		printf("%s: unknown letter '%c'\n", __func__, letter);
+		break;
+	}
+
 }
 
-static struct xenbus_watch xenbus_break_watch = {
-	.node = BREAK_PATH "/" BREAK_NAME, /* XXX */
-	.xbw_callback = xenbus_break_handler,
+static struct xenbus_watch xenbus_sysrq_watch = {
+	.node = SYSRQ_PATH "/" SYSRQ_NAME, /* XXX */
+	.xbw_callback = xenbus_sysrq_handler,
 };
 
 void
-break_xenbus_setup(void)
+sysrq_xenbus_setup(void)
 {
 
-	if (register_xenbus_watch(&xenbus_break_watch)) {
-		printf("%s: unable to watch control/break\n", __func__);
+	if (register_xenbus_watch(&xenbus_sysrq_watch)) {
+		printf("%s: unable to watch control/sysrq\n", __func__);
 	}
 }
