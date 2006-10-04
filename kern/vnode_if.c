@@ -1066,7 +1066,7 @@ struct vnodeop_desc vop_bmap_desc = {
 	NULL,
 };
 
-int VOP_BMAP(struct vnode *vp, daddr_t bn, struct vnode **vpp, daddr_t *bnp, 
+int VOP_BMAP(struct vnode *vp, daddr_t bn, struct vnode **vpp, daddr64_t *bnp, 
     int *runp)
 {
 	struct vop_bmap_args a;
