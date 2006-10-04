@@ -735,6 +735,7 @@ xbdstart(struct dk_softc *dksc, struct buf *bp)
 {
 	struct xbd_xenbus_softc *sc = xbd_cd.cd_devs[DISKUNIT(bp->b_dev)];
 	struct xbd_req *xbdreq;
+	struct buf *bp2;
 	blkif_request_t *req;
 	int ret = 0, runqueue = 1;
 	size_t bcount, off;
@@ -831,7 +832,8 @@ xbdstart(struct dk_softc *dksc, struct buf *bp)
 	}
 	xbdreq->req_nr_segments = req->nr_segments = seg;
 	sc->sc_ring.req_prod_pvt++;
-	if (BUFQ_GET(sc->sc_dksc.sc_bufq)) {
+	if ((bp2 = BUFQ_GET(sc->sc_dksc.sc_bufq)) != NULL) {
+		BUFQ_ADD(sc->sc_dksc.sc_bufq, bp2); /* re-add */
 		/* we will be called again; don't notify guest yet */
 		runqueue = 0;
 	}
