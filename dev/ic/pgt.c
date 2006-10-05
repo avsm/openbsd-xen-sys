@@ -1,4 +1,4 @@
-/*	$OpenBSD: pgt.c,v 1.24 2006/10/04 14:23:12 mglocker Exp $  */
+/*	$OpenBSD: pgt.c,v 1.28 2006/10/05 12:15:43 mglocker Exp $  */
 
 /*
  * Copyright (c) 2006 Claudio Jeker <claudio@openbsd.org>
@@ -176,15 +176,11 @@ void	 pgt_start(struct ifnet *);
 int	 pgt_ioctl(struct ifnet *, u_long, caddr_t);
 void	 pgt_obj_bss2scanres(struct pgt_softc *,
 	     struct pgt_obj_bss *, struct wi_scan_res *, uint32_t);
-#if 0
-int	 pgt_80211_set(struct pgt_softc *, struct ieee80211req *);
-#endif
 void	 node_mark_active_ap(void *, struct ieee80211_node *);
 void	 node_mark_active_adhoc(void *, struct ieee80211_node *);
 void	 pgt_watchdog(struct ifnet *);
 int	 pgt_init(struct ifnet *);
 void	 pgt_update_hw_from_sw(struct pgt_softc *, int, int);
-void	 pgt_update_hw_from_nodes(struct pgt_softc *);
 void	 pgt_hostap_handle_mlme(struct pgt_softc *, uint32_t,
 	     struct pgt_obj_mlme *);
 void	 pgt_update_sw_from_hw(struct pgt_softc *,
@@ -593,7 +589,6 @@ pgt_attach(void *xsc)
 	TAILQ_INIT(&sc->sc_mgmtinprog);
 	TAILQ_INIT(&sc->sc_kthread.sck_traps);
 	sc->sc_flags |= SC_NEEDS_FIRMWARE | SC_UNINITIALIZED;
-
 	sc->sc_80211_ioc_auth = IEEE80211_AUTH_OPEN;
 
 	error = pgt_reset(sc);
@@ -2227,10 +2222,6 @@ pgt_start(struct ifnet *ifp)
 int
 pgt_ioctl(struct ifnet *ifp, u_long cmd, caddr_t req)
 {
-#if 0
-	struct ifprismoidreq *preq;
-	struct ieee80211req *ireq;
-#endif
 	struct pgt_softc *sc = ifp->if_softc;
 	struct ifaddr *ifa;
 	struct ifreq *ifr;
@@ -2248,25 +2239,6 @@ pgt_ioctl(struct ifnet *ifp, u_long cmd, caddr_t req)
 
 	s = splnet();
 	switch (cmd) {
-#if 0
-	case SIOCGPRISMOID:
-	case SIOCSPRISMOID:
-		error = suser(curthread);
-		if (error)
-			return (error);
-		preq = (struct ifprismoidreq *)req;
-		if (preq->ifr_oidlen > sizeof(preq->ifr_oiddata))
-			return (ENOMEM);
-		pgt_enter_critical(sc);
-		if (cmd == SIOCGPRISMOID)
-			error = pgt_oid_retrieve(sc, preq->ifr_oid,
-			    preq->ifr_oiddata, preq->ifr_oidlen);
-		else
-			error = pgt_oid_set(sc, preq->ifr_oid,
-			    preq->ifr_oiddata, preq->ifr_oidlen);
-		pgt_exit_critical(sc);
-		break;
-#endif
 	case SIOCS80211SCAN:
 		/*
 		 * This chip scans always as soon as it gets initialized.
@@ -2437,116 +2409,6 @@ pgt_obj_bss2scanres(struct pgt_softc *sc, struct pgt_obj_bss *pob,
 	}
 	memcpy(scanres, &ap, WI_PRISM2_RES_SIZE);
 }
-
-#if 0
-int
-pgt_80211_set(struct pgt_softc *sc, struct ieee80211req *ireq)
-{
-	struct ieee80211req_mlme mlme;
-	struct ieee80211com *ic;
-	int error;
-
-	ic = &sc->sc_ic;
-	switch (ireq->i_type) {
-	/*
-	 * These are 802.11 requests we want to let fall through to
-	 * net80211 but do not need a reset afterward.
-	 */
-	case IEEE80211_POWERSAVE_OFF:
-	case IEEE80211_POWERSAVE_ON:
-		error = ieee80211_ioctl(&ic->ic_if, SIOCS80211,
-		    (caddr_t)ireq);
-		if (error == ENETRESET)
-			error = 0;
-		break;
-	/*
-	 * These are 802.11 requests we want to let fall through to
-	 * net80211 but then use their results without doing a full
-	 * reset afterward.
-	 */
-	case IEEE80211_IOC_WEPKEY:
-	case IEEE80211_IOC_WEPTXKEY:
-		error = ieee80211_ioctl(&ic->ic_if, SIOCS80211, (caddr_t)ireq);
-		if (error == ENETRESET) {
-			pgt_update_hw_from_sw(sc,
-			    ic->ic_state != IEEE80211_S_INIT,
-			    ic->ic_opmode != IEEE80211_M_MONITOR);
-			error = 0;
-		}
-		break;
-	case IEEE80211_IOC_WEP:
-		switch (ireq->i_val) {
-		case IEEE80211_WEP_OFF:
-		case IEEE80211_WEP_ON:
-		case IEEE80211_WEP_MIXED:
-			error = 0;
-			break;
-		default:
-			error = EINVAL;
-		}
-		if (error)
-			break;
-		if (sc->sc_80211_ioc_wep != ireq->i_val) {
-			sc->sc_80211_ioc_wep = ireq->i_val;
-			pgt_update_hw_from_sw(sc, 0,
-			    ic->ic_opmode != IEEE80211_M_MONITOR);
-			error = 0;
-		} else
-			error = 0;
-		break;
-	case IEEE80211_IOC_AUTHMODE:
-		switch (ireq->i_val) {
-		case IEEE80211_AUTH_NONE:
-		case IEEE80211_AUTH_OPEN:
-		case IEEE80211_AUTH_SHARED:
-			error = 0;
-			break;
-		default:
-			error = EINVAL;
-		}
-		if (error)
-			break;
-		if (sc->sc_80211_ioc_auth != ireq->i_val) {
-			sc->sc_80211_ioc_auth = ireq->i_val;
-			pgt_update_hw_from_sw(sc, 0, 0);
-			error = 0;
-		} else
-			error = 0;
-		break;
-	case IEEE80211_IOC_MLME:
-		if (ireq->i_len != sizeof(mlme)) {
-			error = EINVAL;
-			break;
-		}
-		error = copyin(ireq->i_data, &mlme, sizeof(mlme));
-		if (error)
-			break;
-		pgt_enter_critical(sc);
-		switch (ic->ic_opmode) {
-		case IEEE80211_M_STA:
-			error = pgt_do_mlme_sta(sc, &mlme);
-			break;
-		case IEEE80211_M_HOSTAP:
-			error = pgt_do_mlme_hostap(sc, &mlme);
-			break;
-		case IEEE80211_M_IBSS:
-			error = pgt_do_mlme_adhoc(sc, &mlme);
-			break;
-		default:
-			error = EINVAL;
-			break;
-		}
-		pgt_exit_critical(sc);
-		if (error == 0)
-			error = copyout(&mlme, ireq->i_data, sizeof(mlme));
-		break;
-	default:
-		error = EOPNOTSUPP;
-		break;
-	}
-	return (error);
-}
-#endif
 
 void
 node_mark_active_ap(void *arg, struct ieee80211_node *ni)
@@ -2923,71 +2785,6 @@ badopmode:
 	}
 }
 
-/*
- * After doing a soft-reinitialization, we will restore settings from
- * our pgt_ieee80211_nodes.  As we also lock the node list with our
- * softc mutex, unless we were to drop that the node list will remain
- * valid (see pgt_watchdog()).
- */
-void
-pgt_update_hw_from_nodes(struct pgt_softc *sc)
-{
-	struct pgt_ieee80211_node *pin;
-#if 0
-	struct ieee80211_node *ni;
-#endif
-	struct pgt_ieee80211_node **addresses;
-	size_t i, n;
-	int s;
-
-	n = 0;
-#if 0
-	TAILQ_FOREACH(ni, &sc->sc_ic.ic_node, ni_list) {
-		pin = (struct pgt_ieee80211_node *)ni;
-		if (pin->pin_dot1x_auth != pin->pin_dot1x_auth_desired)
-			n++;
-	}
-#endif
-	if (n == 0)
-		return;
-	addresses = malloc(sizeof(*addresses) * n, M_DEVBUF, M_NOWAIT);
-	if (addresses == NULL)
-		return;
-	n = 0;
-#if 0
-	TAILQ_FOREACH(ni, &sc->sc_ic.ic_node, ni_list) {
-		pin = (struct pgt_ieee80211_node *)ni;
-		if (pin->pin_dot1x_auth != pin->pin_dot1x_auth_desired) {
-			addresses[n++] = pin;
-			ieee80211_ref_node(&pin->pin_node);
-		}
-	}
-#endif
-	s = splnet();
-	for (i = 0; i < n; i++) {
-		pin = addresses[i];
-		if (pgt_oid_set(sc,
-		    pin->pin_dot1x_auth_desired == PIN_DOT1X_AUTHORIZED ?
-		    PGT_OID_EAPAUTHSTA : PGT_OID_EAPUNAUTHSTA,
-		    pin->pin_node.ni_macaddr, sizeof(pin->pin_node.ni_macaddr))
-		    == 0) {
-			pin->pin_dot1x_auth = pin->pin_dot1x_auth_desired;
-			DPRINTF(("%s: %02x:%02x:%02x:%02x:%02x:%02x "
-			    "reauthorized to %d\n", __func__,
-			    pin->pin_node.ni_macaddr[0],
-			    pin->pin_node.ni_macaddr[1],
-			    pin->pin_node.ni_macaddr[2],
-			    pin->pin_node.ni_macaddr[3],
-			    pin->pin_node.ni_macaddr[4],
-			    pin->pin_node.ni_macaddr[5],
-			    pin->pin_dot1x_auth));
-		}
-		ieee80211_release_node(&sc->sc_ic, &pin->pin_node);
-	}
-	splx(s);
-	free(addresses, M_DEVBUF);
-}
-
 void
 pgt_hostap_handle_mlme(struct pgt_softc *sc, uint32_t oid,
     struct pgt_obj_mlme *mlme)
@@ -3156,19 +2953,9 @@ pgt_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 	case IEEE80211_S_SCAN:
 		ic->ic_if.if_timer = 1;
 		ic->ic_mgt_timer = 0;
-		if (sc->sc_flags & SC_NOFREE_ALLNODES) {
-#if 0
-			struct ieee80211_node *ni;
-			struct pgt_ieee80211_node *pin;
-
-			/* Locked already by pff mutex. */
-			TAILQ_FOREACH(ni, &ic->ic_node, ni_list) {
-				pin = (struct pgt_ieee80211_node *)ni;
-				pin->pin_dot1x_auth = PIN_DOT1X_UNAUTHORIZED;
-			}
-#endif
+		if (sc->sc_flags & SC_NOFREE_ALLNODES)
 			sc->sc_flags &= ~SC_NOFREE_ALLNODES;
-		} else
+		else
 			ieee80211_free_allnodes(ic);
 
 		/* Just use any old channel; we override it anyway. */
@@ -3177,7 +2964,6 @@ pgt_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 		break;
 	case IEEE80211_S_RUN:
 		ic->ic_if.if_timer = 1;
-		pgt_update_hw_from_nodes(sc);
 		break;
 	default:
 		break;
