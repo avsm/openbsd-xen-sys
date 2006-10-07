@@ -1,0 +1,17 @@
+#
+# System bus types
+#
+
+define hypervisorbus {}
+define xendevbus {}
+define mainbus {[apid = -1]}
+
+device mainbus: hypervisorbus, mainbus
+attach mainbus at root
+file	arch/xen/amd64/mainbus.c
+
+# Xenbus
+include "../../../arch/xen/xenbus/files.xen_xenbus"
+
+# Common files and drivers
+include "../../../arch/xen/xen/files.xen_xen"

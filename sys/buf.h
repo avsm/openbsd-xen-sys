@@ -1,4 +1,4 @@
-/*	$OpenBSD: buf.h,v 1.49 2006/09/22 23:29:45 mickey Exp $	*/
+/*	$OpenBSD: buf.h,v 1.46 2004/11/30 12:39:43 pedro Exp $	*/
 /*	$NetBSD: buf.h,v 1.25 1997/04/09 21:12:17 mycroft Exp $	*/
 
 /*
@@ -98,6 +98,8 @@ struct buf {
 	int	b_validoff;		/* Offset in buffer of valid region. */
 	int	b_validend;		/* Offset of end of valid region. */
  	struct	workhead b_dep;		/* List of filesystem dependencies. */
+
+	void *b_private;		/* private data for owner */
 };
 
 /*
@@ -151,6 +153,7 @@ struct buf *bufq_default_get(struct bufq *);
 #define	B_DONE		0x00000200	/* I/O completed. */
 #define	B_EINTR		0x00000400	/* I/O was interrupted */
 #define	B_ERROR		0x00000800	/* I/O error occurred. */
+#define	B_GATHERED	0x00001000	/* LFS: already in a segment. */
 #define	B_INVAL		0x00002000	/* Does not contain valid info. */
 #define	B_LOCKED	0x00004000	/* Locked in core (not reusable). */
 #define	B_NOCACHE	0x00008000	/* Do not cache block after use. */
@@ -170,7 +173,7 @@ struct buf *bufq_default_get(struct bufq *);
 #define	B_PDAEMON	0x10000000	/* I/O started by pagedaemon */
 
 #define	B_BITS	"\010\001AGE\002NEEDCOMMIT\003ASYNC\004BAD\005BUSY\006CACHE" \
-    "\007CALL\010DELWRI\011DIRTY\012DONE\013EINTR\014ERROR" \
+    "\007CALL\010DELWRI\011DIRTY\012DONE\013EINTR\014ERROR\015GATHERED" \
     "\016INVAL\017LOCKED\020NOCACHE\021PAGET\022PGIN\023PHYS\024RAW\025READ" \
     "\026TAPE\027UAREA\030WANTED\031WRITEINPROG\032XXX\033DEFERRED" \
     "\034SCANNED\035PDAEMON"
@@ -203,13 +206,13 @@ struct cluster_save {
 #define B_SYNC		0x02	/* Do all allocations synchronously. */
 
 struct cluster_info {
-	daddr64_t	ci_lastr;	/* last read (read-ahead) */
-	daddr64_t	ci_lastw;	/* last write (write cluster) */
-	daddr64_t	ci_cstart;	/* start block of cluster */
-	daddr64_t	ci_lasta;	/* last allocation */
-	int		ci_clen; 	/* length of current cluster */
-	int		ci_ralen;	/* Read-ahead length */
-	daddr64_t	ci_maxra;	/* last readahead block */
+	daddr64_t	ci_lastr;		/* last read (read-ahead) */
+	daddr64_t	ci_lastw;		/* last write (write cluster) */
+	daddr64_t	ci_cstart;		/* start block of cluster */
+	daddr64_t	ci_lasta;		/* last allocation */
+	int		ci_clen;		/* length of current cluster */
+	int		ci_ralen;		/* Read-ahead length */
+	daddr64_t	ci_maxra;		/* last readahead block */
 };
 
 #ifdef _KERNEL
