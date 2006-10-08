@@ -1,0 +1,59 @@
+Index: dev/ksyms.c
+===================================================================
+RCS file: /mount/p4/cvs/openbsd/src/sys/dev/ksyms.c,v
+retrieving revision 1.16
+diff -u -p -r1.16 ksyms.c
+--- dev/ksyms.c	9 Aug 2004 22:22:50 -0000	1.16
++++ dev/ksyms.c	28 Mar 2006 11:18:08 -0000
+@@ -41,7 +41,7 @@
+ #include <machine/cpu.h>
+ 
+ extern char *esym;				/* end of symbol table */
+-#if defined(__sparc64__) || defined(__mips__)
++#if defined(__sparc64__) || defined(__mips__) || defined(xen)
+ extern char *ssym;				/* end of kernel */
+ #else
+ extern long end;				/* end of kernel */
+@@ -64,7 +64,7 @@ ksymsattach(num)
+ 	int num;
+ {
+ 
+-#if defined(__sparc64__) || defined(__mips__)
++#if defined(__sparc64__) || defined(__mips__) || defined(xen)
+ 	if (esym <= ssym) {
+ 		printf("/dev/ksyms: Symbol table not valid.\n");
+ 		return;
+@@ -78,7 +78,7 @@ ksymsattach(num)
+ 
+ #ifdef _NLIST_DO_ELF
+ 	do {
+-#if defined(__sparc64__) || defined(__mips__)
++#if defined(__sparc64__) || defined(__mips__) || defined(xen)
+ 		caddr_t symtab = ssym;
+ #else
+ 		caddr_t symtab = (caddr_t)&end;
+@@ -126,7 +126,11 @@ ksymsattach(num)
+ 		 *	a_text - fake text segment (struct exec only)
+ 		 *	a_syms - size of symbol table
+ 		 */
++#if defined(xen)
++		caddr_t symtab = (char *)(&ssym + 1); 
++#else
+ 		caddr_t symtab = (char *)(&end + 1);
++#endif
+ 		struct exec *k1;
+ 
+ 		ksym_head_size = __LDPGSZ;
+@@ -141,8 +145,11 @@ ksymsattach(num)
+ 
+ 		N_SETMAGIC(*k1, ZMAGIC, MID_MACHINE, 0);
+ 		k1->a_text = __LDPGSZ;
++#if defined(xen)
++		k1->a_syms = *ssym;
++#else
+ 		k1->a_syms = end;
+-
++#endif
+ 		ksym_syms = symtab;
+ 		ksym_syms_size = (size_t)(esym - symtab);
+ 	}
