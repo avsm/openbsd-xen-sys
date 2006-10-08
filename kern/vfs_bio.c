@@ -235,6 +235,7 @@ static __inline struct buf *
 bio_doread(struct vnode *vp, daddr_t blkno, int size, int async)
 {
 	struct buf *bp;
+	struct proc *p = (curproc != NULL ? curproc : &proc0);	/* XXX */
 
 	bp = getblk(vp, blkno, size, 0, 0);
 
@@ -248,7 +249,7 @@ bio_doread(struct vnode *vp, daddr_t blkno, int size, int async)
 		VOP_STRATEGY(bp);
 
 		/* Pay for the read. */
-		curproc->p_stats->p_ru.ru_inblock++;		/* XXX */
+		p->p_stats->p_ru.ru_inblock++;		/* XXX */
 	} else if (async) {
 		brelse(bp);
 	}
@@ -311,6 +312,7 @@ bwrite(struct buf *bp)
 	int rv, async, wasdelayed, s;
 	struct vnode *vp;
 	struct mount *mp;
+	struct proc *p = (curproc != NULL ? curproc : &proc0);	/* XXX */
 
 	vp = bp->b_vp;
 	if (vp != NULL)
@@ -357,7 +359,7 @@ bwrite(struct buf *bp)
 	if (wasdelayed) {
 		reassignbuf(bp);
 	} else
-		curproc->p_stats->p_ru.ru_oublock++;
+		p->p_stats->p_ru.ru_oublock++;
 	
 
 	/* Initiate disk write.  Make sure the appropriate party is charged. */
@@ -398,6 +400,7 @@ void
 bdwrite(struct buf *bp)
 {
 	int s;
+	struct proc *p = (curproc != NULL ? curproc : &proc0);	/* XXX */
 
 	/*
 	 * If the block hasn't been seen before:
@@ -411,7 +414,7 @@ bdwrite(struct buf *bp)
 		s = splbio();
 		reassignbuf(bp);
 		splx(s);
-		curproc->p_stats->p_ru.ru_oublock++;	/* XXX */
+		p->p_stats->p_ru.ru_oublock++;	/* XXX */
 	}
 
 	/* If this is a tape block, write the block now. */
