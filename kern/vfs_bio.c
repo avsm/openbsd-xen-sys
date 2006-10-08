@@ -631,6 +631,11 @@ start:
 		}
 
 		if (!ISSET(bp->b_flags, B_INVAL)) {
+#ifdef DIAGNOSTIC
+			if (ISSET(bp->b_flags, B_DONE|B_DELWRI) &&
+			    bp->b_bcount < size && vp->v_type != VBLK)
+				panic("getblk: block size invariant failed");
+#endif
 			SET(bp->b_flags, (B_BUSY | B_CACHE));
 			bremfree(bp);
 			splx(s);
