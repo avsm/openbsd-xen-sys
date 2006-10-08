@@ -560,7 +560,7 @@ brelse(struct buf *bp)
 	}
 
 	/* Unlock the buffer. */
-	CLR(bp->b_flags, (B_AGE | B_ASYNC | B_BUSY | B_NOCACHE | B_DEFERRED));
+	CLR(bp->b_flags, (B_AGE | B_ASYNC | B_BUSY | B_NOCACHE | B_CACHE | B_DEFERRED));
 
 	splx(s);
 }
