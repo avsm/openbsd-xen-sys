@@ -425,8 +425,7 @@ bdwrite(struct buf *bp)
 	}
 
 	/* Otherwise, the "write" is done, so mark and release the buffer. */
-	CLR(bp->b_flags, B_NEEDCOMMIT);
-	SET(bp->b_flags, B_DONE);
+	CLR(bp->b_flags, B_NEEDCOMMIT|B_DONE);
 	brelse(bp);
 }
 
@@ -479,6 +478,25 @@ brelse(struct buf *bp)
 	struct bqueues *bufq;
 	int s;
 
+
+	/* Wake up syncer and cleaner processes waiting for buffers */
+	if (nobuffers) {
+		wakeup(&nobuffers);
+		nobuffers = 0;
+	}
+
+	/* Wake up any processes waiting for any buffer to become free. */
+	if (needbuffer && (numcleanpages > locleanpages)) {
+		needbuffer--;
+		wakeup_one(&needbuffer);
+	}
+
+	/* Wake up any processes waiting for _this_ buffer to become free. */
+	if (ISSET(bp->b_flags, B_WANTED)) {
+		CLR(bp->b_flags, B_WANTED|B_AGE);
+		wakeup(bp);
+	}
+
 	/* Block disk interrupts. */
 	s = splbio();
 
@@ -502,13 +520,10 @@ brelse(struct buf *bp)
 		if (LIST_FIRST(&bp->b_dep) != NULL)
 			buf_deallocate(bp);
 
-		if (ISSET(bp->b_flags, B_DELWRI)) {
-			CLR(bp->b_flags, B_DELWRI);
-		}
-
 		if (bp->b_vp)
 			brelvp(bp);
 
+		CLR(bp->b_flags, B_DELWRI|B_DONE);
 		if (bp->b_bufsize <= 0) {
 			/* no data */
 			bufq = &bufqueues[BQ_EMPTY];
@@ -546,25 +561,6 @@ brelse(struct buf *bp)
 
 	/* Unlock the buffer. */
 	CLR(bp->b_flags, (B_AGE | B_ASYNC | B_BUSY | B_NOCACHE | B_DEFERRED));
-
-
-	/* Wake up syncer and cleaner processes waiting for buffers */
-	if (nobuffers) {
-		wakeup(&nobuffers);
-		nobuffers = 0;
-	}
-
-	/* Wake up any processes waiting for any buffer to become free. */
-	if (needbuffer && (numcleanpages > locleanpages)) {
-		needbuffer--;
-		wakeup_one(&needbuffer);
-	}
-
-	/* Wake up any processes waiting for _this_ buffer to become free. */
-	if (ISSET(bp->b_flags, B_WANTED)) {
-		CLR(bp->b_flags, B_WANTED);
-		wakeup(bp);
-	}
 
 	splx(s);
 }
@@ -916,7 +912,7 @@ biowait(struct buf *bp)
 	int s;
 
 	s = splbio();
-	while (!ISSET(bp->b_flags, B_DONE))
+	while (!ISSET(bp->b_flags, B_DONE|B_DELWRI))
 		tsleep(bp, PRIBIO + 1, "biowait", 0);
 	splx(s);
 
