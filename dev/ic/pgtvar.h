@@ -1,4 +1,4 @@
-/*	$OpenBSD: pgtvar.h,v 1.8 2006/10/02 18:06:55 mglocker Exp $  */
+/*	$OpenBSD: pgtvar.h,v 1.10 2006/10/09 20:45:27 mglocker Exp $  */
 
 /*
  * Copyright (c) 2006 Claudio Jeker <claudio@openbsd.org>
@@ -178,6 +178,8 @@ struct pgt_softc {
 	int			(*sc_enable)(struct pgt_softc *);
 	void			(*sc_disable)(struct pgt_softc *);
 	void			(*sc_power)(struct pgt_softc *, int);
+	void			*sc_shutdown_hook;	/* shutdown hook */
+	void			*sc_power_hook;		/* power mgmt hook */
 
 	struct pgt_mgmt_descq	sc_mgmtinprog;
 	struct pgt_descq	sc_freeq[PGT_QUEUE_COUNT];
@@ -187,7 +189,6 @@ struct pgt_softc {
 	int			sc_txtimer;
 	struct pgt_softc_kthread {
 		struct proc		       *sck_proc;
-//		struct cv			sck_needed;
 		int				sck_exit, sck_reset, sck_update;
 		TAILQ_HEAD(, pgt_async_trap)	sck_traps;
 	}			sc_kthread;
@@ -213,8 +214,7 @@ struct pgt_softc {
 
 int	pgt_intr(void *);
 void	pgt_attach(void *);
-int	pgt_detach(struct pgt_softc *sc);
-void	pgt_reboot(struct pgt_softc *);
+int	pgt_detach(struct pgt_softc *);
 
 static __inline int
 pgt_queue_is_rx(enum pgt_queue pq)
