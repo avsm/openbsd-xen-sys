@@ -547,8 +547,10 @@ ffs_reload(struct mount *mountp, struct ucred *cred, struct proc *p)
 	else
 		size = dpart.disklab->d_secsize;
 	error = bread(devvp, (daddr_t)(SBOFF / size), SBSIZE, NOCRED, &bp);
-	if (error)
+	if (error) {
+		brelse(bp);
 		return (error);
+	}
 	newfs = (struct fs *)bp->b_data;
 	if (newfs->fs_magic != FS_MAGIC || (u_int)newfs->fs_bsize > MAXBSIZE ||
 	    newfs->fs_bsize < sizeof(struct fs) ||
@@ -583,8 +585,10 @@ ffs_reload(struct mount *mountp, struct ucred *cred, struct proc *p)
 			size = (blks - i) * fs->fs_fsize;
 		error = bread(devvp, fsbtodb(fs, fs->fs_csaddr + i), size,
 			      NOCRED, &bp);
-		if (error)
+		if (error) {
+			brelse(bp);
 			return (error);
+		}
 		bcopy(bp->b_data, space, (u_int)size);
 		space += size;
 		brelse(bp);
