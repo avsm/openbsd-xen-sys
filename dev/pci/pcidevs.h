@@ -2,7 +2,7 @@
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
- *	OpenBSD: pcidevs,v 1.1161 2006/10/11 03:20:30 brad Exp 
+ *	OpenBSD: pcidevs,v 1.1160 2006/10/10 17:30:13 brad Exp
  */
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
 
@@ -298,7 +298,6 @@
 #define	PCI_VENDOR_3DLABS	0x3d3d		/* 3D Labs */
 #define	PCI_VENDOR_AVANCE2	0x4005		/* Avance Logic */
 #define	PCI_VENDOR_ADDTRON	0x4033		/* Addtron */
-#define	PCI_VENDOR_NETXEN	0x4040		/* NetXen */
 #define	PCI_VENDOR_INDCOMPSRC	0x494f		/* Industrial Computer Source */
 #define	PCI_VENDOR_NETVIN	0x4a14		/* NetVin */
 #define	PCI_VENDOR_GEMTEK	0x5046		/* Gemtek */
@@ -2619,8 +2618,6 @@
 
 /* Pericom products */
 #define	PCI_PRODUCT_PERICOM_PI7C21P100	0x01a7		/* PI7C21P100 PCIX-PCIX */
-#define	PCI_PRODUCT_PERICOM_PPB_1	0x8140		/* PCI-PCI */
-#define	PCI_PRODUCT_PERICOM_PPB_2	0x8150		/* PCI-PCI */
 
 /* Planex products */
 #define	PCI_PRODUCT_PLANEX_FNW_3603_TX	0xab06		/* FNW-3603-TX 10/100 */
