@@ -1,4 +1,4 @@
-$OpenBSD: pcidevs,v 1.1162 2006/10/11 22:25:49 ckuethe Exp $
+$OpenBSD: pcidevs,v 1.1159 2006/10/06 02:28:54 brad Exp $
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
 
 /*
@@ -293,7 +293,6 @@ vendor	HINT		0x3388	Hint
 vendor	3DLABS		0x3d3d	3D Labs
 vendor	AVANCE2		0x4005	Avance Logic
 vendor	ADDTRON		0x4033	Addtron
-vendor	NETXEN		0x4040	NetXen
 vendor	INDCOMPSRC	0x494f	Industrial Computer Source
 vendor	NETVIN		0x4a14	NetVin
 vendor	GEMTEK		0x5046	Gemtek
@@ -913,8 +912,6 @@ product ATI RAGE128_TF		0x5446	Rage 128 Pro TF
 product ATI RAGE128_TL		0x544c	Rage 128 Pro TL
 product ATI RAGE128_TR		0x5452	Rage 128 Pro TR
 product ATI RADEON_M300_M22	0x5460	Radeon Mobility M300 M22
-product ATI RADEON_X800_RV430	0x554d	Radeon X800 (RV430)
-product ATI RADEON_X800_RV430_S	0x556d	Radeon X800 (RV430) Sec
 product ATI RADEON_X700_M26_1	0x5652	Radeon Mobility X700 M26
 product ATI RADEON_X700_M26_2	0x5653	Radeon Mobility X700 M26
 product ATI MACH64_VT		0x5654	Mach64 VT
@@ -2616,8 +2613,6 @@ product SYMBIOS PE_GNIC		0x0702	Packet Engines G-NIC
 
 /* Pericom products */
 product PERICOM PI7C21P100	0x01a7	PI7C21P100 PCIX-PCIX
-product PERICOM PPB_1		0x8140	PCI-PCI
-product PERICOM PPB_2		0x8150	PCI-PCI
 
 /* Planex products */
 product PLANEX FNW_3603_TX	0xab06	FNW-3603-TX 10/100
@@ -3012,7 +3007,6 @@ product RCC HT_2000_PCIE	0x0132	HT-2000 PCIE
 product RCC HT_2100_PCIE_1	0x0140	HT-2100 PCIE
 product RCC HT_2100_PCIE_2	0x0141	HT-2100 PCIE
 product RCC HT_2100_PCIE_3	0x0142	HT-2100 PCIE
-product RCC HT_2100_PCIE_5	0x0144	HT-2100 PCIE
 product RCC OSB4		0x0200	OSB4
 product RCC CSB5		0x0201	CSB5
 product RCC CSB6		0x0203	CSB6
