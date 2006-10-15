@@ -2,7 +2,7 @@
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
- *	OpenBSD: pcidevs,v 1.1160 2006/10/10 17:30:13 brad Exp
+ *	OpenBSD: pcidevs,v 1.1166 2006/10/15 11:18:59 jsg Exp 
  */
 /*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
 
@@ -2153,6 +2153,14 @@ static const struct pci_known_product pci_known_products[] = {
 	{
 	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_RADEON_M300_M22,
 	    "Radeon Mobility M300 M22",
+	},
+	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_RADEON_X800_RV430,
+	    "Radeon X800 (RV430)",
+	},
+	{
+	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_RADEON_X800_RV430_S,
+	    "Radeon X800 (RV430) Sec",
 	},
 	{
 	    PCI_VENDOR_ATI, PCI_PRODUCT_ATI_RADEON_X700_M26_1,
@@ -6183,6 +6191,42 @@ static const struct pci_known_product pci_known_products[] = {
 	    "82801H HD Audio",
 	},
 	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82Q963_HB,
+	    "82Q963 Host",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82Q963_PCIE,
+	    "82Q963 PCIE",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82Q963_GC,
+	    "82Q963 Graphics",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82965_MCH,
+	    "82965 MCH",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82965_PPB,
+	    "82965 PCIE",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82965_IGD_1,
+	    "82965 Video",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82965_IGD_2,
+	    "82965 Video",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82965_HECI_1,
+	    "82865 HECI",
+	},
+	{
+	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_82965_HECI_2,
+	    "82865 HECI",
+	},
+	{
 	    PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_RCU32,
 	    "RCU32 I2O RAID",
 	},
@@ -7935,6 +7979,14 @@ static const struct pci_known_product pci_known_products[] = {
 	    "PI7C21P100 PCIX-PCIX",
 	},
 	{
+	    PCI_VENDOR_PERICOM, PCI_PRODUCT_PERICOM_PPB_1,
+	    "PCI-PCI",
+	},
+	{
+	    PCI_VENDOR_PERICOM, PCI_PRODUCT_PERICOM_PPB_2,
+	    "PCI-PCI",
+	},
+	{
 	    PCI_VENDOR_PLANEX, PCI_PRODUCT_PLANEX_FNW_3603_TX,
 	    "FNW-3603-TX 10/100",
 	},
@@ -9364,6 +9416,10 @@ static const struct pci_known_product pci_known_products[] = {
 	},
 	{
 	    PCI_VENDOR_RCC, PCI_PRODUCT_RCC_HT_2100_PCIE_3,
+	    "HT-2100 PCIE",
+	},
+	{
+	    PCI_VENDOR_RCC, PCI_PRODUCT_RCC_HT_2100_PCIE_5,
 	    "HT-2100 PCIE",
 	},
 	{
@@ -13437,6 +13493,10 @@ static const struct pci_known_vendor pci_known_vendors[] = {
 	{
 	    PCI_VENDOR_ADDTRON,
 	    "Addtron",
+	},
+	{
+	    PCI_VENDOR_NETXEN,
+	    "NetXen",
 	},
 	{
 	    PCI_VENDOR_INDCOMPSRC,
