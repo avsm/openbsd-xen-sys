@@ -54,6 +54,8 @@ extern paddr_t *xpmap_phys_to_machine_mapping;
 #define	XPQ_PIN_L1_TABLE 1
 #define	XPQ_PIN_L2_TABLE 2
 
+#define XPMAP_OFFSET	 (KERNTEXTOFF - KERNBASE)
+
 paddr_t *xpmap_phys_to_machine_mapping;
 
 #define	PDE_GET(_pdp)						\
@@ -184,7 +186,6 @@ paddr_t *xpmap_phys_to_machine_mapping;
 	splx(_s);						\
 } while (/*CONSTCOND*/0)
 
-#define	XPMAP_OFFSET	(KERNTEXTOFF - KERNBASE)
 static __inline paddr_t
 xpmap_mtop(paddr_t mpa)
 {
