@@ -1,4 +1,4 @@
-/*	$OpenBSD: malo.c,v 1.4 2006/10/15 21:56:49 claudio Exp $ */
+/*	$OpenBSD: malo.c,v 1.6 2006/10/17 19:40:39 claudio Exp $ */
 
 /*
  * Copyright (c) 2006 Claudio Jeker <claudio@openbsd.org>
@@ -47,6 +47,7 @@
 #include <netinet/if_ether.h>
 
 #include <net80211/ieee80211_var.h>
+#include <net80211/ieee80211_rssadapt.h>
 
 #include <dev/ic/malo.h>
 
@@ -58,7 +59,8 @@
 
 /* internal structures and defines */
 struct malo_node {
-	struct ieee80211_node	ni;
+	struct ieee80211_node		ni;
+	struct ieee80211_rssadapt	rssadapt;
 };
 
 struct malo_rx_data {
@@ -66,20 +68,45 @@ struct malo_rx_data {
 	struct mbuf	*m;
 };
 
+struct malo_tx_data {
+	bus_dmamap_t			map;
+	struct mbuf			*m;
+	/* additional info for rate adaption */
+//	struct ieee80211_node		*ni;
+//	struct ieee80211_rssdesc	id;
+};
+
 /* Rx descriptor used by HW */
 struct malo_rx_desc {
-	uint8_t		status;
+	uint8_t		rxctrl;
 	uint8_t		rssi;
-	uint16_t	reserved1;	/* needs to be 1 */
+	uint8_t		status;
+	uint8_t		channel;
 	uint16_t	len;
-	uint8_t		reserved2;	/* actually unkown */
-	uint8_t		reserved3;
+	uint8_t		reserved1;	/* actually unused */
+	uint8_t		datarate;
 	uint32_t	physdata;	/* DMA address of data */
 	uint32_t	physnext;	/* DMA address of next control block */
-	uint32_t	id;		/* id for the host to id buffer ??? */
+	uint16_t	qosctrl;
+	uint16_t	reserved2;
 } __packed;
 
-#define MALO_RX_RING_COUNT	48
+struct malo_tx_desc {
+	uint32_t	status;
+	uint8_t		datarate;
+	uint8_t		txpriority;
+	uint16_t	qosctrl;
+	uint32_t	physdata;	/* DMA address of data */
+	uint16_t	len;
+	uint8_t		destaddr[6];
+	uint32_t	physnext;	/* DMA address of next control block */
+	uint32_t	reserved1;	/* SAP packet info ??? */
+	uint32_t	reserved2;
+} __packed;
+
+#define MALO_RX_RING_COUNT	256
+#define MALO_TX_RING_COUNT	256
+#define MALO_MAX_SCATTER	8	/* XXX unknown, wild guess */
 
 /* firmware commands as found in a document describing the Libertas FW */
 #define MALO_CMD_GET_HW_SPEC	0x0003
@@ -95,16 +122,19 @@ struct malo_cmdheader {
 
 struct malo_hw_spec {
 	uint16_t	HwVersion;
-	uint16_t	NumOfWCB;	/* reserved */
+	uint16_t	NumOfWCB;
 	uint16_t	NumOfMCastAdr;
 	uint8_t		PermanentAddress[6];
 	uint16_t	RegionCode;
 	uint16_t	NumberOfAntenna;
 	uint32_t	FWReleaseNumber;
-	uint32_t	RxPdRd1Ptr;
-	uint32_t	RxPdRd2Ptr;
+	uint32_t	WcbBase0;
 	uint32_t	RxPdWrPtr;
+	uint32_t	RxPdRdPtr;
 	uint32_t	CookiePtr;
+	uint32_t	WcbBase1;
+	uint32_t	WcbBase2;
+	uint32_t	WcbBase3;
 } __packed;
 
 
@@ -136,6 +166,9 @@ void	malo_free_cmd(struct malo_softc *sc);
 int	malo_alloc_rx_ring(struct malo_softc *sc, struct malo_rx_ring *ring,
 	    int count);
 void	malo_free_rx_ring(struct malo_softc *sc, struct malo_rx_ring *ring);
+int	malo_alloc_tx_ring(struct malo_softc *sc, struct malo_tx_ring *ring,
+	    int count);
+void	malo_free_tx_ring(struct malo_softc *sc, struct malo_tx_ring *ring);
 int	malo_load_bootimg(struct malo_softc *sc);
 int	malo_load_firmware(struct malo_softc *sc);
 int	malo_send_cmd(struct malo_softc *sc, bus_addr_t addr, uint32_t waitfor);
@@ -152,6 +185,7 @@ void	malo_newassoc(struct ieee80211com *ic, struct ieee80211_node *ni,
 	    int isnew);
 struct ieee80211_node *
 	malo_node_alloc(struct ieee80211com *ic);
+void	malo_rx_intr(struct malo_softc *sc);
 
 /* supported rates */
 const struct ieee80211_rateset  malo_rates_11b =
@@ -191,6 +225,9 @@ malo_intr(void *arg)
 		wakeup(sc);
 	}
 
+	if (status & 0x2)
+		malo_rx_intr(sc);
+
 	/* just ack the interrupt */
 	malo_ctl_write4(sc, 0x0c30, 0);
 	return (1);
@@ -213,8 +250,8 @@ malo_attach(struct malo_softc *sc)
 #endif
 	/* allocate DMA structures */
 	malo_alloc_cmd(sc);
-	malo_alloc_rx_ring(sc, &sc->sc_rxring0, MALO_RX_RING_COUNT);
-	malo_alloc_rx_ring(sc, &sc->sc_rxring1, MALO_RX_RING_COUNT);
+	malo_alloc_rx_ring(sc, &sc->sc_rxring, MALO_RX_RING_COUNT);
+	malo_alloc_tx_ring(sc, &sc->sc_txring, MALO_TX_RING_COUNT);
 
 	/* setup interface */
 	ifp->if_softc = sc;
@@ -279,8 +316,8 @@ malo_detach(void *arg)
 	ieee80211_ifdetach(ifp);
 	if_detach(ifp);
 	malo_free_cmd(sc);
-	malo_free_rx_ring(sc, &sc->sc_rxring0);
-	malo_free_rx_ring(sc, &sc->sc_rxring1);
+	malo_free_rx_ring(sc, &sc->sc_rxring);
+	malo_free_tx_ring(sc, &sc->sc_txring);
 
 	return (0);
 }
@@ -441,7 +478,6 @@ malo_alloc_rx_ring(struct malo_softc *sc, struct malo_rx_ring *ring, int count)
 		desc->physdata = htole32(data->map->dm_segs->ds_addr);
 		desc->physnext = htole32(ring->physaddr +
 		    (i + 1) % count * sizeof(struct malo_rx_desc));
-		desc->id = i;	/* ignored by the card ??? */
 	}
 
 	bus_dmamap_sync(sc->sc_dmat, ring->map, 0, ring->map->dm_mapsize,
@@ -479,6 +515,125 @@ malo_free_rx_ring(struct malo_softc *sc, struct malo_rx_ring *ring)
 				bus_dmamap_unload(sc->sc_dmat, data->map);
 				m_freem(data->m);
 			}
+
+			if (data->map != NULL)
+				bus_dmamap_destroy(sc->sc_dmat, data->map);
+		}
+		free(ring->data, M_DEVBUF);
+	}
+}
+
+int
+malo_alloc_tx_ring(struct malo_softc *sc, struct malo_tx_ring *ring,
+    int count)
+{
+	int i, nsegs, error;
+
+	ring->count = count;
+	ring->queued = 0;
+	ring->cur = ring->next = ring->stat = 0;
+
+	error = bus_dmamap_create(sc->sc_dmat,
+	    count * sizeof(struct malo_tx_desc), 1,
+	    count * sizeof(struct malo_tx_desc), 0, BUS_DMA_NOWAIT, &ring->map);
+	if (error != 0) {
+		printf("%s: could not create desc DMA map\n",
+		    sc->sc_dev.dv_xname);
+		goto fail;
+	}
+
+	error = bus_dmamem_alloc(sc->sc_dmat,
+	    count * sizeof(struct malo_tx_desc),
+	    PAGE_SIZE, 0, &ring->seg, 1, &nsegs, BUS_DMA_NOWAIT);
+	if (error != 0) {
+		printf("%s: could not allocate DMA memory\n",
+		    sc->sc_dev.dv_xname);
+		goto fail;
+	}
+
+	error = bus_dmamem_map(sc->sc_dmat, &ring->seg, nsegs,
+	    count * sizeof(struct malo_tx_desc), (caddr_t *)&ring->desc,
+	    BUS_DMA_NOWAIT);
+	if (error != 0) {
+		printf("%s: could not map desc DMA memory\n",
+		    sc->sc_dev.dv_xname);
+		goto fail;
+	}
+
+	error = bus_dmamap_load(sc->sc_dmat, ring->map, ring->desc,
+	    count * sizeof(struct malo_tx_desc), NULL, BUS_DMA_NOWAIT);
+	if (error != 0) {
+		printf("%s: could not load desc DMA map\n",
+		    sc->sc_dev.dv_xname);
+		goto fail;
+	}
+
+	memset(ring->desc, 0, count * sizeof(struct malo_tx_desc));
+	ring->physaddr = ring->map->dm_segs->ds_addr;
+
+	ring->data = malloc(count * sizeof (struct malo_tx_data), M_DEVBUF,
+	    M_NOWAIT);
+	if (ring->data == NULL) {
+		printf("%s: could not allocate soft data\n",
+		    sc->sc_dev.dv_xname);
+		error = ENOMEM;
+		goto fail;
+	}
+
+	memset(ring->data, 0, count * sizeof (struct malo_tx_data));
+	for (i = 0; i < count; i++) {
+		error = bus_dmamap_create(sc->sc_dmat, MCLBYTES,
+		    MALO_MAX_SCATTER, MCLBYTES, 0, BUS_DMA_NOWAIT,
+		    &ring->data[i].map);
+		if (error != 0) {
+			printf("%s: could not create DMA map\n",
+			    sc->sc_dev.dv_xname);
+			goto fail;
+		}
+		ring->desc[i].physnext = htole32(ring->physaddr +
+		    (i + 1) % count * sizeof(struct malo_tx_desc));
+	}
+
+	return 0;
+
+fail:	malo_free_tx_ring(sc, ring);
+	return error;
+}
+
+void
+malo_free_tx_ring(struct malo_softc *sc, struct malo_tx_ring *ring)
+{
+	struct malo_tx_data *data;
+	int i;
+
+	if (ring->desc != NULL) {
+		bus_dmamap_sync(sc->sc_dmat, ring->map, 0,
+		    ring->map->dm_mapsize, BUS_DMASYNC_POSTWRITE);
+		bus_dmamap_unload(sc->sc_dmat, ring->map);
+		bus_dmamem_unmap(sc->sc_dmat, (caddr_t)ring->desc,
+		    ring->count * sizeof(struct malo_tx_desc));
+		bus_dmamem_free(sc->sc_dmat, &ring->seg, 1);
+	}
+
+	if (ring->data != NULL) {
+		for (i = 0; i < ring->count; i++) {
+			data = &ring->data[i];
+
+			if (data->m != NULL) {
+				bus_dmamap_sync(sc->sc_dmat, data->map, 0,
+				    data->map->dm_mapsize,
+				    BUS_DMASYNC_POSTWRITE);
+				bus_dmamap_unload(sc->sc_dmat, data->map);
+				m_freem(data->m);
+			}
+
+#if 0
+			/*
+			 * The node has already been freed at that point so
+			 * don't call ieee80211_release_node() here.
+			 */
+			data->ni = NULL;
+#endif
 
 			if (data->map != NULL)
 				bus_dmamap_destroy(sc->sc_dmat, data->map);
@@ -689,16 +844,19 @@ malo_get_spec(struct malo_softc *sc)
 		return (ETIMEDOUT);
 
 	/* XXX get the data form the buffer and feed it to ieee80211 */
-	DPRINTF(("%s: get_hw_spec: V%x R%x, #Mcast %d, Regcode %d, #Ant %d\n",
-	    sc->sc_dev.dv_xname, htole16(spec->HwVersion),
-	    htole32(spec->FWReleaseNumber), htole16(spec->NumOfMCastAdr),
-	    htole16(spec->RegionCode), htole16(spec->NumberOfAntenna)));
+	DPRINTF(("%s: get_hw_spec: V%x R%x, #WCB %d, #Mcast %d, Regcode %d, "
+	    "#Ant %d\n", sc->sc_dev.dv_xname, htole16(spec->HwVersion),
+	    htole32(spec->FWReleaseNumber), htole16(spec->NumOfWCB),
+	    htole16(spec->NumOfMCastAdr), htole16(spec->RegionCode),
+	    htole16(spec->NumberOfAntenna)));
 
 	/* tell the DMA engine where our rings are */
-	malo_mem_write4(sc, letoh32(spec->RxPdRd1Ptr) & 0xffff,
-	    htole32(sc->sc_rxring0.physaddr));
-	malo_mem_write4(sc, letoh32(spec->RxPdRd2Ptr) & 0xffff,
-	    htole32(sc->sc_rxring1.physaddr));
+	malo_mem_write4(sc, letoh32(spec->RxPdRdPtr) & 0xffff,
+	    htole32(sc->sc_rxring.physaddr));
+	malo_mem_write4(sc, letoh32(spec->RxPdWrPtr) & 0xffff,
+	    htole32(sc->sc_rxring.physaddr));
+	malo_mem_write4(sc, letoh32(spec->WcbBase0) & 0xffff,
+	    htole32(sc->sc_txring.physaddr));
 
 	return (0);
 }
@@ -832,4 +990,102 @@ malo_node_alloc(struct ieee80211com *ic)
 	bzero(wn, sizeof(struct malo_node));
 
 	return ((struct ieee80211_node *)wn);
+}
+
+void
+malo_rx_intr(struct malo_softc *sc)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ifnet *ifp = &ic->ic_if;
+	struct malo_rx_desc *desc;
+	struct malo_rx_data *data;
+	struct malo_node *rn;
+	struct ieee80211_frame *wh;
+	struct ieee80211_node *ni;
+	struct mbuf *mnew, *m;
+	int error, i;
+
+	for (i = 0; i < MALO_RX_RING_COUNT; i++) {
+		desc = &sc->sc_rxring.desc[sc->sc_rxring.cur];
+		data = &sc->sc_rxring.data[sc->sc_rxring.cur];
+
+		bus_dmamap_sync(sc->sc_dmat, sc->sc_rxring.map,
+		    sc->sc_rxring.cur * sizeof(struct malo_rx_desc),
+		    sizeof(struct malo_rx_desc), BUS_DMASYNC_POSTREAD);
+
+		if (!(letoh32(desc->status) & 0x01))
+			break;
+
+		MGETHDR(mnew, M_DONTWAIT, MT_DATA);
+		if (mnew == NULL) {
+			ifp->if_ierrors++;
+			goto skip;
+		}
+
+		MCLGET(mnew, M_DONTWAIT);
+		if (!(mnew->m_flags & M_EXT)) {
+			m_freem(mnew);
+			ifp->if_ierrors++;
+			goto skip;
+		}
+
+		bus_dmamap_sync(sc->sc_dmat, data->map, 0,
+		    data->map->dm_mapsize, BUS_DMASYNC_POSTREAD);
+		bus_dmamap_unload(sc->sc_dmat, data->map);
+
+		error = bus_dmamap_load(sc->sc_dmat, data->map,
+		   mtod(mnew, void *), MCLBYTES, NULL, BUS_DMA_NOWAIT);
+		if (error != 0) {
+			m_freem(mnew);
+
+			error = bus_dmamap_load(sc->sc_dmat, data->map,
+			    mtod(data->m, void *), MCLBYTES, NULL,
+			    BUS_DMA_NOWAIT);
+			if (error != 0) {
+				panic("%s: could not load old rx mbuf",
+				    sc->sc_dev.dv_xname);
+			}
+			ifp->if_ierrors++;
+			goto skip;
+		}
+
+		/*
+		 * New mbuf mbuf successfully loaded
+		 */
+		m = data->m;
+		data->m = mnew;
+		desc->physdata = htole32(data->map->dm_segs->ds_addr);
+
+		/* finalize mbuf */
+		m->m_pkthdr.rcvif = ifp;
+		m->m_pkthdr.len = m->m_len = letoh32(desc->len);
+
+#if NBPFILER > 0
+		/* TODO bpf mtap */
+#endif
+
+		wh = mtod(m, struct ieee80211_frame *);
+		ni = ieee80211_find_rxnode(ic, wh);
+
+		/* send the frame to the 802.11 layer */
+		ieee80211_input(ifp, m, ni, desc->rssi, 0);
+
+		/* give rssi to the rate adaption algorithm */
+		rn = (struct malo_node *)ni;
+		ieee80211_rssadapt_input(ic, ni, &rn->rssadapt, desc->rssi);
+
+		/* node is no longer needed */
+		ieee80211_release_node(ic, ni);
+
+skip:
+		bus_dmamap_sync(sc->sc_dmat, sc->sc_rxring.map,
+		    sc->sc_rxring.cur * sizeof(struct malo_rx_desc),
+		    sizeof(struct malo_rx_desc), BUS_DMASYNC_PREWRITE);
+
+		DPRINTF(("rx intr idx=%d, status=0x%02x, len=%d\n",
+		    i, desc->status, desc->len));
+
+		sc->sc_rxring.cur = (sc->sc_rxring.cur + 1) %
+		    MALO_RX_RING_COUNT;
+        }
 }
