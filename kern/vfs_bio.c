@@ -1,4 +1,4 @@
-/*	$OpenBSD: vfs_bio.c,v 1.84 2006/08/28 16:15:29 tom Exp $	*/
+/*	$OpenBSD: vfs_bio.c,v 1.83 2006/08/28 12:48:53 jmc Exp $	*/
 /*	$NetBSD: vfs_bio.c,v 1.44 1996/06/11 11:15:36 pk Exp $	*/
 
 /*-
@@ -235,6 +235,7 @@ static __inline struct buf *
 bio_doread(struct vnode *vp, daddr64_t blkno, int size, int async)
 {
 	struct buf *bp;
+	struct proc *p = (curproc != NULL ? curproc : &proc0);	/* XXX */
 
 	bp = getblk(vp, blkno, size, 0, 0);
 
@@ -248,7 +249,7 @@ bio_doread(struct vnode *vp, daddr64_t blkno, int size, int async)
 		VOP_STRATEGY(bp);
 
 		/* Pay for the read. */
-		curproc->p_stats->p_ru.ru_inblock++;		/* XXX */
+		p->p_stats->p_ru.ru_inblock++;		/* XXX */
 	} else if (async) {
 		brelse(bp);
 	}
@@ -311,6 +312,7 @@ bwrite(struct buf *bp)
 	int rv, async, wasdelayed, s;
 	struct vnode *vp;
 	struct mount *mp;
+	struct proc *p = (curproc != NULL ? curproc : &proc0);	/* XXX */
 
 	vp = bp->b_vp;
 	if (vp != NULL)
@@ -357,7 +359,7 @@ bwrite(struct buf *bp)
 	if (wasdelayed) {
 		reassignbuf(bp);
 	} else
-		curproc->p_stats->p_ru.ru_oublock++;
+		p->p_stats->p_ru.ru_oublock++;
 	
 
 	/* Initiate disk write.  Make sure the appropriate party is charged. */
@@ -398,6 +400,7 @@ void
 bdwrite(struct buf *bp)
 {
 	int s;
+	struct proc *p = (curproc != NULL ? curproc : &proc0);	/* XXX */
 
 	/*
 	 * If the block hasn't been seen before:
@@ -411,7 +414,7 @@ bdwrite(struct buf *bp)
 		s = splbio();
 		reassignbuf(bp);
 		splx(s);
-		curproc->p_stats->p_ru.ru_oublock++;	/* XXX */
+		p->p_stats->p_ru.ru_oublock++;	/* XXX */
 	}
 
 	/* If this is a tape block, write the block now. */
@@ -422,8 +425,7 @@ bdwrite(struct buf *bp)
 	}
 
 	/* Otherwise, the "write" is done, so mark and release the buffer. */
-	CLR(bp->b_flags, B_NEEDCOMMIT);
-	SET(bp->b_flags, B_DONE);
+	CLR(bp->b_flags, B_NEEDCOMMIT|B_DONE);
 	brelse(bp);
 }
 
@@ -476,6 +478,25 @@ brelse(struct buf *bp)
 	struct bqueues *bufq;
 	int s;
 
+
+	/* Wake up syncer and cleaner processes waiting for buffers */
+	if (nobuffers) {
+		wakeup(&nobuffers);
+		nobuffers = 0;
+	}
+
+	/* Wake up any processes waiting for any buffer to become free. */
+	if (needbuffer && (numcleanpages > locleanpages)) {
+		needbuffer--;
+		wakeup_one(&needbuffer);
+	}
+
+	/* Wake up any processes waiting for _this_ buffer to become free. */
+	if (ISSET(bp->b_flags, B_WANTED)) {
+		CLR(bp->b_flags, B_WANTED|B_AGE);
+		wakeup(bp);
+	}
+
 	/* Block disk interrupts. */
 	s = splbio();
 
@@ -499,13 +520,10 @@ brelse(struct buf *bp)
 		if (LIST_FIRST(&bp->b_dep) != NULL)
 			buf_deallocate(bp);
 
-		if (ISSET(bp->b_flags, B_DELWRI)) {
-			CLR(bp->b_flags, B_DELWRI);
-		}
-
 		if (bp->b_vp)
 			brelvp(bp);
 
+		CLR(bp->b_flags, B_DELWRI|B_DONE);
 		if (bp->b_bufsize <= 0) {
 			/* no data */
 			bufq = &bufqueues[BQ_EMPTY];
@@ -542,26 +560,7 @@ brelse(struct buf *bp)
 	}
 
 	/* Unlock the buffer. */
-	CLR(bp->b_flags, (B_AGE | B_ASYNC | B_BUSY | B_NOCACHE | B_DEFERRED));
-
-
-	/* Wake up syncer and cleaner processes waiting for buffers */
-	if (nobuffers) {
-		wakeup(&nobuffers);
-		nobuffers = 0;
-	}
-
-	/* Wake up any processes waiting for any buffer to become free. */
-	if (needbuffer && (numcleanpages > locleanpages)) {
-		needbuffer--;
-		wakeup_one(&needbuffer);
-	}
-
-	/* Wake up any processes waiting for _this_ buffer to become free. */
-	if (ISSET(bp->b_flags, B_WANTED)) {
-		CLR(bp->b_flags, B_WANTED);
-		wakeup(bp);
-	}
+	CLR(bp->b_flags, (B_AGE | B_ASYNC | B_BUSY | B_NOCACHE | B_CACHE | B_DEFERRED));
 
 	splx(s);
 }
@@ -628,6 +627,11 @@ start:
 		}
 
 		if (!ISSET(bp->b_flags, B_INVAL)) {
+#ifdef DIAGNOSTIC
+			if (ISSET(bp->b_flags, B_DONE|B_DELWRI) &&
+			    bp->b_bcount < size && vp->v_type != VBLK)
+				panic("getblk: block size invariant failed");
+#endif
 			SET(bp->b_flags, (B_BUSY | B_CACHE));
 			bremfree(bp);
 			splx(s);
@@ -908,7 +912,7 @@ biowait(struct buf *bp)
 	int s;
 
 	s = splbio();
-	while (!ISSET(bp->b_flags, B_DONE))
+	while (!ISSET(bp->b_flags, B_DONE|B_DELWRI))
 		tsleep(bp, PRIBIO + 1, "biowait", 0);
 	splx(s);
 
