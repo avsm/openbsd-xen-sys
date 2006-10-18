@@ -49,6 +49,8 @@
 #include <machine/evtchn.h>
 #include <machine/xenbus.h>
 
+#include "../xenbus/strtoul.h"
+
 /* #define XENDEBUG_VBD */
 #ifdef XENDEBUG_VBD
 #define XENPRINTF(x) printf x
