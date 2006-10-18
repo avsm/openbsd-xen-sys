@@ -208,21 +208,13 @@
  */
 .section __xen_guest
         .ascii  "GUEST_OS=openbsd,GUEST_VER=3.0,XEN_VER=xen-3.0"
-#ifdef __NetBSD__
-        .ascii	",VIRT_BASE=0xc0100000" /* KERNTEXTOFF */
-#endif
-#ifdef __OpenBSD__
-	.ascii	",VIRT_BASE=0xd0100000" /* KERNTEXTOFF */
-#endif
-#ifdef DOM0OPS
-        .ascii	",HYPERCALL_PAGE=0x00000101"
-#else
+	.ascii	",VIRT_BASE=0xd0100000"	/* KERNTEXTOFF */
+	.ascii	",ELF_PADDR_OFFSET=0xd0100000"	/* KERNTEXTOFF */
         .ascii	",HYPERCALL_PAGE=0x00000001"
                 /* (???+HYPERCALL_PAGE_OFFSET)/PAGE_SIZE) */
-#endif
         .ascii  ",LOADER=generic"
 #if (NKSYMS || defined(DDB) || defined(LKM)) && !defined(SYMTAB_SPACE)
-        .ascii  ",BSD_SYMTAB"
+        .ascii  ",BSD_SYMTAB=yes"
 #endif
         .byte   0
 
