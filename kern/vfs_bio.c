@@ -629,8 +629,8 @@ start:
 		s = splbio();
 		if (ISSET(bp->b_flags, B_BUSY)) {
 			SET(bp->b_flags, B_WANTED);
-			error = tsleep(bp, slpflag | (PRIBIO + 1), "getblk",
-			    slptimeo);
+			error = ltsleep(bp, slpflag | (PRIBIO + 1) | PNORELOCK,
+				"getblk", slptimeo, &vp->v_interlock);
 			splx(s);
 			if (error)
 				return (NULL);
@@ -643,7 +643,7 @@ start:
 			    bp->b_bcount < size && vp->v_type != VBLK)
 				panic("getblk: block size invariant failed");
 #endif
-			SET(bp->b_flags, (B_BUSY | B_CACHE));
+			SET(bp->b_flags, B_BUSY);
 			bremfree(bp);
 			splx(s);
 			break;
