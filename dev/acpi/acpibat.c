@@ -1,4 +1,4 @@
-/* $OpenBSD: acpibat.c,v 1.24 2006/09/19 18:01:36 mk Exp $ */
+/* $OpenBSD: acpibat.c,v 1.28 2006/10/19 17:57:17 marco Exp $ */
 /*
  * Copyright (c) 2005 Marco Peereboom <marco@openbsd.org>
  *
@@ -21,6 +21,7 @@
 #include <sys/device.h>
 #include <sys/rwlock.h>
 #include <sys/malloc.h>
+#include <sys/sensors.h>
 
 #include <machine/bus.h>
 
@@ -30,27 +31,8 @@
 #include <dev/acpi/amltypes.h>
 #include <dev/acpi/dsdt.h>
 
-#include <sys/sensors.h>
-
 int	acpibat_match(struct device *, void *, void *);
 void	acpibat_attach(struct device *, struct device *, void *);
-
-struct acpibat_softc {
-	struct device		sc_dev;
-
-	bus_space_tag_t		sc_iot;
-	bus_space_handle_t	sc_ioh;
-
-	struct acpi_softc	*sc_acpi;
-	struct aml_node		*sc_devnode;
-
-	struct rwlock		sc_lock;
-	struct acpibat_bif	sc_bif;
-	struct acpibat_bst	sc_bst;
-	volatile int		sc_bat_present;
-
-	struct sensor		sc_sens[8]; /* XXX debug only */
-};
 
 struct cfattach acpibat_ca = {
 	sizeof(struct acpibat_softc), acpibat_match, acpibat_attach
@@ -93,8 +75,7 @@ acpibat_attach(struct device *parent, struct device *self, void *aux)
 
 	rw_init(&sc->sc_lock, "acpibat");
 
-	/* XXX this trick seems to only work during boot */
-	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_STA", 0, NULL, &res) != 0)
+	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_STA", 0, NULL, &res))
 		dnprintf(10, "%s: no _STA\n",
 		    DEVNAME(sc));
 	
@@ -131,7 +112,7 @@ acpibat_attach(struct device *parent, struct device *self, void *aux)
 void
 acpibat_monitor(struct acpibat_softc *sc)
 {
-	int			i;
+	int			i, type;
 
 	/* assume _BIF and _BST have been called */
 
@@ -140,30 +121,25 @@ acpibat_monitor(struct acpibat_softc *sc)
 		strlcpy(sc->sc_sens[i].device, DEVNAME(sc),
 		    sizeof(sc->sc_sens[i].device));
 
-	/* XXX ugh but make sure */
-	if (!sc->sc_bif.bif_cap_granu1)
-		sc->sc_bif.bif_cap_granu1 = 1;
+	type = sc->sc_bif.bif_power_unit ? SENSOR_AMPHOUR : SENSOR_WATTHOUR;
 
 	strlcpy(sc->sc_sens[0].desc, "last full capacity",
 	    sizeof(sc->sc_sens[0].desc));
-	sc->sc_sens[0].type = SENSOR_PERCENT;
+	sc->sc_sens[0].type = type;
 	sensor_add(&sc->sc_sens[0]);
-	sc->sc_sens[0].value = sc->sc_bif.bif_last_capacity /
-	    sc->sc_bif.bif_cap_granu1 * 1000;
+	sc->sc_sens[0].value = sc->sc_bif.bif_last_capacity * 1000;
 
 	strlcpy(sc->sc_sens[1].desc, "warning capacity",
 	    sizeof(sc->sc_sens[1].desc));
-	sc->sc_sens[1].type = SENSOR_PERCENT;
+	sc->sc_sens[1].type = type;
 	sensor_add(&sc->sc_sens[1]);
-	sc->sc_sens[1].value = sc->sc_bif.bif_warning /
-	    sc->sc_bif.bif_cap_granu1 * 1000;
+	sc->sc_sens[1].value = sc->sc_bif.bif_warning * 1000;
 
 	strlcpy(sc->sc_sens[2].desc, "low capacity",
 	    sizeof(sc->sc_sens[2].desc));
-	sc->sc_sens[2].type = SENSOR_PERCENT;
+	sc->sc_sens[2].type = type;
 	sensor_add(&sc->sc_sens[2]);
-	sc->sc_sens[2].value = sc->sc_bif.bif_warning /
-	    sc->sc_bif.bif_cap_granu1 * 1000;
+	sc->sc_sens[2].value = sc->sc_bif.bif_low * 1000;
 
 	strlcpy(sc->sc_sens[3].desc, "voltage", sizeof(sc->sc_sens[3].desc));
 	sc->sc_sens[3].type = SENSOR_VOLTS_DC;
@@ -184,10 +160,9 @@ acpibat_monitor(struct acpibat_softc *sc)
 
 	strlcpy(sc->sc_sens[6].desc, "remaining capacity",
 	    sizeof(sc->sc_sens[6].desc));
-	sc->sc_sens[6].type = SENSOR_PERCENT;
+	sc->sc_sens[6].type = type;
 	sensor_add(&sc->sc_sens[6]);
-	sc->sc_sens[6].value = sc->sc_bst.bst_capacity /
-	    sc->sc_bif.bif_cap_granu1 * 1000;
+	sc->sc_sens[6].value = sc->sc_bst.bst_capacity * 1000;
 
 	strlcpy(sc->sc_sens[7].desc, "current voltage",
 	    sizeof(sc->sc_sens[7].desc));
@@ -210,16 +185,9 @@ acpibat_refresh(void *arg)
 
 	rw_enter_write(&sc->sc_lock);
 
-	/* XXX ugh but make sure */
-	if (!sc->sc_bif.bif_cap_granu1)
-		sc->sc_bif.bif_cap_granu1 = 1;
-
-	sc->sc_sens[0].value = sc->sc_bif.bif_last_capacity /
-	    sc->sc_bif.bif_cap_granu1 * 1000;
-	sc->sc_sens[1].value = sc->sc_bif.bif_warning /
-	    sc->sc_bif.bif_cap_granu1 * 1000;
-	sc->sc_sens[2].value = sc->sc_bif.bif_warning /
-	    sc->sc_bif.bif_cap_granu1 * 1000;
+	sc->sc_sens[0].value = sc->sc_bif.bif_last_capacity * 1000;
+	sc->sc_sens[1].value = sc->sc_bif.bif_warning * 1000;
+	sc->sc_sens[2].value = sc->sc_bif.bif_low * 1000;
 	sc->sc_sens[3].value = sc->sc_bif.bif_voltage * 1000;
 
 	sc->sc_sens[4].status = SENSOR_S_OK;
@@ -236,8 +204,7 @@ acpibat_refresh(void *arg)
 	}
 	sc->sc_sens[4].value = sc->sc_bst.bst_state;
 	sc->sc_sens[5].value = sc->sc_bst.bst_rate;
-	sc->sc_sens[6].value = sc->sc_bst.bst_capacity /
-	    sc->sc_bif.bif_cap_granu1 * 1000;
+	sc->sc_sens[6].value = sc->sc_bst.bst_capacity * 1000;
 	sc->sc_sens[7].value = sc->sc_bst.bst_voltage * 1000;
 
 	rw_exit_write(&sc->sc_lock);
@@ -249,26 +216,14 @@ acpibat_getbif(struct acpibat_softc *sc)
 	struct aml_value        res;
 	int			rv = 1;
 
-	rw_enter_write(&sc->sc_lock);
-
-	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_STA", 0, NULL, &res) != 0) {
+	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_STA", 0, NULL, &res)) {
 		dnprintf(10, "%s: no _STA\n",
 		    DEVNAME(sc));
 		goto out;
 	}
-
-	/* XXX this is broken, it seems to only work during boot */
-	/*
-	if (!(res.v_integer & STA_BATTERY)) {
-		sc->sc_bat_present = 0;
-		aml_freevalue(&res);
-		return (1);
-	} else
-		sc->sc_bat_present = 1;
-	*/
 	aml_freevalue(&res);
 
-	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_BIF", 0, NULL, &res) != 0) {
+	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_BIF", 0, NULL, &res)) {
 		dnprintf(10, "%s: no _BIF\n",
 		    DEVNAME(sc));
 		printf("bif fails\n");
@@ -280,6 +235,8 @@ acpibat_getbif(struct acpibat_softc *sc)
 		    DEVNAME(sc));
 		goto out;
 	}
+
+	rw_enter_write(&sc->sc_lock);
 
 	memset(&sc->sc_bif, 0, sizeof sc->sc_bif);
 	sc->sc_bif.bif_power_unit = aml_val2int(res.v_package[0]);
@@ -301,6 +258,8 @@ acpibat_getbif(struct acpibat_softc *sc)
 	strlcpy(sc->sc_bif.bif_oem, aml_strval(res.v_package[12]),
 		sizeof(sc->sc_bif.bif_oem));
 
+	rw_exit_write(&sc->sc_lock);
+
 	dnprintf(60, "power_unit: %u capacity: %u last_cap: %u tech: %u "
 	    "volt: %u warn: %u low: %u gran1: %u gran2: %d model: %s "
 	    "serial: %s type: %s oem: %s\n",
@@ -320,7 +279,6 @@ acpibat_getbif(struct acpibat_softc *sc)
 
 out:
 	aml_freevalue(&res);
-	rw_exit_write(&sc->sc_lock);
 	return (rv);
 }
 
@@ -330,9 +288,7 @@ acpibat_getbst(struct acpibat_softc *sc)
 	struct aml_value	res;
 	int			rv = 0;
 
-	rw_enter_write(&sc->sc_lock);
-
-	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_BST", 0, NULL, &res) != 0) {
+	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_BST", 0, NULL, &res)) {
 		dnprintf(10, "%s: no _BST\n",
 		    DEVNAME(sc));
 		printf("_bst fails\n");
@@ -347,11 +303,15 @@ acpibat_getbst(struct acpibat_softc *sc)
 		goto out;
 	}
 
+	rw_enter_write(&sc->sc_lock);
+
 	sc->sc_bst.bst_state = aml_val2int(res.v_package[0]);
 	sc->sc_bst.bst_rate = aml_val2int(res.v_package[1]);
 	sc->sc_bst.bst_capacity = aml_val2int(res.v_package[2]);
 	sc->sc_bst.bst_voltage = aml_val2int(res.v_package[3]);
 	aml_freevalue(&res);
+
+	rw_exit_write(&sc->sc_lock);
 
 	dnprintf(60, "state: %u rate: %u cap: %u volt: %u ",
 	    sc->sc_bst.bst_state,
@@ -359,7 +319,6 @@ acpibat_getbst(struct acpibat_softc *sc)
 	    sc->sc_bst.bst_capacity,
 	    sc->sc_bst.bst_voltage);
 out:
-	rw_exit_write(&sc->sc_lock);
 	return (rv);
 }
 

@@ -411,10 +411,20 @@ bdwrite(struct buf *bp)
 	 */
 	if (!ISSET(bp->b_flags, B_DELWRI)) {
 		SET(bp->b_flags, B_DELWRI);
+		bp->b_synctime = time_second + 35;
 		s = splbio();
 		reassignbuf(bp);
 		splx(s);
 		p->p_stats->p_ru.ru_oublock++;	/* XXX */
+	} else {
+		/*
+		 * see if this buffer has slacked through the syncer
+		 * and enforce an async write upon it.
+		 */
+		if (bp->b_synctime < time_second) {
+			bawrite(bp);
+			return;
+		}
 	}
 
 	/* If this is a tape block, write the block now. */
@@ -450,6 +460,7 @@ buf_dirty(struct buf *bp)
 
 	if (ISSET(bp->b_flags, B_DELWRI) == 0) {
 		SET(bp->b_flags, B_DELWRI);
+		bp->b_synctime = time_second + 35;
 		reassignbuf(bp);
 	}
 }

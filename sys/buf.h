@@ -74,7 +74,7 @@ struct buf {
 	LIST_ENTRY(buf) b_vnbufs;	/* Buffer's associated vnode. */
 	TAILQ_ENTRY(buf) b_freelist;	/* Free list position if not active. */
 	TAILQ_ENTRY(buf) b_synclist;	/* List of dirty buffers to be written out */
-	long b_synctime;		/* Time this buffer should be flushed */
+	time_t b_synctime;		/* Time this buffer should be flushed */
 	struct	buf *b_actf, **b_actb;	/* Device driver queue when active. */
 	struct  proc *b_proc;		/* Associated proc; NULL if kernel. */
 	volatile long	b_flags;	/* B_* flags. */

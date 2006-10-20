@@ -1,4 +1,4 @@
-/*	$OpenBSD: acpi.c,v 1.56 2006/10/12 16:38:21 jordan Exp $	*/
+/*	$OpenBSD: acpi.c,v 1.58 2006/10/19 03:24:45 jordan Exp $	*/
 /*
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>
  * Copyright (c) 2005 Jordan Hargrave <jordan@openbsd.org>
@@ -37,6 +37,8 @@
 #include <dev/acpi/amltypes.h>
 #include <dev/acpi/acpidev.h>
 #include <dev/acpi/dsdt.h>
+
+#include <machine/apmvar.h>
 
 #ifdef ACPI_DEBUG
 int acpi_debug = 16;
@@ -410,7 +412,7 @@ acpi_read_pmreg(struct acpi_softc *sc, int reg, int offset)
 		    acpi_read_pmreg(sc, ACPIREG_PM1B_CNT, offset));
 	case ACPIREG_GPE_STS:
 		__size = 1;
-		dnprintf(0, "read GPE_STS  offset: %.2x %.2x %.2x\n", offset, 
+		dnprintf(50, "read GPE_STS  offset: %.2x %.2x %.2x\n", offset, 
 		    sc->sc_fadt->gpe0_blk_len>>1, sc->sc_fadt->gpe1_blk_len>>1);
 		if (offset < (sc->sc_fadt->gpe0_blk_len >> 1)) {
 			reg = ACPIREG_GPE0_STS;
@@ -418,7 +420,7 @@ acpi_read_pmreg(struct acpi_softc *sc, int reg, int offset)
 		break;
 	case ACPIREG_GPE_EN:
 		__size = 1;
-		dnprintf(0, "read GPE_EN   offset: %.2x %.2x %.2x\n", 
+		dnprintf(50, "read GPE_EN   offset: %.2x %.2x %.2x\n", 
 		    offset, sc->sc_fadt->gpe0_blk_len>>1,
 		    sc->sc_fadt->gpe1_blk_len>>1);
 		if (offset < (sc->sc_fadt->gpe0_blk_len >> 1)) {
@@ -480,7 +482,7 @@ acpi_write_pmreg(struct acpi_softc *sc, int reg, int offset, int regval)
 		break;
 	case ACPIREG_GPE_STS:
 		__size = 1;
-		dnprintf(0, "write GPE_STS offset: %.2x %.2x %.2x %.2x\n", 
+		dnprintf(50, "write GPE_STS offset: %.2x %.2x %.2x %.2x\n", 
 		    offset, sc->sc_fadt->gpe0_blk_len>>1,
 		    sc->sc_fadt->gpe1_blk_len>>1, regval);
 		if (offset < (sc->sc_fadt->gpe0_blk_len >> 1)) {
@@ -489,7 +491,7 @@ acpi_write_pmreg(struct acpi_softc *sc, int reg, int offset, int regval)
 		break;
 	case ACPIREG_GPE_EN:
 		__size = 1;
-		dnprintf(0, "write GPE_EN  offset: %.2x %.2x %.2x %.2x\n", 
+		dnprintf(50, "write GPE_EN  offset: %.2x %.2x %.2x %.2x\n", 
 		    offset, sc->sc_fadt->gpe0_blk_len>>1,
 		    sc->sc_fadt->gpe1_blk_len>>1, regval);
 		if (offset < (sc->sc_fadt->gpe0_blk_len >> 1)) {
@@ -685,6 +687,9 @@ acpi_attach(struct device *parent, struct device *self, void *aux)
 	struct acpi_rsdp *rsdp;
 	struct acpi_q *entry;
 	struct acpi_dsdt *p_dsdt;
+	struct device *dev;
+	struct acpi_ac *ac;
+	struct acpi_bat *bat;
 	paddr_t facspa;
 
 	sc->sc_iot = aaa->aaa_iot;
@@ -885,6 +890,25 @@ acpi_attach(struct device *parent, struct device *self, void *aux)
 
 	/* attach devices found in dsdt */
 	aml_find_node(aml_root.child, "_TMP", acpi_foundtmp, sc);
+
+	/* create list of devices we want to query when APM come in */
+	SLIST_INIT(&sc->sc_ac);
+	SLIST_INIT(&sc->sc_bat);
+	TAILQ_FOREACH(dev, &alldevs, dv_list) {
+		if (!strncmp(dev->dv_xname, "acpiac", strlen("acpiac"))) {
+			ac = malloc(sizeof(struct acpi_ac), M_DEVBUF, M_WAITOK);
+			memset(ac, 0, sizeof(struct acpi_ac));
+			ac->aac_softc = (struct acpiac_softc *)dev;
+			SLIST_INSERT_HEAD(&sc->sc_ac, ac, aac_link);
+		}
+		if (!strncmp(dev->dv_xname, "acpibat", strlen("acpibat"))) {
+			bat = malloc(sizeof(struct acpi_bat), M_DEVBUF,
+			    M_WAITOK);
+			memset(bat, 0, sizeof(struct acpi_bat));
+			bat->aba_softc = (struct acpibat_softc *)dev;
+			SLIST_INSERT_HEAD(&sc->sc_bat, bat, aba_link);
+		}
+	}
 
 	/* Setup threads */
 	sc->sc_thread = malloc(sizeof(struct acpi_thread), M_DEVBUF, M_WAITOK);
@@ -1117,7 +1141,7 @@ __acpi_enable_gpe(struct acpi_softc *sc, int gpe, int enable)
 
 	/* Read enabled register */
 	en = acpi_read_pmreg(sc, ACPIREG_GPE_EN, gpe>>3);
-	dnprintf(0, "%sabling GPE %.2x (current: %sabled) %.2x\n", 
+	dnprintf(50, "%sabling GPE %.2x (current: %sabled) %.2x\n", 
 	    enable ? "en" : "dis", gpe, (en & mask) ? "en" : "dis", en);
 	if (enable)
 		en |= mask;
@@ -1138,7 +1162,7 @@ acpi_set_gpehandler(struct acpi_softc *sc, int gpe, int (*handler)
 		return -EBUSY;
 	}
 
-	dnprintf(0, "Adding GPE handler %.2x (%s)\n", gpe, label);
+	dnprintf(50, "Adding GPE handler %.2x (%s)\n", gpe, label);
 	sc->gpe_table[gpe].handler = handler;
 	sc->gpe_table[gpe].arg = arg;
 
@@ -1190,7 +1214,7 @@ acpi_init_gpes(struct acpi_softc *sc)
 	sc->sc_lastgpe = sc->sc_fadt->gpe0_blk_len << 2;
 	if (sc->sc_fadt->gpe1_blk_len) {
 	}
-	dnprintf(0, "Last GPE: %.2x\n", sc->sc_lastgpe);
+	dnprintf(50, "Last GPE: %.2x\n", sc->sc_lastgpe);
 
 	/* Allocate GPE table */
 	sc->gpe_table = malloc(sc->sc_lastgpe * sizeof(struct gpe_block),
@@ -1392,9 +1416,6 @@ acpiopen(dev_t dev, int flag, int mode, struct proc *p)
 	    !(sc = acpi_cd.cd_devs[minor(dev)]))
 		return (ENXIO);
 
-	if (!(flag & FREAD) || (flag & FWRITE))
-		error = EINVAL;
-
 	return (error);
 }
 
@@ -1414,57 +1435,81 @@ int
 acpiioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 {
 	struct acpi_softc *sc;
-	int error = 0;
+	struct acpi_ac *ac;
+	struct acpi_bat *bat;
+	struct apm_power_info *pi = (struct apm_power_info *)data;
+	int error = 0, bats;
+	unsigned int remaining, rem, minutes, rate;
 
 	if (!acpi_cd.cd_ndevs || minor(dev) != 0 ||
 	    !(sc = acpi_cd.cd_devs[minor(dev)]))
 		return (ENXIO);
 
 	ACPI_LOCK(sc);
+	/* fake APM */
 	switch (cmd) {
-	case ACPI_IOC_SETSLEEPSTATE:
-		if (suser(p, 0) != 0)
-			error = EPERM;
-		else {
-			acpi_enter_sleep_state(sc, *(int *)data);
+	case APM_IOC_GETPOWER:
+		/* A/C */
+		pi->ac_state = APM_AC_UNKNOWN;
+		SLIST_FOREACH(ac, &sc->sc_ac, aac_link) {
+			if (ac->aac_softc->sc_ac_stat == PSR_ONLINE)
+				pi->ac_state = APM_AC_ON;
+			else if (ac->aac_softc->sc_ac_stat == PSR_OFFLINE)
+				if (pi->ac_state == APM_AC_UNKNOWN)
+					pi->ac_state = APM_AC_OFF;
 		}
-		break;
 
-	case ACPI_IOC_GETFACS:
-		if (suser(p, 0) != 0)
-			error = EPERM;
-		else {
-			struct acpi_facs *facs = (struct acpi_facs *)data;
+		/* battery */
+		pi->battery_state = APM_BATT_UNKNOWN;
+		pi->battery_life = 0;
+		pi->minutes_left = 0;
+		bats = 0;
+		remaining = rem = 0;
+		minutes = 0;
+		rate = 0;
+		SLIST_FOREACH(bat, &sc->sc_bat, aba_link) {
+			if (bat->aba_softc->sc_bat_present == 0)
+				continue;
 
-			bcopy(sc->sc_facs, facs, sc->sc_facs->length);
+			if (bat->aba_softc->sc_bif.bif_last_capacity == 0)
+				continue;
+
+			bats++;
+			rem = (bat->aba_softc->sc_bst.bst_capacity * 100) /
+			    bat->aba_softc->sc_bif.bif_last_capacity;
+			if (rem > 100)
+				rem = 100;
+			remaining += rem;
+
+			if (bat->aba_softc->sc_bst.bst_rate == BST_UNKNOWN)
+				continue;
+			else if (bat->aba_softc->sc_bst.bst_rate > 1)
+				rate = bat->aba_softc->sc_bst.bst_rate;
+
+			minutes += bat->aba_softc->sc_bst.bst_capacity;
 		}
-		break;
 
-	case ACPI_IOC_GETTABLE:
-		if (suser(p, 0) != 0)
-			error = EPERM;
-		else {
-			struct acpi_table *table = (struct acpi_table *)data;
-			struct acpi_table_header *hdr;
-			struct acpi_q *entry;
-
-			error = ENOENT;
-			SIMPLEQ_FOREACH(entry, &sc->sc_tables, q_next) {
-				if (table->offset-- == 0) {
-					hdr = (struct acpi_table_header *)
-					    entry->q_table;
-					if (table->table == NULL) {
-						table->size = hdr->length;
-						error = 0;
-					} else if (hdr->length > table->size)
-						error = ENOSPC;
-					else
-						error = copyout(hdr,
-						    table->table, hdr->length);
-					break;
-				}
-			}
+		if (bats == 0) {
+			pi->battery_state = APM_BATTERY_ABSENT;
+			pi->battery_life = 0;
+			pi->minutes_left = (unsigned int)-1;
+			break;
 		}
+
+		if (pi->ac_state == APM_AC_ON || rate == 0)
+			pi->minutes_left = (unsigned int)-1;
+		else
+			pi->minutes_left = minutes / rate * 100;
+
+		/* running on battery */
+		pi->battery_life = remaining / bats;
+		if (pi->battery_life > 50)
+			pi->battery_state = APM_BATT_HIGH;
+		else if (pi->battery_life > 25)
+			pi->battery_state = APM_BATT_LOW;
+		else
+			pi->battery_state = APM_BATT_CRITICAL;
+
 		break;
 
 	default:
@@ -1576,7 +1621,7 @@ acpi_isr_thread(void *arg)
 
 			if (pgpe->active) {
 				pgpe->active = 0;
-				dnprintf(0, "softgpe: %.2x\n", gpe);
+				dnprintf(50, "softgpe: %.2x\n", gpe);
 				if (pgpe->handler) {
 					pgpe->handler(sc, gpe, pgpe->arg);
 				}
