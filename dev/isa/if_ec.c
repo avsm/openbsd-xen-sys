@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_ec.c,v 1.7 2006/07/29 11:31:21 miod Exp $	*/
+/*	$OpenBSD: if_ec.c,v 1.9 2006/10/20 16:54:01 brad Exp $	*/
 /*	$NetBSD: if_ec.c,v 1.9 1998/07/05 06:49:12 jonathan Exp $	*/
 
 /*-
@@ -69,20 +69,12 @@
 #include <net/if_types.h>
 #include <net/if_media.h>
 
-#ifdef __NetBSD__
-#include <net/if_ether.h>
-#endif
-
 #ifdef INET
 #include <netinet/in.h>
 #include <netinet/in_systm.h>
 #include <netinet/in_var.h> 
 #include <netinet/ip.h>
-#ifdef __NetBSD__
-#include <netinet/if_inarp.h> 
-#else
 #include <netinet/if_ether.h>
-#endif
 #endif 
 
 #if NBPFILTER > 0
@@ -150,9 +142,7 @@ struct cfdriver ec_cd = {
 };
 
 int
-ec_probe(parent, match, aux)
-	struct device *parent;
-	void *match, *aux;
+ec_probe(struct device *parent, void *match, void *aux)
 {
 	struct isa_attach_args *ia = aux;
 	bus_space_tag_t nict, asict, memt;
@@ -257,9 +247,7 @@ ec_probe(parent, match, aux)
 }
 
 void
-ec_attach(parent, self, aux)
-	struct device *parent, *self;
-	void *aux;
+ec_attach(struct device *parent, struct device *self, void *aux)
 {
 	struct ec_softc *esc = (struct ec_softc *)self;
 	struct dp8390_softc *sc = &esc->sc_dp8390;
@@ -353,11 +341,7 @@ ec_attach(parent, self, aux)
 	    ELINK2_CR_XSEL | ELINK2_CR_EALO);
 
 	for (i = 0; i < ETHER_ADDR_LEN; i++)
-#ifdef __NetBSD__
-		sc->sc_enaddr[i] = NIC_GET(nict, nich, i);
-#else
 		sc->sc_arpcom.ac_enaddr[i] = NIC_GET(nict, nich, i);
-#endif
 
 	/*
 	 * Unmap PROM - select NIC registers.  The proper setting of the
@@ -519,10 +503,8 @@ ec_attach(parent, self, aux)
 }
 
 int
-ec_fake_test_mem(sc)
-	struct dp8390_softc *sc;
+ec_fake_test_mem(struct dp8390_softc *sc)
 {
-
 	/*
 	 * We have to do this after we initialize the GA, but we
 	 * have to do that after calling dp8390_config(), which
@@ -533,8 +515,7 @@ ec_fake_test_mem(sc)
 }
 
 int
-ec_test_mem(sc)
-	struct dp8390_softc *sc;
+ec_test_mem(struct dp8390_softc *sc)
 {
 	struct ec_softc *esc = (struct ec_softc *)sc;
 	bus_space_tag_t memt = sc->sc_buft;
@@ -573,11 +554,7 @@ ec_test_mem(sc)
  * up to a word - ok as long as mbufs are word-sized.
  */
 __inline void
-ec_readmem(esc, from, to, len)
-	struct ec_softc *esc;
-	int from;
-	u_int8_t *to;
-	int len;
+ec_readmem(struct ec_softc *esc, int from, u_int8_t *to, int len)
 {
 	bus_space_tag_t memt = esc->sc_dp8390.sc_buft;
 	bus_space_handle_t memh = esc->sc_dp8390.sc_bufh;
@@ -593,10 +570,7 @@ ec_readmem(esc, from, to, len)
 }
 
 int
-ec_write_mbuf(sc, m, buf)
-	struct dp8390_softc *sc;
-	struct mbuf *m;
-	int buf;
+ec_write_mbuf(struct dp8390_softc *sc, struct mbuf *m, int buf)
 {
 	struct ec_softc *esc = (struct ec_softc *)sc;
 	bus_space_tag_t asict = esc->sc_asict;
@@ -702,11 +676,8 @@ ec_write_mbuf(sc, m, buf)
 }
 
 int
-ec_ring_copy(sc, src, dst, amount)
-	struct dp8390_softc *sc;
-	int src;
-	caddr_t dst;
-	u_short amount;
+ec_ring_copy(struct dp8390_softc *sc, int src, caddr_t dst,
+    u_short amount)
 {
 	struct ec_softc *esc = (struct ec_softc *)sc;
 	u_short tmp_amount;
@@ -729,10 +700,8 @@ ec_ring_copy(sc, src, dst, amount)
 }
 
 void
-ec_read_hdr(sc, packet_ptr, packet_hdrp)
-	struct dp8390_softc *sc;
-	int packet_ptr;
-	struct dp8390_ring *packet_hdrp;
+ec_read_hdr(struct dp8390_softc *sc, int packet_ptr,
+    struct dp8390_ring *packet_hdrp)
 {
 	struct ec_softc *esc = (struct ec_softc *)sc;
 
@@ -753,8 +722,7 @@ ec_media_init(struct dp8390_softc *sc)
 }
 
 int
-ec_mediachange(sc)
-	struct dp8390_softc *sc;
+ec_mediachange(struct dp8390_softc *sc)
 {
 	struct ec_softc *esc = (struct ec_softc *)sc;
 	struct ifmedia *ifm = &sc->sc_media;
@@ -763,9 +731,7 @@ ec_mediachange(sc)
 }
 
 void
-ec_mediastatus(sc, ifmr)
-	struct dp8390_softc *sc;
-	struct ifmediareq *ifmr;
+ec_mediastatus(struct dp8390_softc *sc, struct ifmediareq *ifmr)
 {
 	struct ifmedia *ifm = &sc->sc_media;
 
@@ -776,8 +742,7 @@ ec_mediastatus(sc, ifmr)
 }
 
 void
-ec_init_card(sc)
-	struct dp8390_softc *sc;
+ec_init_card(struct dp8390_softc *sc)
 {
 	struct ec_softc *esc = (struct ec_softc *)sc;
 	struct ifmedia *ifm = &sc->sc_media;
@@ -786,9 +751,7 @@ ec_init_card(sc)
 }
 
 int
-ec_set_media(esc, media)
-	struct ec_softc *esc;
-	int media;
+ec_set_media(struct ec_softc *esc, int media)
 {
 	u_int8_t new;
 

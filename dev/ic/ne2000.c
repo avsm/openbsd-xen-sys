@@ -1,4 +1,4 @@
-/*	$OpenBSD: ne2000.c,v 1.17 2006/07/29 11:31:20 miod Exp $	*/
+/*	$OpenBSD: ne2000.c,v 1.21 2006/10/20 17:11:39 brad Exp $	*/
 /*	$NetBSD: ne2000.c,v 1.12 1998/06/10 01:15:50 thorpej Exp $	*/
 
 /*-
@@ -67,26 +67,18 @@
 #include <net/if_types.h>
 #include <net/if_media.h>
 
-#ifdef __NetBSD__
-#include <net/if_ether.h>
-#else
 #include <netinet/in.h>
 #include <netinet/if_ether.h>
-#endif
 
 #include <machine/bus.h>
-
-#ifndef __BUS_SPACE_HAS_STREAM_METHODS
-#define	bus_space_write_stream_2	bus_space_write_2
-#define	bus_space_write_multi_stream_2	bus_space_write_multi_2
-#define	bus_space_read_multi_stream_2	bus_space_read_multi_2
-#endif /* __BUS_SPACE_HAS_STREAM_METHODS */
 
 #include <dev/ic/dp8390reg.h>
 #include <dev/ic/dp8390var.h>
 
 #include <dev/ic/ne2000reg.h>
 #include <dev/ic/ne2000var.h>
+
+#include <dev/ic/ax88190reg.h>
 
 int	ne2000_write_mbuf(struct dp8390_softc *, struct mbuf *, int);
 int	ne2000_ring_copy(struct dp8390_softc *, int, caddr_t, u_short);
@@ -107,9 +99,7 @@ struct cfdriver ne_cd = {
 };
 
 int
-ne2000_attach(nsc, myea)
-	struct ne2000_softc *nsc;
-	u_int8_t *myea;
+ne2000_attach(struct ne2000_softc *nsc, u_int8_t *myea)
 {
 	struct dp8390_softc *dsc = &nsc->sc_dp8390;
 	bus_space_tag_t nict = dsc->sc_regt;
@@ -262,19 +252,14 @@ ne2000_attach(nsc, myea)
 			bus_space_write_1(nict, nich, ED_P0_DCR, ED_DCR_WTS);
 			NIC_BARRIER(nict, nich);
 			ne2000_readmem(nict, nich, asict, asich,
-			    NE2000_AX88190_NODEID_OFFSET,
+			    AX88190_NODEID_OFFSET,
 			    dsc->sc_arpcom.ac_enaddr, ETHER_ADDR_LEN, useword);
 		} else {
 			ne2000_readmem(nict, nich, asict, asich, 0, romdata,
 			    sizeof(romdata), useword);
 			for (i = 0; i < ETHER_ADDR_LEN; i++)
-#ifdef __NetBSD__
-				dsc->sc_enaddr[i] =
-				    romdata[i * (useword ? 2 : 1)];
-#else
 				dsc->sc_arpcom.ac_enaddr[i] =
 				    romdata[i * (useword ? 2 : 1)];
-#endif
 		}
 	} else
 		bcopy(myea, dsc->sc_arpcom.ac_enaddr, ETHER_ADDR_LEN);
@@ -306,8 +291,7 @@ ne2000_attach(nsc, myea)
  * Detect an NE-2000 or compatible.  Returns a model code.
  */
 int
-ne2000_detect(nsc)
-	struct ne2000_softc *nsc;
+ne2000_detect(struct ne2000_softc *nsc)
 {
 	struct dp8390_softc *dsc = &nsc->sc_dp8390;
 	bus_space_tag_t nict = dsc->sc_regt;
@@ -476,10 +460,7 @@ ne2000_detect(nsc)
  * I/O.
  */
 int
-ne2000_write_mbuf(sc, m, buf)
-	struct dp8390_softc *sc;
-	struct mbuf *m;
-	int buf;
+ne2000_write_mbuf(struct dp8390_softc *sc, struct mbuf *m, int buf)
 {
 	struct ne2000_softc *nsc = (struct ne2000_softc *)sc;
 	bus_space_tag_t nict = sc->sc_regt;
@@ -559,15 +540,9 @@ ne2000_write_mbuf(sc, m, buf)
 					 */
 					savebyte[1] = *data++;
 					l--;
-#ifdef __NetBSD__
-					bus_space_write_stream_2(asict, asich,
-					    NE2000_ASIC_DATA,
-					    *(u_int16_t *)savebyte);
-#else
 					bus_space_write_raw_multi_2(asict,
 					    asich, NE2000_ASIC_DATA,
 					    savebyte, 2);
-#endif
 					leftover = 0;
 				} else if (ALIGNED_POINTER(data,
 					   u_int16_t) == 0) {
@@ -586,14 +561,8 @@ ne2000_write_mbuf(sc, m, buf)
 					 */
 					leftover = l & 1;
 					l &= ~1;
-#ifdef __NetBSD__
-					bus_space_write_multi_stream_2(asict,
-					    asich, NE2000_ASIC_DATA,
-					    (u_int16_t *)data, l >> 1);
-#else
 					bus_space_write_raw_multi_2(asict,
 					    asich, NE2000_ASIC_DATA, data, l);
-#endif
 					data += l;
 					if (leftover)
 						savebyte[0] = *data++;
@@ -609,13 +578,8 @@ ne2000_write_mbuf(sc, m, buf)
 		}
 		if (leftover) {
 			savebyte[1] = 0;
-#ifdef __NetBSD__
-			bus_space_write_stream_2(asict, asich, NE2000_ASIC_DATA,
-			    *(u_int16_t *)savebyte);
-#else
 			bus_space_write_raw_multi_2(asict, asich,
 			    NE2000_ASIC_DATA, savebyte, 2);
-#endif
 		}
 	}
 	NIC_BARRIER(nict, nich);
@@ -651,11 +615,8 @@ ne2000_write_mbuf(sc, m, buf)
  * ring-wrap.
  */
 int
-ne2000_ring_copy(sc, src, dst, amount)
-	struct dp8390_softc *sc;
-	int src;
-	caddr_t dst;
-	u_short amount;
+ne2000_ring_copy(struct dp8390_softc *sc, int src, caddr_t dst,
+    u_short amount)
 {
 	struct ne2000_softc *nsc = (struct ne2000_softc *)sc;
 	bus_space_tag_t nict = sc->sc_regt;
@@ -685,10 +646,7 @@ ne2000_ring_copy(sc, src, dst, amount)
 }
 
 void
-ne2000_read_hdr(sc, buf, hdr)
-	struct dp8390_softc *sc;
-	int buf;
-	struct dp8390_ring *hdr;
+ne2000_read_hdr(struct dp8390_softc *sc, int buf, struct dp8390_ring *hdr)
 {
 	struct ne2000_softc *nsc = (struct ne2000_softc *)sc;
 
@@ -701,10 +659,8 @@ ne2000_read_hdr(sc, buf, hdr)
 }
 
 int
-ne2000_test_mem(sc)
-	struct dp8390_softc *sc;
+ne2000_test_mem(struct dp8390_softc *sc)
 {
-
 	/* Noop. */
 	return (0);
 }
@@ -715,15 +671,9 @@ ne2000_test_mem(sc)
  * rounded up to a word - ok as long as mbufs are word sized.
  */
 void
-ne2000_readmem(nict, nich, asict, asich, src, dst, amount, useword)
-	bus_space_tag_t nict;
-	bus_space_handle_t nich;
-	bus_space_tag_t asict;
-	bus_space_handle_t asich;
-	int src;
-	u_int8_t *dst;
-	size_t amount;
-	int useword;
+ne2000_readmem(bus_space_tag_t nict, bus_space_handle_t nich,
+    bus_space_tag_t asict, bus_space_handle_t asich, int src,
+    u_int8_t *dst, size_t amount, int useword)
 {
 
 	/* Select page 0 registers. */
@@ -750,13 +700,8 @@ ne2000_readmem(nict, nich, asict, asich, src, dst, amount, useword)
 
 	ASIC_BARRIER(asict, asich);
 	if (useword)
-#ifdef __NetBSD__
-		bus_space_read_multi_stream_2(asict, asich, NE2000_ASIC_DATA,
-		    (u_int16_t *)dst, amount >> 1);
-#else
 		bus_space_read_raw_multi_2(asict, asich, NE2000_ASIC_DATA,
 		    dst, amount);
-#endif
 	else
 		bus_space_read_multi_1(asict, asich, NE2000_ASIC_DATA,
 		    dst, amount);
@@ -767,15 +712,9 @@ ne2000_readmem(nict, nich, asict, asich, src, dst, amount, useword)
  * used in the probe routine to test the memory.  'len' must be even.
  */
 void
-ne2000_writemem(nict, nich, asict, asich, src, dst, len, useword)
-	bus_space_tag_t nict;
-	bus_space_handle_t nich;
-	bus_space_tag_t asict;
-	bus_space_handle_t asich;
-	u_int8_t *src;
-	int dst;
-	size_t len;
-	int useword;
+ne2000_writemem(bus_space_tag_t nict, bus_space_handle_t nich,
+    bus_space_tag_t asict, bus_space_handle_t asich, u_int8_t *src,
+    int dst, size_t len, int useword)
 {
 	int maxwait = 100;	/* about 120us */
 
@@ -805,13 +744,8 @@ ne2000_writemem(nict, nich, asict, asich, src, dst, len, useword)
 
 	ASIC_BARRIER(asict, asich);
 	if (useword)
-#ifdef __NetBSD__
-		bus_space_write_multi_stream_2(asict, asich, NE2000_ASIC_DATA,
-		    (u_int16_t *)src, len >> 1);
-#else
 		bus_space_write_raw_multi_2(asict, asich, NE2000_ASIC_DATA,
 		    src, len);
-#endif
 	else
 		bus_space_write_multi_1(asict, asich, NE2000_ASIC_DATA,
 		    src, len);
@@ -830,9 +764,7 @@ ne2000_writemem(nict, nich, asict, asich, src, dst, len, useword)
 }
 
 int
-ne2000_detach(sc, flags)
-	struct ne2000_softc *sc;
-	int flags;
+ne2000_detach(struct ne2000_softc *sc, int flags)
 {
 	return (dp8390_detach(&sc->sc_dp8390, flags));
 }
