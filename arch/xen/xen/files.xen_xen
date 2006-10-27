@@ -1,0 +1,49 @@
+# This should go to uvm/. See comment in this file.
+file	arch/xen/xen/uvm_km_kmemalloc.c
+
+# Xen common files 
+file	arch/xen/xen/evtchn.c
+file	arch/xen/xen/xen_debug.c
+file	arch/xen/xen/xengnt.c
+file	arch/xen/xen/xenevt.c		xenevt & dom0ops
+
+pseudo-device xenevt		# Xen event pseudo-device
+pseudo-device xvif		# Xen network backend
+pseudo-device xbdback		# Xen block backend
+
+# Xen hypervisor
+device hypervisor {}: isabus, pcibus, xendevbus
+attach hypervisor at hypervisorbus
+file	arch/xen/xen/hypervisor.c	hypervisor needs-flag
+file	arch/xen/xen/shutdown_xenbus.c	hypervisor
+file	arch/xen/xen/sysrq_xenbus.c	hypervisor
+
+# Xen clock driver
+file	arch/xen/xen/clock.c
+
+# Xen console driver
+device xencons: tty
+attach xencons at xendevbus
+file	arch/xen/xen/xencons.c		xencons needs-flag
+
+# Xen network driver
+device xennet: ether, ifnet
+attach xennet at xenbus
+file	arch/xen/xen/if_xennet_xenbus.c	xennet
+file	arch/xen/xen/xennet_checksum.c	xennet | xvif
+file	arch/xen/xen/xennetback_xenbus.c xvif
+
+# Xen block driver
+device xbd: disk
+attach xbd at xenbus
+file	arch/xen/xen/xbd_xenbus.c	xbd
+file	arch/xen/xen/dksubr.c		xbd
+file	arch/xen/xen/xbdback_xenbus.c	xbdback
+
+
+# Common PCI support
+file	arch/xen/xen/pci_intr_machdep.c	pci
+file	arch/xen/xen/pciide_machdep.c	pciide
+
+
+# Common Dom0 support
