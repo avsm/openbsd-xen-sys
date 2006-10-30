@@ -1,4 +1,4 @@
-/*	$OpenBSD: devs.c,v 1.2 2006/10/11 23:06:46 drahn Exp $	*/
+/*	$OpenBSD: devs.c,v 1.4 2006/10/29 14:47:59 drahn Exp $	*/
 
 /*
  * Copyright (c) 2006 Michael Shalayeff
@@ -76,12 +76,8 @@ run_loadfile(u_long *marks, int howto)
 
 	entry = marks[MARK_ENTRY];
 	cache_flush();
+	cache_disable();
 
-	printf("entry point at 0x%x\n", (int)entry);
-	printf("start at  0x%x\n", (int)marks[MARK_START]);
-	printf("NSYMS 0x%x\n", (int)marks[MARK_NSYM]);
-	printf("SYM at 0x%x\n", (int)marks[MARK_SYM]);
-	printf("END at 0x%x\n", (int)marks[MARK_END]);
 	(*(void (*)(int,int,int))entry)(howto, marks[MARK_END], 0);
 }
 

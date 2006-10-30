@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bge.c,v 1.191 2006/10/22 21:45:36 brad Exp $	*/
+/*	$OpenBSD: if_bge.c,v 1.194 2006/10/26 22:57:17 brad Exp $	*/
 
 /*
  * Copyright (c) 2001 Wind River Systems
@@ -2604,8 +2604,7 @@ bge_compact_dma_runt(struct mbuf *pkt)
 		 */
 
 		/* Internal frag. If fits in prev, copy it there. */
-		if (prev && !M_READONLY(prev) &&
-		    M_TRAILINGSPACE(prev) >= m->m_len) {
+		if (prev && M_TRAILINGSPACE(prev) >= m->m_len) {
 			bcopy(m->m_data,
 			      prev->m_data+prev->m_len,
 			      mlen);
@@ -2615,7 +2614,7 @@ bge_compact_dma_runt(struct mbuf *pkt)
 			prev->m_next = m_free(m);
 			m = prev;
 			continue;
-		} else if (m->m_next != NULL && !M_READONLY(m) &&
+		} else if (m->m_next != NULL &&
 			   M_TRAILINGSPACE(m) >= shortfall &&
 			   m->m_next->m_len >= (8 + shortfall)) {
 			/* m is writable and have enough data in next, pull up. */
@@ -2683,7 +2682,7 @@ int
 bge_encap(struct bge_softc *sc, struct mbuf *m_head, u_int32_t *txidx)
 {
 	struct bge_tx_bd	*f = NULL;
-	u_int32_t		frag, cur, cnt = 0;
+	u_int32_t		frag, cur;
 	u_int16_t		csum_flags = 0;
 	struct txdmamap_pool_entry *dma;
 	bus_dmamap_t dmamap;
@@ -2715,6 +2714,7 @@ bge_encap(struct bge_softc *sc, struct mbuf *m_head, u_int32_t *txidx)
 #endif
 	if (!(BGE_CHIPREV(sc->bge_chipid) == BGE_CHIPREV_5700_BX))
 		goto doit;
+
 	/*
 	 * bcm5700 Revision B silicon cannot handle DMA descriptors with
 	 * less than eight bytes.  If we encounter a teeny mbuf
@@ -2722,6 +2722,7 @@ bge_encap(struct bge_softc *sc, struct mbuf *m_head, u_int32_t *txidx)
 	 */
 	if (bge_compact_dma_runt(m_head) != 0)
 		return (ENOBUFS);
+
 doit:
 	dma = SLIST_FIRST(&sc->txdma_list);
 	if (dma == NULL)
@@ -2736,6 +2737,13 @@ doit:
 	if (bus_dmamap_load_mbuf(sc->bge_dmatag, dmamap, m_head,
 	    BUS_DMA_NOWAIT))
 		return (ENOBUFS);
+
+	/*
+	 * Sanity check: avoid coming within 16 descriptors
+	 * of the end of the ring.
+	 */
+	if (dmamap->dm_nsegs > (BGE_TX_RING_CNT - sc->bge_txcnt - 16))
+		goto fail_unload;
 
 	for (i = 0; i < dmamap->dm_nsegs; i++) {
 		f = &sc->bge_rdata->bge_tx_ring[frag];
@@ -2752,35 +2760,33 @@ doit:
 			f->bge_vlan_tag = 0;
 		}
 #endif
-		/*
-		 * Sanity check: avoid coming within 16 descriptors
-		 * of the end of the ring.
-		 */
-		if ((BGE_TX_RING_CNT - (sc->bge_txcnt + cnt)) < 16)
-			return (ENOBUFS);
 		cur = frag;
 		BGE_INC(frag, BGE_TX_RING_CNT);
-		cnt++;
 	}
 
 	if (i < dmamap->dm_nsegs)
-		return (ENOBUFS);
+		goto fail_unload;
 
 	bus_dmamap_sync(sc->bge_dmatag, dmamap, 0, dmamap->dm_mapsize,
 	    BUS_DMASYNC_PREWRITE);
 
 	if (frag == sc->bge_tx_saved_considx)
-		return (ENOBUFS);
+		goto fail_unload;
 
 	sc->bge_rdata->bge_tx_ring[cur].bge_flags |= BGE_TXBDFLAG_END;
 	sc->bge_cdata.bge_tx_chain[cur] = m_head;
 	SLIST_REMOVE_HEAD(&sc->txdma_list, link);
 	sc->txdma[cur] = dma;
-	sc->bge_txcnt += cnt;
+	sc->bge_txcnt += dmamap->dm_nsegs;
 
 	*txidx = frag;
 
 	return (0);
+
+fail_unload:
+	bus_dmamap_unload(sc->bge_dmatag, dmamap);
+
+	return (ENOBUFS);
 }
 
 /*

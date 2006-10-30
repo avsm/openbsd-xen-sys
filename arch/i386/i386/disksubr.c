@@ -1,4 +1,4 @@
-/*	$OpenBSD: disksubr.c,v 1.65 2006/10/21 16:01:54 krw Exp $	*/
+/*	$OpenBSD: disksubr.c,v 1.67 2006/10/28 23:26:05 krw Exp $	*/
 /*	$NetBSD: disksubr.c,v 1.21 1996/05/03 19:42:03 christos Exp $	*/
 
 /*
@@ -121,7 +121,7 @@ readdisklabel(dev_t dev, void (*strat)(struct buf *), struct disklabel *lp,
 		}
 		bcopy(bp->b_data + DOSPARTOFF, dp, sizeof(dp));
 
-		if (ourpart == -1) {
+		if (ourpart == -1 && part_blkno == DOSBBSECTOR) {
 			/* Search for our MBR partition */
 			for (dp2=dp, i=0; i < NDOSPART && ourpart == -1;
 			    i++, dp2++)
@@ -243,16 +243,14 @@ donot:
 		}
 	}
 
-	if (msg) {
 #if defined(CD9660)
-		if (iso_disklabelspoof(dev, strat, lp) == 0)
-			msg = NULL;
+	if (msg && iso_disklabelspoof(dev, strat, lp) == 0)
+		msg = NULL;
 #endif
 #if defined(UDF)
-		if (msg && udf_disklabelspoof(dev, strat, lp) == 0)
-			msg = NULL;
+	if (msg && udf_disklabelspoof(dev, strat, lp) == 0)
+		msg = NULL;
 #endif
-	}
 
 done:
 	if (bp) {
