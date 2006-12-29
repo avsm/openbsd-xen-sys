@@ -1,4 +1,4 @@
-/*	$OpenBSD: auich.c,v 1.60 2006/05/29 08:46:58 jsg Exp $	*/
+/*	$OpenBSD: auich.c,v 1.62 2006/08/19 19:06:51 brad Exp $	*/
 
 /*
  * Copyright (c) 2000,2001 Michael Shalayeff
@@ -237,6 +237,8 @@ static const struct auich_devtype {
 	int	options;
 	char	name[8];
 } auich_devices[] = {
+	{ PCI_VENDOR_INTEL,	PCI_PRODUCT_INTEL_6300ESB_ACA,	0, "ESB" },
+	{ PCI_VENDOR_INTEL,	PCI_PRODUCT_INTEL_6321ESB_ACA,	0, "ESB2" },
 	{ PCI_VENDOR_INTEL,	PCI_PRODUCT_INTEL_82801AA_ACA,	0, "ICH" },
 	{ PCI_VENDOR_INTEL,	PCI_PRODUCT_INTEL_82801AB_ACA,	0, "ICH0" },
 	{ PCI_VENDOR_INTEL,	PCI_PRODUCT_INTEL_82801BA_ACA,	0, "ICH2" },
@@ -1310,7 +1312,7 @@ auich_trigger_output(v, start, end, blksize, intr, arg, param)
 	 */
 	sc->pcmo_start = p->segs->ds_addr;
 	sc->pcmo_p = sc->pcmo_start + blksize;
-	sc->pcmo_end = sc->pcmo_start + (end - start);
+	sc->pcmo_end = sc->pcmo_start + ((char *)end - (char *)start);
 	sc->pcmo_blksize = blksize;
 
 	q = sc->dmap_pcmo = sc->dmalist_pcmo;
@@ -1361,7 +1363,7 @@ auich_trigger_input(v, start, end, blksize, intr, arg, param)
 	 */
 	sc->pcmi_start = p->segs->ds_addr;
 	sc->pcmi_p = sc->pcmi_start + blksize;
-	sc->pcmi_end = sc->pcmi_start + (end - start);
+	sc->pcmi_end = sc->pcmi_start + ((char *)end - (char *)start);
 	sc->pcmi_blksize = blksize;
 
 	q = sc->dmap_pcmi = sc->dmalist_pcmi;
