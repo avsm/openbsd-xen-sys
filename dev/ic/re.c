@@ -1,4 +1,4 @@
-/*	$OpenBSD: re.c,v 1.48 2006/10/16 20:37:25 brad Exp $	*/
+/*	$OpenBSD: re.c,v 1.51 2006/10/31 22:45:15 brad Exp $	*/
 /*	$FreeBSD: if_re.c,v 1.31 2004/09/04 07:54:05 ru Exp $	*/
 /*
  * Copyright (c) 1997, 1998-2003
@@ -586,6 +586,7 @@ re_diag(struct rl_softc *sc)
 	struct ifnet		*ifp = &sc->sc_arpcom.ac_if;
 	struct mbuf		*m0;
 	struct ether_header	*eh;
+	struct rl_rxsoft	*rxs;
 	struct rl_desc		*cur_rx;
 	bus_dmamap_t		dmamap;
 	u_int16_t		status;
@@ -679,24 +680,20 @@ re_diag(struct rl_softc *sc)
 	 * entry in the RX DMA ring. Grab it from there.
 	 */
 
-	dmamap = sc->rl_ldata.rl_rx_list_map;
-	bus_dmamap_sync(sc->sc_dmat,
-	    dmamap, 0, dmamap->dm_mapsize,
+	rxs = &sc->rl_ldata.rl_rxsoft[0];
+	dmamap = rxs->rxs_dmamap;
+	bus_dmamap_sync(sc->sc_dmat, dmamap, 0, dmamap->dm_mapsize,
 	    BUS_DMASYNC_POSTREAD);
-	dmamap = sc->rl_ldata.rl_rx_dmamap[0];
-	bus_dmamap_sync(sc->sc_dmat,
-	    dmamap, 0, dmamap->dm_mapsize,
-	    BUS_DMASYNC_POSTREAD);
-	bus_dmamap_unload(sc->sc_dmat,
-	    sc->rl_ldata.rl_rx_dmamap[0]);
+	bus_dmamap_unload(sc->sc_dmat, dmamap);
 
-	m0 = sc->rl_ldata.rl_rx_mbuf[0];
-	sc->rl_ldata.rl_rx_mbuf[0] = NULL;
+	m0 = rxs->rxs_mbuf;
+	rxs->rxs_mbuf = NULL;
 	eh = mtod(m0, struct ether_header *);
 
+	RL_RXDESCSYNC(sc, 0, BUS_DMASYNC_POSTREAD|BUS_DMASYNC_POSTWRITE);
 	cur_rx = &sc->rl_ldata.rl_rx_list[0];
-	total_len = RL_RXBYTES(cur_rx);
 	rxstat = letoh32(cur_rx->rl_cmdstat);
+	total_len = rxstat & sc->rl_rxlenmask;
 
 	if (total_len != ETHER_MIN_LEN) {
 		printf("%s: diagnostic failed, received short packet\n",
@@ -845,7 +842,7 @@ re_attach(struct rl_softc *sc)
 	if ((error = bus_dmamem_map(sc->sc_dmat, &sc->rl_ldata.rl_tx_listseg,
 		    sc->rl_ldata.rl_tx_listnseg, RL_TX_LIST_SZ(sc),
 		    (caddr_t *)&sc->rl_ldata.rl_tx_list,
-		    BUS_DMA_NOWAIT)) != 0) {
+		    BUS_DMA_COHERENT | BUS_DMA_NOWAIT)) != 0) {
 		printf("%s: can't map tx list, error = %d\n",
 		    sc->sc_dev.dv_xname, error);
 		goto fail_1;
@@ -853,7 +850,7 @@ re_attach(struct rl_softc *sc)
 	memset(sc->rl_ldata.rl_tx_list, 0, RL_TX_LIST_SZ(sc));
 
 	if ((error = bus_dmamap_create(sc->sc_dmat, RL_TX_LIST_SZ(sc), 1,
-		    RL_TX_LIST_SZ(sc), 0, BUS_DMA_ALLOCNOW,
+		    RL_TX_LIST_SZ(sc), 0, 0,
 		    &sc->rl_ldata.rl_tx_list_map)) != 0) {
 		printf("%s: can't create tx list map, error = %d\n",
 		    sc->sc_dev.dv_xname, error);
@@ -873,7 +870,7 @@ re_attach(struct rl_softc *sc)
 		error = bus_dmamap_create(sc->sc_dmat,
 		    RL_JUMBO_FRAMELEN,
 		    RL_TX_DESC_CNT(sc) - 4, RL_TDESC_CMD_FRAGLEN,
-		    0, BUS_DMA_ALLOCNOW,
+		    0, 0,
 		    &sc->rl_ldata.rl_txq[i].txq_dmamap);
 		if (error) {
 			printf("%s: can't create DMA map for TX\n",
@@ -895,7 +892,7 @@ re_attach(struct rl_softc *sc)
 	if ((error = bus_dmamem_map(sc->sc_dmat, &sc->rl_ldata.rl_rx_listseg,
 		    sc->rl_ldata.rl_rx_listnseg, RL_RX_LIST_SZ,
 		    (caddr_t *)&sc->rl_ldata.rl_rx_list,
-		    BUS_DMA_NOWAIT)) != 0) {
+		    BUS_DMA_COHERENT | BUS_DMA_NOWAIT)) != 0) {
 		printf("%s: can't map rx list, error = %d\n",
 		    sc->sc_dev.dv_xname, error);
 		goto fail_5;
@@ -904,7 +901,7 @@ re_attach(struct rl_softc *sc)
 	memset(sc->rl_ldata.rl_rx_list, 0, RL_RX_LIST_SZ);
 
 	if ((error = bus_dmamap_create(sc->sc_dmat, RL_RX_LIST_SZ, 1,
-		    RL_RX_LIST_SZ, 0, BUS_DMA_ALLOCNOW,
+		    RL_RX_LIST_SZ, 0, 0,
 		    &sc->rl_ldata.rl_rx_list_map)) != 0) {
 		printf("%s: can't create rx list map, error = %d\n",
 		    sc->sc_dev.dv_xname, error);
@@ -922,7 +919,7 @@ re_attach(struct rl_softc *sc)
         /* Create DMA maps for RX buffers */
         for (i = 0; i < RL_RX_DESC_CNT; i++) {
                 error = bus_dmamap_create(sc->sc_dmat, MCLBYTES, 1, MCLBYTES,
-                    0, BUS_DMA_ALLOCNOW, &sc->rl_ldata.rl_rx_dmamap[i]);
+                    0, 0, &sc->rl_ldata.rl_rxsoft[i].rxs_dmamap);
                 if (error) {
                         printf("%s: can't create DMA map for RX\n",
                             sc->sc_dev.dv_xname);
@@ -1003,9 +1000,9 @@ re_attach(struct rl_softc *sc)
 fail_8:
 	/* Destroy DMA maps for RX buffers. */
 	for (i = 0; i < RL_RX_DESC_CNT; i++) {
-		if (sc->rl_ldata.rl_rx_dmamap[i] != NULL)
+		if (sc->rl_ldata.rl_rxsoft[i].rxs_dmamap != NULL)
 			bus_dmamap_destroy(sc->sc_dmat,
-			    sc->rl_ldata.rl_rx_dmamap[i]);
+			    sc->rl_ldata.rl_rxsoft[i].rxs_dmamap);
 	}
 
 	/* Free DMA'able memory for the RX ring. */
@@ -1048,6 +1045,7 @@ re_newbuf(struct rl_softc *sc, int idx, struct mbuf *m)
 	struct mbuf	*n = NULL;
 	bus_dmamap_t	map;
 	struct rl_desc	*d;
+	struct rl_rxsoft *rxs;
 	u_int32_t	cmdstat;
 	int		error;
 
@@ -1055,13 +1053,13 @@ re_newbuf(struct rl_softc *sc, int idx, struct mbuf *m)
 		MGETHDR(n, M_DONTWAIT, MT_DATA);
 		if (n == NULL)
 			return (ENOBUFS);
-		m = n;
 
-		MCLGET(m, M_DONTWAIT);
-		if (! (m->m_flags & M_EXT)) {
-			m_freem(m);
+		MCLGET(n, M_DONTWAIT);
+		if (!(n->m_flags & M_EXT)) {
+			m_freem(n);
 			return (ENOBUFS);
 		}
+		m = n;
 	} else
 		m->m_data = m->m_ext.ext_buf;
 
@@ -1081,33 +1079,42 @@ re_newbuf(struct rl_softc *sc, int idx, struct mbuf *m)
 	m_adj(m, RE_ETHER_ALIGN);
 #endif
 
-	map = sc->rl_ldata.rl_rx_dmamap[idx];
-
+	rxs = &sc->rl_ldata.rl_rxsoft[idx];
+	map = rxs->rxs_dmamap;
 	error = bus_dmamap_load_mbuf(sc->sc_dmat, map, m,
 	    BUS_DMA_READ|BUS_DMA_NOWAIT);
+
 	if (error)
 		goto out;
 
-	d = &sc->rl_ldata.rl_rx_list[idx];
-	if (letoh32(d->rl_cmdstat) & RL_RDESC_STAT_OWN)
-		goto out;
-
-	cmdstat = map->dm_segs[0].ds_len;
-	d->rl_bufaddr_lo = htole32(RL_ADDR_LO(map->dm_segs[0].ds_addr));
-	d->rl_bufaddr_hi = htole32(RL_ADDR_HI(map->dm_segs[0].ds_addr));
-	if (idx == (RL_RX_DESC_CNT - 1))
-		cmdstat |= RL_RDESC_CMD_EOR;
-	d->rl_cmdstat = htole32(cmdstat);
-
-	sc->rl_ldata.rl_rx_list[idx].rl_cmdstat |= htole32(RL_RDESC_CMD_OWN);
-	sc->rl_ldata.rl_rx_mbuf[idx] = m;
-
-        bus_dmamap_sync(sc->sc_dmat, sc->rl_ldata.rl_rx_dmamap[idx], 0,
-            sc->rl_ldata.rl_rx_dmamap[idx]->dm_mapsize,
+	bus_dmamap_sync(sc->sc_dmat, map, 0, map->dm_mapsize,
 	    BUS_DMASYNC_PREREAD);
 
+	d = &sc->rl_ldata.rl_rx_list[idx];
+	RL_RXDESCSYNC(sc, idx, BUS_DMASYNC_POSTREAD|BUS_DMASYNC_POSTWRITE);
+	cmdstat = letoh32(d->rl_cmdstat);
+	RL_RXDESCSYNC(sc, idx, BUS_DMASYNC_PREREAD);
+	if (cmdstat & RL_RDESC_STAT_OWN) {
+		printf("%s: tried to map busy RX descriptor\n",
+		    sc->sc_dev.dv_xname);
+		goto out;
+	}
+
+	rxs->rxs_mbuf = m;
+
+	cmdstat = map->dm_segs[0].ds_len;
+	if (idx == (RL_RX_DESC_CNT - 1))
+		cmdstat |= RL_RDESC_CMD_EOR;
+	d->rl_bufaddr_lo = htole32(RL_ADDR_LO(map->dm_segs[0].ds_addr));
+	d->rl_bufaddr_hi = htole32(RL_ADDR_HI(map->dm_segs[0].ds_addr));
+	d->rl_cmdstat = htole32(cmdstat);
+	RL_RXDESCSYNC(sc, idx, BUS_DMASYNC_PREREAD|BUS_DMASYNC_PREWRITE);
+	cmdstat |= RL_RDESC_CMD_OWN;
+	d->rl_cmdstat = htole32(cmdstat);
+	RL_RXDESCSYNC(sc, idx, BUS_DMASYNC_PREREAD|BUS_DMASYNC_PREWRITE);
+
 	return (0);
-out:
+ out:
 	if (n != NULL)
 		m_freem(n);
 	return (ENOMEM);
@@ -1142,7 +1149,8 @@ re_tx_list_init(struct rl_softc *sc)
 
 	bus_dmamap_sync(sc->sc_dmat,
 	    sc->rl_ldata.rl_tx_list_map, 0,
-	    sc->rl_ldata.rl_tx_list_map->dm_mapsize, BUS_DMASYNC_PREWRITE);
+	    sc->rl_ldata.rl_tx_list_map->dm_mapsize,
+	    BUS_DMASYNC_PREREAD|BUS_DMASYNC_PREWRITE);
 	sc->rl_ldata.rl_txq_prodidx = 0;
 	sc->rl_ldata.rl_txq_considx = 0;
 	sc->rl_ldata.rl_tx_free = RL_TX_DESC_CNT(sc);
@@ -1157,20 +1165,11 @@ re_rx_list_init(struct rl_softc *sc)
 	int	i;
 
 	memset((char *)sc->rl_ldata.rl_rx_list, 0, RL_RX_LIST_SZ);
-	memset((char *)&sc->rl_ldata.rl_rx_mbuf, 0,
-	    (RL_RX_DESC_CNT * sizeof(struct mbuf *)));
 
 	for (i = 0; i < RL_RX_DESC_CNT; i++) {
 		if (re_newbuf(sc, i, NULL) == ENOBUFS)
 			return (ENOBUFS);
 	}
-
-	/* Flush the RX descriptors */
-
-	bus_dmamap_sync(sc->sc_dmat,
-	    sc->rl_ldata.rl_rx_list_map,
-	    0, sc->rl_ldata.rl_rx_list_map->dm_mapsize,
-	    BUS_DMASYNC_PREWRITE|BUS_DMASYNC_PREREAD);
 
 	sc->rl_ldata.rl_rx_prodidx = 0;
 	sc->rl_head = sc->rl_tail = NULL;
@@ -1190,32 +1189,29 @@ re_rxeof(struct rl_softc *sc)
 	struct ifnet	*ifp;
 	int		i, total_len;
 	struct rl_desc	*cur_rx;
+	struct rl_rxsoft *rxs;
 	u_int32_t	rxstat;
 
 	ifp = &sc->sc_arpcom.ac_if;
-	i = sc->rl_ldata.rl_rx_prodidx;
 
-	/* Invalidate the descriptor memory */
-
-	bus_dmamap_sync(sc->sc_dmat,
-	    sc->rl_ldata.rl_rx_list_map,
-	    0, sc->rl_ldata.rl_rx_list_map->dm_mapsize,
-	    BUS_DMASYNC_POSTREAD);
-
-	while (!RL_OWN(&sc->rl_ldata.rl_rx_list[i])) {
+	for (i = sc->rl_ldata.rl_rx_prodidx;; i = RL_NEXT_RX_DESC(sc, i)) {
 		cur_rx = &sc->rl_ldata.rl_rx_list[i];
-		m = sc->rl_ldata.rl_rx_mbuf[i];
-		total_len = RL_RXBYTES(cur_rx);
+		RL_RXDESCSYNC(sc, i,
+		    BUS_DMASYNC_POSTREAD|BUS_DMASYNC_POSTWRITE);
 		rxstat = letoh32(cur_rx->rl_cmdstat);
+		RL_RXDESCSYNC(sc, i, BUS_DMASYNC_PREREAD);
+		if ((rxstat & RL_RDESC_STAT_OWN) != 0)
+			break;
+		total_len = rxstat & sc->rl_rxlenmask;
+		rxs = &sc->rl_ldata.rl_rxsoft[i];
+		m = rxs->rxs_mbuf;
 
 		/* Invalidate the RX mbuf and unload its map */
 
 		bus_dmamap_sync(sc->sc_dmat,
-		    sc->rl_ldata.rl_rx_dmamap[i],
-		    0, sc->rl_ldata.rl_rx_dmamap[i]->dm_mapsize,
+		    rxs->rxs_dmamap, 0, rxs->rxs_dmamap->dm_mapsize,
 		    BUS_DMASYNC_POSTREAD);
-		bus_dmamap_unload(sc->sc_dmat,
-		    sc->rl_ldata.rl_rx_dmamap[i]);
+		bus_dmamap_unload(sc->sc_dmat, rxs->rxs_dmamap);
 
 		if (!(rxstat & RL_RDESC_STAT_EOF)) {
 			m->m_len = RE_RX_DESC_BUFLEN;
@@ -1227,7 +1223,6 @@ re_rxeof(struct rl_softc *sc)
 				sc->rl_tail = m;
 			}
 			re_newbuf(sc, i, NULL);
-			RL_RX_DESC_INC(sc, i);
 			continue;
 		}
 
@@ -1266,7 +1261,6 @@ re_rxeof(struct rl_softc *sc)
 				sc->rl_head = sc->rl_tail = NULL;
 			}
 			re_newbuf(sc, i, m);
-			RL_RX_DESC_INC(sc, i);
 			continue;
 		}
 
@@ -1282,11 +1276,8 @@ re_rxeof(struct rl_softc *sc)
 				sc->rl_head = sc->rl_tail = NULL;
 			}
 			re_newbuf(sc, i, m);
-			RL_RX_DESC_INC(sc, i);
 			continue;
 		}
-
-		RL_RX_DESC_INC(sc, i);
 
 		if (sc->rl_head != NULL) {
 			m->m_len = total_len % RE_RX_DESC_BUFLEN;
@@ -1341,13 +1332,6 @@ re_rxeof(struct rl_softc *sc)
 		ether_input_mbuf(ifp, m);
 	}
 
-	/* Flush the RX DMA ring */
-
-	bus_dmamap_sync(sc->sc_dmat,
-	    sc->rl_ldata.rl_rx_list_map,
-	    0, sc->rl_ldata.rl_rx_list_map->dm_mapsize,
-	    BUS_DMASYNC_PREWRITE|BUS_DMASYNC_PREREAD);
-
 	sc->rl_ldata.rl_rx_prodidx = i;
 }
 
@@ -1360,14 +1344,7 @@ re_txeof(struct rl_softc *sc)
 	ifp = &sc->sc_arpcom.ac_if;
 	idx = sc->rl_ldata.rl_txq_considx;
 
-	/* Invalidate the TX descriptor list */
-
-	bus_dmamap_sync(sc->sc_dmat,
-	    sc->rl_ldata.rl_tx_list_map,
-	    0, sc->rl_ldata.rl_tx_list_map->dm_mapsize,
-	    BUS_DMASYNC_POSTREAD);
-
-	while (/* CONSTCOND */ 1) {
+	for (;;) {
 		struct rl_txq *txq = &sc->rl_ldata.rl_txq[idx];
 		int descidx;
 		u_int32_t txstat;
@@ -1378,14 +1355,19 @@ re_txeof(struct rl_softc *sc)
 		}
 
 		descidx = txq->txq_descidx;
+		RL_TXDESCSYNC(sc, descidx,
+		    BUS_DMASYNC_POSTREAD|BUS_DMASYNC_POSTWRITE);
 		txstat =
 		    letoh32(sc->rl_ldata.rl_tx_list[descidx].rl_cmdstat);
+		RL_TXDESCSYNC(sc, descidx, BUS_DMASYNC_PREREAD);
 		KASSERT((txstat & RL_TDESC_CMD_EOF) != 0);
 		if (txstat & RL_TDESC_CMD_OWN)
 			break;
 
 		sc->rl_ldata.rl_tx_free += txq->txq_dmamap->dm_nsegs;
 		KASSERT(sc->rl_ldata.rl_tx_free <= RL_TX_DESC_CNT(sc));
+		bus_dmamap_sync(sc->sc_dmat, txq->txq_dmamap,
+		    0, txq->txq_dmamap->dm_mapsize, BUS_DMASYNC_POSTWRITE);
 		bus_dmamap_unload(sc->sc_dmat, txq->txq_dmamap);
 		m_freem(txq->txq_mbuf);
 		txq->txq_mbuf = NULL;
@@ -1397,7 +1379,7 @@ re_txeof(struct rl_softc *sc)
 		else
 			ifp->if_opackets++;
 
-		idx = (idx + 1) % RL_TX_QLEN;
+		idx = RL_NEXT_TXQ(sc, idx);
 	}
 
 	/* No changes made to the TX ring, so no flush needed */
@@ -1519,7 +1501,7 @@ int
 re_encap(struct rl_softc *sc, struct mbuf *m, int *idx)
 {
 	bus_dmamap_t	map;
-	int		error, i, startidx, curidx;
+	int		error, seg, uidx, startidx, curidx, lastidx;
 #ifdef RE_VLAN
 	struct m_tag	*mtag;
 #endif
@@ -1588,43 +1570,49 @@ re_encap(struct rl_softc *sc, struct mbuf *m, int *idx)
 	 * set this descriptor later when it start transmission or
 	 * reception.)
 	 */
-	i = 0;
 	curidx = startidx = sc->rl_ldata.rl_tx_nextfree;
-	while (1) {
+	lastidx = -1;
+	for (seg = 0; seg < map->dm_nsegs;
+	    seg++, curidx = RL_NEXT_TX_DESC(sc, curidx)) {
 		d = &sc->rl_ldata.rl_tx_list[curidx];
-		if (letoh32(d->rl_cmdstat) & RL_TDESC_STAT_OWN) {
-			while (i > 0) {
-				sc->rl_ldata.rl_tx_list[
-				    (curidx + RL_TX_DESC_CNT(sc) - i) %
-				    RL_TX_DESC_CNT(sc)].rl_cmdstat = 0;
-				i--;
+		RL_TXDESCSYNC(sc, curidx,
+		    BUS_DMASYNC_POSTREAD|BUS_DMASYNC_POSTWRITE);
+		cmdstat = letoh32(d->rl_cmdstat);
+		RL_TXDESCSYNC(sc, curidx, BUS_DMASYNC_PREREAD);
+		if (cmdstat & RL_TDESC_STAT_OWN) {
+			printf("%s: tried to map busy TX descriptor\n",
+			    sc->sc_dev.dv_xname);
+			for (; seg > 0; seg --) {
+				uidx = (curidx + RL_TX_DESC_CNT(sc) - seg) %
+				    RL_TX_DESC_CNT(sc);
+				sc->rl_ldata.rl_tx_list[uidx].rl_cmdstat = 0;
+				RL_TXDESCSYNC(sc, uidx,
+				    BUS_DMASYNC_PREREAD|BUS_DMASYNC_PREWRITE);
 			}
 			error = ENOBUFS;
 			goto fail_unload;
 		}
 
-		cmdstat = map->dm_segs[i].ds_len;
-		d->rl_bufaddr_lo =
-		    htole32(RL_ADDR_LO(map->dm_segs[i].ds_addr));
-		d->rl_bufaddr_hi =
-		    htole32(RL_ADDR_HI(map->dm_segs[i].ds_addr));
-		if (i == 0)
+		cmdstat = map->dm_segs[seg].ds_len;
+		if (seg == 0)
 			cmdstat |= RL_TDESC_CMD_SOF;
 		else
 			cmdstat |= RL_TDESC_CMD_OWN;
+		if (seg == map->dm_nsegs - 1) {
+			cmdstat |= RL_TDESC_CMD_EOF;
+			lastidx = curidx;
+		}
 		if (curidx == (RL_TX_DESC_CNT(sc) - 1))
 			cmdstat |= RL_TDESC_CMD_EOR;
 		d->rl_cmdstat = htole32(cmdstat | rl_flags);
-		i++;
-		if (i == map->dm_nsegs)
-			break;
-		RL_TX_DESC_INC(sc, curidx);
+		d->rl_bufaddr_lo =
+		    htole32(RL_ADDR_LO(map->dm_segs[seg].ds_addr));
+		d->rl_bufaddr_hi =
+		    htole32(RL_ADDR_HI(map->dm_segs[seg].ds_addr));
+		RL_TXDESCSYNC(sc, curidx,
+		    BUS_DMASYNC_PREREAD|BUS_DMASYNC_PREWRITE);
 	}
-
-	d->rl_cmdstat |= htole32(RL_TDESC_CMD_EOF);
-
-	txq->txq_mbuf = m;
-	sc->rl_ldata.rl_tx_free -= map->dm_nsegs;
+	KASSERT(lastidx != -1);
 
 	/*
 	 * Set up hardware VLAN tagging. Note: vlan tag info must
@@ -1642,16 +1630,18 @@ re_encap(struct rl_softc *sc, struct mbuf *m, int *idx)
 
 	/* Transfer ownership of packet to the chip. */
 
-	sc->rl_ldata.rl_tx_list[curidx].rl_cmdstat |=
+	sc->rl_ldata.rl_tx_list[startidx].rl_cmdstat |=
 	    htole32(RL_TDESC_CMD_OWN);
-	if (startidx != curidx)
-		sc->rl_ldata.rl_tx_list[startidx].rl_cmdstat |=
-		    htole32(RL_TDESC_CMD_OWN);
+	RL_TXDESCSYNC(sc, startidx, BUS_DMASYNC_PREREAD|BUS_DMASYNC_PREWRITE);
 
-	txq->txq_descidx = curidx;
-	RL_TX_DESC_INC(sc, curidx);
+	/* update info of TX queue and descriptors */
+	txq->txq_mbuf = m;
+	txq->txq_descidx = lastidx;
+
+	sc->rl_ldata.rl_tx_free -= map->dm_nsegs;
 	sc->rl_ldata.rl_tx_nextfree = curidx;
-	*idx = (*idx + 1) % RL_TX_QLEN;
+
+	*idx = RL_NEXT_TXQ(sc, *idx);
 
 	return (0);
 
@@ -1677,7 +1667,7 @@ re_start(struct ifnet *ifp)
 		return;
 
 	idx = sc->rl_ldata.rl_txq_prodidx;
-	while (/* CONSTCOND */ 1) {
+	for (;;) {
 		struct mbuf *m;
 		int error;
 
@@ -1724,13 +1714,6 @@ re_start(struct ifnet *ifp)
 	}
 
 	sc->rl_ldata.rl_txq_prodidx = idx;
-
-	/* Flush the TX descriptors */
-
-	bus_dmamap_sync(sc->sc_dmat,
-	    sc->rl_ldata.rl_tx_list_map,
-	    0, sc->rl_ldata.rl_tx_list_map->dm_mapsize,
-	    BUS_DMASYNC_PREWRITE|BUS_DMASYNC_PREREAD);
 
 	CSR_WRITE_1(sc, sc->rl_txstart, RL_TXSTART_START);
 
@@ -2070,11 +2053,11 @@ re_stop(struct ifnet *ifp, int disable)
 
 	/* Free the RX list buffers. */
 	for (i = 0; i < RL_RX_DESC_CNT; i++) {
-		if (sc->rl_ldata.rl_rx_mbuf[i] != NULL) {
+		if (sc->rl_ldata.rl_rxsoft[i].rxs_mbuf != NULL) {
 			bus_dmamap_unload(sc->sc_dmat,
-			    sc->rl_ldata.rl_rx_dmamap[i]);
-			m_freem(sc->rl_ldata.rl_rx_mbuf[i]);
-			sc->rl_ldata.rl_rx_mbuf[i] = NULL;
+			    sc->rl_ldata.rl_rxsoft[i].rxs_dmamap);
+			m_freem(sc->rl_ldata.rl_rxsoft[i].rxs_mbuf);
+			sc->rl_ldata.rl_rxsoft[i].rxs_mbuf = NULL;
 		}
 	}
 }
