@@ -397,12 +397,15 @@ static void xbd_backend_changed(void *arg, XenbusState new_state)
 		xenbus_switch_state(sc->sc_xbusd, NULL, XenbusStateClosed);
 		break;
 	case XenbusStateConnected:
-		s = splbio();
+		/*
+		 * note that xbd_backend_changed() can only be called by
+		 * the xenbus thread.
+		 */
+
 		if (sc->sc_backend_status == BLKIF_STATE_CONNECTED)
 			/* already connected */
 			return;
-		sc->sc_backend_status = BLKIF_STATE_CONNECTED;
-		splx(s);
+
 		xbd_connect(sc);
 		sc->sc_shutdown = 0;
 		hypervisor_enable_event(sc->sc_evtchn);
@@ -418,8 +421,10 @@ static void xbd_backend_changed(void *arg, XenbusState new_state)
 
 		sc->sc_dksc.sc_bufq = BUFQ_ALLOC("fcfs");
 		sc->sc_dksc.sc_flags |= DKF_INITED;
-
 		disk_attach(&sc->sc_dksc.sc_dkdev);
+
+		sc->sc_backend_status = BLKIF_STATE_CONNECTED;
+
 		/* try to read the disklabel */
 		dk_getdisklabel(sc->sc_di, &sc->sc_dksc, 0 /* XXX ? */, 0);
 		format_bytes(buf, sizeof(buf), (uint64_t)sc->sc_dksc.sc_size *
