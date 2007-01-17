@@ -49,11 +49,11 @@
 int xen_timer_handler(void *, struct intrframe *);
 
 /* These are peridically updated in shared_info, and then copied here. */
-volatile static uint64_t shadow_tsc_stamp; /* TSC at last update of time vals. */
-volatile static uint64_t shadow_system_time; /* Time, in nanosecs, since boot. */
-volatile static struct timeval shadow_tv; /* Time since 00:00:00 UTC, Jan 1, 1970 */
-volatile static uint32_t shadow_freq_mul;
-volatile static int8_t shadow_freq_shift;
+static volatile uint64_t shadow_tsc_stamp; /* TSC at last update of time vals. */
+static volatile uint64_t shadow_system_time; /* Time, in nanosecs, since boot. */
+static volatile struct timeval shadow_tv; /* Time since 00:00:00 UTC, Jan 1, 1970 */
+static volatile uint32_t shadow_freq_mul;
+static volatile int8_t shadow_freq_shift;
 
 static int timeset;
 
