@@ -174,6 +174,8 @@ struct xennet_xenbus_softc {
 	rndsource_element_t	sc_rnd_source;
 #endif
 };
+#define SC_NLIVEREQ(sc) ((sc)->sc_rx_ring.req_prod_pvt - \
+			   (sc)->sc_rx_ring.sring->rsp_prod)
 
 
 /* too big to be on stack */
@@ -692,7 +694,7 @@ xennet_rx_mbuf_free(caddr_t buf, u_int size, void *arg)
 	sc->sc_free_rxreql++;
 
 	req->rxreq_gntref = GRANT_INVALID_REF;
-	if (sc->sc_free_rxreql >= NET_RX_RING_SIZE / 2 &&
+	if (sc->sc_free_rxreql >= SC_NLIVEREQ(sc) &&
 	    __predict_true(sc->sc_backend_status == BEST_CONNECTED)) {
 		xennet_alloc_rx_buffer(sc);
 	}
