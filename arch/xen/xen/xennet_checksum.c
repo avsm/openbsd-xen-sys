@@ -121,7 +121,6 @@ xennet_checksum_fill(struct mbuf **mp)
 
 	iph = m_extract(m, ehlen, sizeof(*iph), &iph_store);
 	if (iph == NULL) {
-		printf("iph\n");
 		return EINVAL;
 	}
 	nxt = iph->ip_p;
