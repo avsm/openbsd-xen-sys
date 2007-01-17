@@ -608,6 +608,13 @@ xbdback_backend_changed(struct xenbus_watch *watch,
 		    xbusd->xbusd_path, xbdi->xbdi_dev, err);
 		return;
 	}
+	err = vn_lock(xbdi->xbdi_vp, LK_EXCLUSIVE | LK_RETRY, NULL);
+	if (err) {
+		printf("xbdback %s: can't vn_lock device 0x%x: %d\n",
+		    xbusd->xbusd_path, xbdi->xbdi_dev, err);
+		vrele(xbdi->xbdi_vp);
+		return;
+	}
 	err  = VOP_OPEN(xbdi->xbdi_vp, FREAD, NOCRED, 0);
 	if (err) {
 		printf("xbdback %s: can't VOP_OPEN device 0x%x: %d\n",
