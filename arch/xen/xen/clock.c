@@ -48,10 +48,11 @@
 
 int xen_timer_handler(void *, struct intrframe *);
 
-/* These are peridically updated in shared_info, and then copied here. */
+/* These are periodically updated in shared_info, and then copied here. */
 static volatile uint64_t shadow_tsc_stamp; /* TSC at last update of time vals. */
 static volatile uint64_t shadow_system_time; /* Time, in nanosecs, since boot. */
 static volatile struct timeval shadow_tv; /* Time since 00:00:00 UTC, Jan 1, 1970 */
+static volatile unsigned long shadow_time_version; /* XXXSMP */
 static volatile uint32_t shadow_freq_mul;
 static volatile int8_t shadow_freq_shift;
 
@@ -87,15 +88,16 @@ get_time_values_from_xen(void)
 	volatile struct vcpu_time_info *t =
 	    &HYPERVISOR_shared_info->vcpu_info[0].time;
 	uint32_t tversion;
+
 	do {
-		tversion = t->version;
+		shadow_time_version = t->version;
 		x86_lfence();
 		shadow_tsc_stamp = t->tsc_timestamp;
 		shadow_system_time = t->system_time;
 		shadow_freq_mul = t->tsc_to_system_mul;
 		shadow_freq_shift = t->tsc_shift;
 		x86_lfence();
-	} while ((t->version & 1) || (tversion != t->version));
+	} while ((t->version & 1) || (shadow_time_version != t->version));
 	do {
 		tversion = HYPERVISOR_shared_info->wc_version;
 		x86_lfence();
@@ -105,6 +107,23 @@ get_time_values_from_xen(void)
 	} while ((HYPERVISOR_shared_info->wc_version & 1) ||
 	    (tversion != HYPERVISOR_shared_info->wc_version));
 	shadow_tv.tv_usec = shadow_tv.tv_usec / 1000;
+}
+
+/*
+ * Are the values we have up to date?
+ */
+static inline int
+time_values_up_to_date(void)
+{
+	int rv;
+
+	x86_lfence();
+	rv = shadow_time_version ==
+		HYPERVISOR_shared_info->vcpu_info[0].time.version; /* XXXSMP */
+
+	x86_lfence();
+
+	return rv;
 }
 
 /*
@@ -138,13 +157,30 @@ get_tsc_offset_ns(void)
 	uint64_t tsc_delta, offset;
 
 	tsc_delta = cpu_counter() - shadow_tsc_stamp;
-	offset = scale_delta(tsc_delta, shadow_freq_mul, shadow_freq_shift);
+	offset = scale_delta(tsc_delta, shadow_freq_mul,
+	    shadow_freq_shift);
 #ifdef XEN_CLOCK_DEBUG
 	if (offset > 10 * NS_PER_TICK)
 		printf("get_tsc_offset_ns: tsc_delta=%llu offset=%llu\n",
 			tsc_delta, offset);
 #endif
 	return offset;
+}
+
+static uint64_t
+get_system_time(void)
+{
+	uint64_t stime;
+
+	for (;;) {
+		stime = shadow_system_time + get_tsc_offset_ns();
+
+		/* if the timestamp went stale before we used it, refresh */
+		if (time_values_up_to_date())
+			break;
+		get_time_values_from_xen();
+	}
+	return stime;
 }
 
 void
@@ -449,8 +485,7 @@ xen_timer_handler(void *arg, struct intrframe *regs)
 	get_time_values_from_xen();
 
 	ticks_done = 0;
-	delta = (int64_t)(shadow_system_time + get_tsc_offset_ns() -
-	    processed_system_time);
+	delta = (int64_t)(get_system_time() - processed_system_time);
 	while (delta >= (int64_t)NS_PER_TICK) {
 		/* Have hardclock do its thing. */
 		oldtime = time;
