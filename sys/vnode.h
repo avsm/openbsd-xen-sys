@@ -1,4 +1,4 @@
-/*	$OpenBSD: vnode.h,v 1.70 2006/07/11 21:17:58 mickey Exp $	*/
+/*	$OpenBSD: vnode.h,v 1.72 2006/11/20 12:52:54 tom Exp $	*/
 /*	$NetBSD: vnode.h,v 1.38 1996/02/29 20:59:05 cgd Exp $	*/
 
 /*
@@ -271,12 +271,6 @@ extern	time_t syncdelay;		/* time to delay syncing vnodes */
 extern	int rushjob;			/* # of slots syncer should run ASAP */
 extern	struct vattr va_null;		/* predefined null vattr structure */
 
-/*
- * Macro/function to check for client cache inconsistency w.r.t. leasing.
- */
-#define	LEASE_READ	0x1		/* Check lease for readers */
-#define	LEASE_WRITE	0x2		/* Check lease for modifiers */
-
 #endif /* _KERNEL */
 
 
@@ -448,9 +442,7 @@ void	vwakeup(struct vnode *);
 void	vput(struct vnode *);
 int	vrecycle(struct vnode *, struct simplelock *, struct proc *);
 void	vrele(struct vnode *);
-#ifdef DIAGNOSTIC
 void	vprint(char *, struct vnode *);
-#endif
 
 /* vfs_getcwd.c */
 int vfs_getcwd_scandir(struct vnode **, struct vnode **, char **, char *,

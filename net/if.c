@@ -1,4 +1,4 @@
-/*	$OpenBSD: if.c,v 1.149 2006/08/29 17:19:43 henning Exp $	*/
+/*	$OpenBSD: if.c,v 1.152 2006/11/24 20:57:46 canacar Exp $	*/
 /*	$NetBSD: if.c,v 1.35 1996/05/07 05:26:04 thorpej Exp $	*/
 
 /*
@@ -568,10 +568,8 @@ do { \
 
 	/*
 	 * Deallocate private resources.
-	 * XXX should consult refcnt and use IFAFREE
 	 */
-	for (ifa = TAILQ_FIRST(&ifp->if_addrlist); ifa;
-	    ifa = TAILQ_FIRST(&ifp->if_addrlist)) {
+	while ((ifa = TAILQ_FIRST(&ifp->if_addrlist)) != NULL) {
 		TAILQ_REMOVE(&ifp->if_addrlist, ifa, ifa_list);
 #ifdef INET
 		if (ifa->ifa_addr->sa_family == AF_INET)
@@ -582,7 +580,7 @@ do { \
 		if (ifa == ifnet_addrs[ifp->if_index])
 			continue;
 
-		free(ifa, M_IFADDR);
+		IFAFREE(ifa);
 	}
 
 	for (ifg = TAILQ_FIRST(&ifp->if_groups); ifg;
@@ -591,7 +589,7 @@ do { \
 
 	if_free_sadl(ifp);
 
-	free(ifnet_addrs[ifp->if_index], M_IFADDR);
+	IFAFREE(ifnet_addrs[ifp->if_index]);
 	ifnet_addrs[ifp->if_index] = NULL;
 
 	free(ifp->if_addrhooks, M_TEMP);
@@ -1001,9 +999,9 @@ link_rtrequest(int cmd, struct rtentry *rt, struct rt_addrinfo *info)
 	    ((ifp = ifa->ifa_ifp) == 0) || ((dst = rt_key(rt)) == 0))
 		return;
 	if ((ifa = ifaof_ifpforaddr(dst, ifp)) != NULL) {
+		ifa->ifa_refcnt++;
 		IFAFREE(rt->rt_ifa);
 		rt->rt_ifa = ifa;
-		ifa->ifa_refcnt++;
 		if (ifa->ifa_rtrequest && ifa->ifa_rtrequest != link_rtrequest)
 			ifa->ifa_rtrequest(cmd, rt, info);
 	}
@@ -1030,6 +1028,10 @@ if_down(struct ifnet *ifp)
 #if NCARP > 0
 	if (ifp->if_carp)
 		carp_carpdev_state(ifp);
+#endif
+#if NBRIDGE > 0
+	if (ifp->if_bridge)
+		bstp_ifstate(ifp);
 #endif
 	rt_ifmsg(ifp);
 }
@@ -1059,6 +1061,10 @@ if_up(struct ifnet *ifp)
 #if NCARP > 0
 	if (ifp->if_carp)
 		carp_carpdev_state(ifp);
+#endif
+#if NBRIDGE > 0
+	if (ifp->if_bridge)
+		bstp_ifstate(ifp);
 #endif
 	rt_ifmsg(ifp);
 #ifdef INET6
@@ -1560,6 +1566,30 @@ if_detached_watchdog(struct ifnet *ifp)
 }
 
 /*
+ * Create interface group without members
+ */
+struct ifg_group *
+if_creategroup(const char *groupname)
+{
+	struct ifg_group	*ifg = NULL;
+
+	if ((ifg = (struct ifg_group *)malloc(sizeof(struct ifg_group),
+	    M_TEMP, M_NOWAIT)) == NULL)
+		return (NULL);
+
+	strlcpy(ifg->ifg_group, groupname, sizeof(ifg->ifg_group));
+	ifg->ifg_refcnt = 0;
+	ifg->ifg_carp_demoted = 0;
+	TAILQ_INIT(&ifg->ifg_members);
+#if NPF > 0
+	pfi_attach_ifgroup(ifg);
+#endif
+	TAILQ_INSERT_TAIL(&ifg_head, ifg, ifg_next);
+
+	return (ifg);
+}
+
+/*
  * Add a group to an interface
  */
 int
@@ -1591,21 +1621,10 @@ if_addgroup(struct ifnet *ifp, const char *groupname)
 		if (!strcmp(ifg->ifg_group, groupname))
 			break;
 
-	if (ifg == NULL) {
-		if ((ifg = (struct ifg_group *)malloc(sizeof(struct ifg_group),
-		    M_TEMP, M_NOWAIT)) == NULL) {
-			free(ifgl, M_TEMP);
-			free(ifgm, M_TEMP);
-			return (ENOMEM);
-		}
-		strlcpy(ifg->ifg_group, groupname, sizeof(ifg->ifg_group));
-		ifg->ifg_refcnt = 0;
-		ifg->ifg_carp_demoted = 0;
-		TAILQ_INIT(&ifg->ifg_members);
-#if NPF > 0
-		pfi_attach_ifgroup(ifg);
-#endif
-		TAILQ_INSERT_TAIL(&ifg_head, ifg, ifg_next);
+	if (ifg == NULL && (ifg = if_creategroup(groupname)) == NULL) {
+		free(ifgl, M_TEMP);
+		free(ifgm, M_TEMP);
+		return (ENOMEM);
 	}
 
 	ifg->ifg_refcnt++;

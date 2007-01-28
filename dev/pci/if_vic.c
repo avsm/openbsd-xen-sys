@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_vic.c,v 1.31 2006/11/02 23:43:35 dlg Exp $	*/
+/*	$OpenBSD: if_vic.c,v 1.37 2006/12/03 14:52:45 reyk Exp $	*/
 
 /*
  * Copyright (c) 2006 Reyk Floeter <reyk@openbsd.org>
@@ -231,7 +231,6 @@ struct vic_data {
 #define VIC_QUEUE_SIZE		VIC_NBUF_MAX
 #define VIC_QUEUE2_SIZE		1
 #define VIC_INC(_x, _y)		(_x) = ((_x) + 1) % (_y)
-#define VIC_INC_POS(_x, _y)	(_x) = (++(_x)) % (_y) ? (_x) : 1
 #define VIC_TX_TIMEOUT		5
 
 #define VIC_MIN_FRAMELEN	(ETHER_MIN_LEN - ETHER_CRC_LEN)
@@ -316,13 +315,13 @@ void		vic_write(struct vic_softc *, bus_size_t, u_int32_t);
 
 u_int32_t	vic_read_cmd(struct vic_softc *, u_int32_t);
 
-int 		vic_alloc_dmamem(struct vic_softc *);
+int		vic_alloc_dmamem(struct vic_softc *);
 void		vic_free_dmamem(struct vic_softc *);
 
 void		vic_link_state(struct vic_softc *);
 void		vic_rx_proc(struct vic_softc *);
 void		vic_tx_proc(struct vic_softc *);
-void		vic_iff(struct vic_softc *, u_int);
+void		vic_iff(struct vic_softc *);
 void		vic_getlladdr(struct vic_softc *);
 void		vic_setlladdr(struct vic_softc *);
 int		vic_media_change(struct ifnet *);
@@ -426,7 +425,7 @@ vic_map_pci(struct vic_softc *sc, struct pci_attach_args *pa)
 	if (pci_mapreg_map(pa, VIC_PCI_BAR, memtype, 0, &sc->sc_iot,
 	    &sc->sc_ioh, NULL, &sc->sc_ios, 0) != 0) {
 		printf(": unable to map system interface register\n");
-		return(1);
+		return (1);
 	}
 
 	if (pci_intr_map(pa, &ih) != 0) {
@@ -475,13 +474,7 @@ vic_query(struct vic_softc *sc)
 	}
 
 	sc->sc_nrxbuf = vic_read_cmd(sc, VIC_CMD_NUM_Rx_BUF);
-	if (sc->sc_nrxbuf > VIC_NBUF_MAX || sc->sc_nrxbuf == 0)
-		sc->sc_nrxbuf = VIC_NBUF;
-
 	sc->sc_ntxbuf = vic_read_cmd(sc, VIC_CMD_NUM_Tx_BUF);
-	if (sc->sc_ntxbuf > VIC_NBUF_MAX || sc->sc_ntxbuf == 0)
-		sc->sc_ntxbuf = VIC_NBUF;
-
 	sc->sc_feature = vic_read_cmd(sc, VIC_CMD_FEATURE);
 	sc->sc_cap = vic_read_cmd(sc, VIC_CMD_HWCAP);
 
@@ -489,6 +482,16 @@ vic_query(struct vic_softc *sc)
 
 	printf("%s: VMXnet %04X, address %s\n", DEVNAME(sc),
 	    major & ~VIC_VERSION_MAJOR_M, ether_sprintf(sc->sc_lladdr));
+
+#ifdef VIC_DEBUG
+	printf("%s: feature 0x%8x, cap 0x%8x, rx/txbuf %d/%d\n", DEVNAME(sc),
+	    sc->sc_feature, sc->sc_cap, sc->sc_nrxbuf, sc->sc_ntxbuf);
+#endif
+
+	if (sc->sc_nrxbuf > VIC_NBUF_MAX || sc->sc_nrxbuf == 0)
+		sc->sc_nrxbuf = VIC_NBUF;
+	if (sc->sc_ntxbuf > VIC_NBUF_MAX || sc->sc_ntxbuf == 0)
+		sc->sc_ntxbuf = VIC_NBUF;
 
 	return (0);
 }
@@ -681,7 +684,7 @@ vic_link_state(struct vic_softc *sc)
 
 	status = vic_read(sc, VIC_STATUS);
 	if (status & VIC_STATUS_CONNECTED)
-		link_state = LINK_STATE_UP;
+		link_state = LINK_STATE_FULL_DUPLEX;
 	if (ifp->if_link_state != link_state) {
 		ifp->if_link_state = link_state;
 		if_link_state_change(ifp);
@@ -840,19 +843,51 @@ vic_tx_proc(struct vic_softc *sc)
 }
 
 void
-vic_iff(struct vic_softc *sc, u_int flags)
+vic_iff(struct vic_softc *sc)
 {
-	/* XXX ALLMULTI */
+	struct arpcom *ac = &sc->sc_ac;
+	struct ifnet *ifp = &sc->sc_ac.ac_if;
+	struct ether_multi *enm;
+	struct ether_multistep step;
+	u_int32_t crc;
+	u_int flags = 0;
+
+	bzero(&sc->sc_data->vd_mcastfil, sizeof(sc->sc_data->vd_mcastfil));
+	ifp->if_flags &= ~IFF_ALLMULTI;
+
+	if ((ifp->if_flags & IFF_RUNNING) == 0)
+		goto domulti;
+	if (ifp->if_flags & IFF_PROMISC)
+		goto allmulti;
+
+	ETHER_FIRST_MULTI(step, ac, enm);
+	while (enm != NULL) {
+		if (bcmp(enm->enm_addrlo, enm->enm_addrhi, ETHER_ADDR_LEN))
+			goto allmulti;
+
+		crc = ether_crc32_le(enm->enm_addrlo, ETHER_ADDR_LEN);
+		crc >>= 26;
+		sc->sc_data->vd_mcastfil[crc >> 4] |= htole16(1 << (crc & 0xf));
+
+		ETHER_NEXT_MULTI(step, enm);
+	}
+
+	goto domulti;
+
+ allmulti:
+	ifp->if_flags |= IFF_ALLMULTI;
 	memset(&sc->sc_data->vd_mcastfil, 0xff,
 	    sizeof(sc->sc_data->vd_mcastfil));
-	sc->sc_data->vd_iff = flags;
 
-/*
-	bus_dmamap_sync(sc->sc_dmat, sc->sc_map, 0,
-	    sizeof(struct vic_data), BUS_DMASYNC_POSTWRITE);
-*/
-
+ domulti:
 	vic_write(sc, VIC_CMD, VIC_CMD_MCASTFIL);
+
+	if (ifp->if_flags & IFF_RUNNING) {
+		flags = (ifp->if_flags & IFF_PROMISC) ?
+		    VIC_CMD_IFF_PROMISC :
+		    (VIC_CMD_IFF_BROADCAST | VIC_CMD_IFF_MULTICAST);
+	}
+	sc->sc_data->vd_iff = flags;
 	vic_write(sc, VIC_CMD, VIC_CMD_IFF);
 }
 
@@ -1101,7 +1136,9 @@ vic_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		/* FALLTHROUGH */
 	case SIOCSIFFLAGS:
 		if (ifp->if_flags & IFF_UP) {
-			if ((ifp->if_flags & IFF_RUNNING) == 0)
+			if (ifp->if_flags & IFF_RUNNING)
+				vic_iff(sc);
+			else
 				vic_init(ifp);
 		} else {
 			if (ifp->if_flags & IFF_RUNNING)
@@ -1123,8 +1160,11 @@ vic_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		    ether_addmulti(ifr, &sc->sc_ac) :
 		    ether_delmulti(ifr, &sc->sc_ac);
 
-		if (error == ENETRESET)
+		if (error == ENETRESET) {
+			if (ifp->if_flags & IFF_RUNNING)
+				vic_iff(sc);
 			error = 0;
+		}
 		break;
 
 	case SIOCGIFMEDIA:
@@ -1164,9 +1204,9 @@ vic_init(struct ifnet *ifp)
 	sc->sc_data->vd_rx_nextidx = 0;
 	sc->sc_data->vd_rx_nextidx2 = 0;
 
-        sc->sc_data->vd_rx_saved_nextidx = 0;
-        sc->sc_data->vd_rx_saved_nextidx2 = 0;
-        sc->sc_data->vd_tx_saved_nextidx = 0;
+	sc->sc_data->vd_rx_saved_nextidx = 0;
+	sc->sc_data->vd_rx_saved_nextidx2 = 0;
+	sc->sc_data->vd_tx_saved_nextidx = 0;
 
 	bus_dmamap_sync(sc->sc_dmat, sc->sc_dma_map, 0, sc->sc_dma_size,
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
@@ -1176,14 +1216,10 @@ vic_init(struct ifnet *ifp)
 	vic_write(sc, VIC_DATA_ADDR, VIC_DMA_DVA(sc));
 	vic_write(sc, VIC_DATA_LENGTH, sc->sc_dma_size);
 
-	if (ifp->if_flags & IFF_PROMISC)
-		vic_iff(sc, VIC_CMD_IFF_PROMISC);
-	else
-		vic_iff(sc, VIC_CMD_IFF_BROADCAST | VIC_CMD_IFF_MULTICAST);
-
 	ifp->if_flags |= IFF_RUNNING;
 	ifp->if_flags &= ~IFF_OACTIVE;
 
+	vic_iff(sc);
 	vic_write(sc, VIC_CMD, VIC_CMD_INTR_ENABLE);
 
 	splx(s);
@@ -1217,7 +1253,7 @@ vic_stop(struct ifnet *ifp)
 
 	vic_write(sc, VIC_CMD, VIC_CMD_INTR_DISABLE);
 
-	vic_iff(sc, 0);
+	vic_iff(sc);
 	vic_write(sc, VIC_DATA_ADDR, 0);
 
 	vic_uninit_data(sc);

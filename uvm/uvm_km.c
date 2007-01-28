@@ -1,4 +1,4 @@
-/*	$OpenBSD: uvm_km.c,v 1.51 2006/07/26 23:15:55 mickey Exp $	*/
+/*	$OpenBSD: uvm_km.c,v 1.53 2006/11/29 12:17:33 miod Exp $	*/
 /*	$NetBSD: uvm_km.c,v 1.42 2001/01/14 02:10:01 thorpej Exp $	*/
 
 /* 
@@ -94,7 +94,6 @@
  *		malloc.   *** access to kmem_map must be protected
  *		by splvm() because we are allowed to call malloc()
  *		at interrupt time ***
- *   mb_map => memory for large mbufs,  *** protected by splvm ***
  *   pager_map => used to map "buf" structures into kernel space
  *   exec_map => used during exec to handle exec args
  *   etc...
@@ -619,10 +618,7 @@ uvm_km_free_wakeup(map, addr, size)
  */
 
 vaddr_t
-uvm_km_alloc1(map, size, zeroit)
-	vm_map_t map;
-	vsize_t size;
-	boolean_t zeroit;
+uvm_km_alloc1(struct vm_map *map, vsize_t size, vsize_t align, boolean_t zeroit)
 {
 	vaddr_t kva, loopva, offset;
 	struct vm_page *pg;
@@ -639,7 +635,7 @@ uvm_km_alloc1(map, size, zeroit)
 	 */
 
 	if (__predict_false(uvm_map(map, &kva, size, uvm.kernel_object,
-	      UVM_UNKNOWN_OFFSET, 0, UVM_MAPFLAG(UVM_PROT_ALL, UVM_PROT_ALL,
+	      UVM_UNKNOWN_OFFSET, align, UVM_MAPFLAG(UVM_PROT_ALL, UVM_PROT_ALL,
 					      UVM_INH_NONE, UVM_ADV_RANDOM,
 					      0)) != KERN_SUCCESS)) {
 		UVMHIST_LOG(maphist,"<- done (no VM)",0,0,0,0);

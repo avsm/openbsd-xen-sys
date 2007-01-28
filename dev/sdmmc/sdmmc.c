@@ -1,4 +1,4 @@
-/*	$OpenBSD: sdmmc.c,v 1.6 2006/06/29 01:35:37 uwe Exp $	*/
+/*	$OpenBSD: sdmmc.c,v 1.8 2006/11/29 00:46:52 uwe Exp $	*/
 
 /*
  * Copyright (c) 2006 Uwe Stuehler <uwe@openbsd.org>
@@ -39,6 +39,14 @@
 #include <dev/sdmmc/sdmmcreg.h>
 #include <dev/sdmmc/sdmmcvar.h>
 
+#ifdef SDMMC_IOCTL
+#include "bio.h"
+#if NBIO < 1
+#undef SDMMC_IOCTL
+#endif
+#include <dev/biovar.h>
+#endif
+
 int	sdmmc_match(struct device *, void *, void *);
 void	sdmmc_attach(struct device *, struct device *, void *);
 int	sdmmc_detach(struct device *, int);
@@ -52,13 +60,18 @@ void	sdmmc_disable(struct sdmmc_softc *);
 int	sdmmc_scan(struct sdmmc_softc *);
 int	sdmmc_init(struct sdmmc_softc *);
 int	sdmmc_set_bus_width(struct sdmmc_function *);
+#ifdef SDMMC_IOCTL
+int	sdmmc_ioctl(struct device *, u_long, caddr_t);
+#endif
 
 #define DEVNAME(sc)	SDMMCDEVNAME(sc)
 
 #ifdef SDMMC_DEBUG
-#define DPRINTF(s)	printf s
+int sdmmcdebug = 0;
+extern int sdhcdebug;	/* XXX should have a sdmmc_chip_debug() function */
+#define DPRINTF(n,s)	do { if ((n) <= sdmmcdebug) printf s; } while (0)
 #else
-#define DPRINTF(s)	/**/
+#define DPRINTF(n,s)	do {} while (0)
 #endif
 
 struct cfattach sdmmc_ca = {
@@ -93,6 +106,11 @@ sdmmc_attach(struct device *parent, struct device *self, void *aux)
 	TAILQ_INIT(&sc->sc_tskq);
 	sdmmc_init_task(&sc->sc_discover_task, sdmmc_discover_task, sc);
 	lockinit(&sc->sc_lock, PRIBIO, DEVNAME(sc), 0, LK_CANRECURSE);
+
+#ifdef SDMMC_IOCTL
+	if (bio_register(self, sdmmc_ioctl) != 0)
+		printf("%s: unable to register ioctl\n", DEVNAME(sc));
+#endif
 
 	/*
 	 * Create the event thread that will attach and detach cards
@@ -223,7 +241,7 @@ sdmmc_discover_task(void *arg)
 void
 sdmmc_card_attach(struct sdmmc_softc *sc)
 {
-	DPRINTF(("%s: attach card\n", DEVNAME(sc)));
+	DPRINTF(1,("%s: attach card\n", DEVNAME(sc)));
 
 	SDMMC_LOCK(sc);
 	CLR(sc->sc_flags, SMF_CARD_ATTACHED);
@@ -278,7 +296,7 @@ sdmmc_card_detach(struct sdmmc_softc *sc, int flags)
 {
 	struct sdmmc_function *sf, *sfnext;
 
-	DPRINTF(("%s: detach card\n", DEVNAME(sc)));
+	DPRINTF(1,("%s: detach card\n", DEVNAME(sc)));
 
 	if (ISSET(sc->sc_flags, SMF_CARD_ATTACHED)) {
 		/* Detach I/O function drivers. */
@@ -377,7 +395,7 @@ sdmmc_set_bus_power(struct sdmmc_softc *sc, u_int32_t host_ocr,
 	u_int32_t bit;
 
 	/* Mask off unsupported voltage levels and select the lowest. */
-	DPRINTF(("%s: host_ocr=%x ", DEVNAME(sc), host_ocr));
+	DPRINTF(1,("%s: host_ocr=%x ", DEVNAME(sc), host_ocr));
 	host_ocr &= card_ocr;
 	for (bit = 4; bit < 23; bit++) {
 		if (ISSET(host_ocr, 1<<bit)) {
@@ -385,7 +403,7 @@ sdmmc_set_bus_power(struct sdmmc_softc *sc, u_int32_t host_ocr,
 			break;
 		}
 	}
-	DPRINTF(("card_ocr=%x new_ocr=%x\n", card_ocr, host_ocr));
+	DPRINTF(1,("card_ocr=%x new_ocr=%x\n", card_ocr, host_ocr));
 
 	if (host_ocr == 0 ||
 	    sdmmc_chip_bus_power(sc->sct, sc->sch, host_ocr) != 0)
@@ -522,7 +540,7 @@ sdmmc_mmc_command(struct sdmmc_softc *sc, struct sdmmc_command *cmd)
 
 	sdmmc_chip_exec_command(sc->sct, sc->sch, cmd);
 
-	DPRINTF(("%s: mmc cmd=%p opcode=%d proc=\"%s\" (error %d)\n",
+	DPRINTF(2,("%s: mmc cmd=%p opcode=%d proc=\"%s\" (error %d)\n",
 	    DEVNAME(sc), cmd, cmd->c_opcode, curproc ? curproc->p_comm :
 	    "", cmd->c_error));
 
@@ -629,92 +647,78 @@ sdmmc_select_card(struct sdmmc_softc *sc, struct sdmmc_function *sf)
 	return error;
 }
 
+#ifdef SDMMC_IOCTL
 int
-sdmmc_decode_csd(struct sdmmc_softc *sc, sdmmc_response resp,
-    struct sdmmc_function *sf)
+sdmmc_ioctl(struct device *self, u_long request, caddr_t addr)
 {
-	struct sdmmc_csd *csd = &sf->csd;
+	struct sdmmc_softc *sc = (struct sdmmc_softc *)self;
+	struct sdmmc_command *ucmd;
+	struct sdmmc_command cmd;
+	void *data;
+	int error;
 
-	if (ISSET(sc->sc_flags, SMF_SD_MODE)) {
-		/*
-		 * CSD version 1.0 corresponds to SD system
-		 * specification version 1.0 - 1.10. (SanDisk, 3.5.3)
-		 */
-		csd->csdver = SD_CSD_CSDVER(resp);
-		if (csd->csdver != SD_CSD_CSDVER_1_0) {
-			printf("%s: unknown SD CSD structure version 0x%x\n",
-			    DEVNAME(sc), csd->csdver);
-			return 1;
+	switch (request) {
+#ifdef SDMMC_DEBUG
+	case SDIOCSETDEBUG:
+		sdmmcdebug = (((struct bio_sdmmc_debug *)addr)->debug) & 0xff;
+		sdhcdebug = (((struct bio_sdmmc_debug *)addr)->debug >> 8) & 0xff;
+		break;
+#endif
+
+	case SDIOCEXECMMC:
+	case SDIOCEXECAPP:
+		ucmd = &((struct bio_sdmmc_command *)addr)->cmd;
+
+		/* Refuse to transfer more than 512K per command. */
+		if (ucmd->c_datalen > 524288)
+			return ENOMEM;
+
+		/* Verify that the data buffer is safe to copy. */
+		if ((ucmd->c_datalen > 0 && ucmd->c_data == NULL) ||
+		    (ucmd->c_datalen < 1 && ucmd->c_data != NULL) ||
+		    ucmd->c_datalen < 0)
+			return EINVAL;
+
+		bzero(&cmd, sizeof cmd);
+		cmd.c_opcode = ucmd->c_opcode;
+		cmd.c_arg = ucmd->c_arg;
+		cmd.c_flags = ucmd->c_flags;
+		cmd.c_blklen = ucmd->c_blklen;
+
+		if (ucmd->c_data) {
+			data = malloc(ucmd->c_datalen, M_DEVBUF,
+			    M_WAITOK | M_CANFAIL);
+			if (data == NULL)
+				return ENOMEM;
+			if (copyin(ucmd->c_data, data, ucmd->c_datalen))
+				return EFAULT;
+
+			cmd.c_data = data;
+			cmd.c_datalen = ucmd->c_datalen;
 		}
 
-		csd->capacity = SD_CSD_CAPACITY(resp);
-		csd->read_bl_len = SD_CSD_READ_BL_LEN(resp);
-	} else {
-		csd->csdver = MMC_CSD_CSDVER(resp);
-		if (csd->csdver != MMC_CSD_CSDVER_1_0 &&
-		    csd->csdver != MMC_CSD_CSDVER_2_0) {
-			printf("%s: unknown MMC CSD structure version 0x%x\n",
-			    DEVNAME(sc), csd->csdver);
-			return 1;
-		}
+		if (request == SDIOCEXECMMC)
+			error = sdmmc_mmc_command(sc, &cmd);
+		else
+			error = sdmmc_app_command(sc, &cmd);
+		if (error && !cmd.c_error)
+			cmd.c_error = error;
 
-		csd->mmcver = MMC_CSD_MMCVER(resp);
-		csd->capacity = MMC_CSD_CAPACITY(resp);
-		csd->read_bl_len = MMC_CSD_READ_BL_LEN(resp);
-	}
-	csd->sector_size = MIN(1 << csd->read_bl_len,
-	    sdmmc_chip_host_maxblklen(sc->sct, sc->sch));
-	if (csd->sector_size < (1<<csd->read_bl_len))
-		csd->capacity *= (1<<csd->read_bl_len) /
-		    csd->sector_size;
+		bcopy(&cmd.c_resp, ucmd->c_resp, sizeof cmd.c_resp);
+		ucmd->c_flags = cmd.c_flags;
+		ucmd->c_error = cmd.c_error;
 
-	return 0;
-}
+		if (ucmd->c_data && copyout(data, ucmd->c_data,
+		    ucmd->c_datalen))
+			return EFAULT;
 
-int
-sdmmc_decode_cid(struct sdmmc_softc *sc, sdmmc_response resp,
-    struct sdmmc_function *sf)
-{
-	struct sdmmc_cid *cid = &sf->cid;
+		if (ucmd->c_data)
+			free(data, M_DEVBUF);
+		break;
 
-	if (ISSET(sc->sc_flags, SMF_SD_MODE)) {
-		cid->mid = SD_CID_MID(resp);
-		cid->oid = SD_CID_OID(resp);
-		SD_CID_PNM_CPY(resp, cid->pnm);
-		cid->rev = SD_CID_REV(resp);
-		cid->psn = SD_CID_PSN(resp);
-		cid->mdt = SD_CID_MDT(resp);
-	} else {
-		switch(sf->csd.mmcver) {
-		case MMC_CSD_MMCVER_1_0:
-		case MMC_CSD_MMCVER_1_4:
-			cid->mid = MMC_CID_MID_V1(resp);
-			MMC_CID_PNM_V1_CPY(resp, cid->pnm);
-			cid->rev = MMC_CID_REV_V1(resp);
-			cid->psn = MMC_CID_PSN_V1(resp);
-			cid->mdt = MMC_CID_MDT_V1(resp);
-			break;
-		case MMC_CSD_MMCVER_2_0:
-		case MMC_CSD_MMCVER_3_1:
-		case MMC_CSD_MMCVER_4_0:
-			cid->mid = MMC_CID_MID_V2(resp);
-			cid->oid = MMC_CID_OID_V2(resp);
-			MMC_CID_PNM_V2_CPY(resp, cid->pnm);
-			cid->psn = MMC_CID_PSN_V2(resp);
-			break;
-		default:
-			printf("%s: unknown MMC version %d\n",
-			    DEVNAME(sc), sf->csd.mmcver);
-			return 1;
-		}
+	default:
+		return ENOTTY;
 	}
 	return 0;
 }
-
-void
-sdmmc_print_cid(struct sdmmc_cid *cid)
-{
-	printf("mid=0x%02x oid=0x%04x pnm=\"%s\" rev=0x%02x psn=0x%08x"
-	    " mdt=%03x\n", cid->mid, cid->oid, cid->pnm, cid->rev, cid->psn,
-	    cid->mdt);
-}
+#endif

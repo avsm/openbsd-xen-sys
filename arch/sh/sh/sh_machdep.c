@@ -1,4 +1,4 @@
-/*	$OpenBSD: sh_machdep.c,v 1.3 2006/10/06 23:15:12 mickey Exp $	*/
+/*	$OpenBSD: sh_machdep.c,v 1.6 2006/11/09 00:12:12 deraadt Exp $	*/
 /*	$NetBSD: sh3_machdep.c,v 1.59 2006/03/04 01:13:36 uwe Exp $	*/
 
 /*-
@@ -149,6 +149,8 @@ uint32_t dumpmag = 0x8fca0101;	/* magic number */
 int dumpsize;			/* pages */
 long dumplo;	 		/* blocks */
 
+int kbd_reset;
+
 void
 sh_cpu_init(int arch, int product)
 {
@@ -255,7 +257,7 @@ sh_startup()
 
 	printf("%s", version);
 	if (*cpu_model != '\0')
-		printf("%s", cpu_model);
+		printf("%s\n", cpu_model);
 #ifdef DEBUG
 	printf("general exception handler:\t%d byte\n",
 	    sh_vector_generic_end - sh_vector_generic);
@@ -481,7 +483,7 @@ sendsig(sig_t catcher, int sig, int mask, u_long code, int type,
 	frame.sf_uc.sc_onstack = onstack;
 	frame.sf_uc.sc_expevt = tf->tf_expevt;
 	/* frame.sf_uc.sc_err = 0; */
-	frame.sf_uc.sc_mask = p->p_sigmask;
+	frame.sf_uc.sc_mask = mask;
 	/* XXX tf_macl, tf_mach not saved */
 
 	if (copyout(&frame, fp, sizeof(frame)) != 0) {
@@ -675,6 +677,11 @@ cpu_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		return (sysctl_rdstruct(oldp, oldlenp, newp, &consdev,
 		    sizeof consdev));
 	}
+
+	case CPU_KBDRESET:
+		if (securelevel > 0)
+			return (sysctl_rdint(oldp, oldlenp, newp, kbd_reset));
+		return (sysctl_int(oldp, oldlenp, newp, newlen, &kbd_reset));
 
 	default:
 		return (EOPNOTSUPP);

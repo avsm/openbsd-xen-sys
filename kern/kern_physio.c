@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_physio.c,v 1.23 2005/11/28 00:14:28 jsg Exp $	*/
+/*	$OpenBSD: kern_physio.c,v 1.26 2006/11/29 12:24:17 miod Exp $	*/
 /*	$NetBSD: kern_physio.c,v 1.28 1997/05/19 10:43:28 pk Exp $	*/
 
 /*-
@@ -116,7 +116,7 @@ physio(void (*strategy)(struct buf *), struct buf *bp, dev_t dev, int flags,
 			/*
 			 * [mark the buffer busy for physical I/O]
 			 * (i.e. set B_PHYS (because it's an I/O to user
-			 * memory, and B_RAW, because B_RAW is to be
+			 * memory), and B_RAW, because B_RAW is to be
 			 * "Set by physio for raw transfers.", in addition
 			 * to the "busy" and read/write flag.)
 			 */
@@ -137,7 +137,7 @@ physio(void (*strategy)(struct buf *), struct buf *bp, dev_t dev, int flags,
 				bp->b_bcount = iovp->iov_len;
 
 			/*
-			 * [call minphys to bound the tranfer size]
+			 * [call minphys to bound the transfer size]
 			 * and remember the amount of data to transfer,
 			 * for later comparison.
 			 */
@@ -157,7 +157,6 @@ physio(void (*strategy)(struct buf *), struct buf *bp, dev_t dev, int flags,
 			 * saves it in b_saveaddr.  However, vunmapbuf()
 			 * restores it.
 			 */
-			PHOLD(p);
 			error = uvm_vslock(p, bp->b_data, todo,
 			    (flags & B_READ) ?
 			    VM_PROT_READ | VM_PROT_WRITE : VM_PROT_READ);
@@ -198,7 +197,6 @@ physio(void (*strategy)(struct buf *), struct buf *bp, dev_t dev, int flags,
 			vunmapbuf(bp, todo);
 			uvm_vsunlock(p, bp->b_data, todo);
 after_unlock:
-			PRELE(p);
 
 			/* remember error value (save a splbio/splx pair) */
 			if (bp->b_flags & B_ERROR)
@@ -242,7 +240,7 @@ done:
 	else {
 		/*
 		 * [if another process is waiting for the raw I/O buffer,
-		 *    wake up processes waiting to do physical I/O;
+		 *    wake up processes waiting to do physical I/O]
 		 */
 		if (bp->b_flags & B_WANTED) {
 			bp->b_flags &= ~B_WANTED;

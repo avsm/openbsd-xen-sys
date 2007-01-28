@@ -1,4 +1,4 @@
-/*	$OpenBSD: maxim6690.c,v 1.9 2006/04/30 09:33:19 djm Exp $	*/
+/*	$OpenBSD: maxim6690.c,v 1.12 2006/11/20 21:53:02 kettenis Exp $	*/
 
 /*
  * Copyright (c) 2005 Theo de Raadt
@@ -26,8 +26,8 @@
 /* Maxim MAX6642/90 registers */
 #define MAX6690_INT_TEMP	0x00
 #define MAX6690_EXT_TEMP	0x01
-#define MAX6690_INT_TEMP2	0x10
-#define MAX6690_EXT_TEMP2	0x11
+#define MAX6690_INT_TEMP2	0x11
+#define MAX6690_EXT_TEMP2	0x10
 #define MAX6690_STATUS		0x02
 #define MAX6690_DEVID		0xfe
 #define MAX6690_REVISION	0xff	/* absent on MAX6642 */
@@ -55,6 +55,7 @@ struct maxtmp_softc {
 	u_int8_t sc_temp2_mask;
 
 	struct sensor sc_sensor[MAXTMP_NUM_SENSORS];
+	struct sensordev sc_sensordev;
 };
 
 int	maxtmp_match(struct device *, void *, void *);
@@ -80,6 +81,7 @@ maxtmp_match(struct device *parent, void *match, void *aux)
 	    strcmp(ia->ia_name, "max6657") == 0 ||
 	    strcmp(ia->ia_name, "max6658") == 0 ||
 	    strcmp(ia->ia_name, "max6659") == 0 ||
+	    strcmp(ia->ia_name, "lm63") == 0 ||
 	    strcmp(ia->ia_name, "lm86") == 0 ||
 	    strcmp(ia->ia_name, "lm89") == 0 ||
 	    strcmp(ia->ia_name, "lm89-1") == 0 ||
@@ -119,16 +121,15 @@ maxtmp_attach(struct device *parent, struct device *self, void *aux)
 	printf(": %s", ia->ia_name);
 
 	/* Initialize sensor data. */
-	for (i = 0; i < MAXTMP_NUM_SENSORS; i++)
-		strlcpy(sc->sc_sensor[i].device, sc->sc_dev.dv_xname,
-		    sizeof(sc->sc_sensor[i].device));
+	strlcpy(sc->sc_sensordev.xname, sc->sc_dev.dv_xname,
+	    sizeof(sc->sc_sensordev.xname));
 
 	sc->sc_sensor[MAXTMP_INT].type = SENSOR_TEMP;
-	strlcpy(sc->sc_sensor[MAXTMP_INT].desc, "Internal Temp",
+	strlcpy(sc->sc_sensor[MAXTMP_INT].desc, "Internal",
 	    sizeof(sc->sc_sensor[MAXTMP_INT].desc));
 
 	sc->sc_sensor[MAXTMP_EXT].type = SENSOR_TEMP;
-	strlcpy(sc->sc_sensor[MAXTMP_EXT].desc, "External Temp",
+	strlcpy(sc->sc_sensor[MAXTMP_EXT].desc, "External",
 	    sizeof(sc->sc_sensor[MAXTMP_EXT].desc));
 
 	if (sensor_task_register(sc, maxtmp_refresh, 5)) {
@@ -137,7 +138,8 @@ maxtmp_attach(struct device *parent, struct device *self, void *aux)
 	}
 
 	for (i = 0; i < MAXTMP_NUM_SENSORS; i++)
-		sensor_add(&sc->sc_sensor[i]);
+		sensor_attach(&sc->sc_sensordev, &sc->sc_sensor[i]);
+	sensordev_install(&sc->sc_sensordev);
 
 	printf("\n");
 }

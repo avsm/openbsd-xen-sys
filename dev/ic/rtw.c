@@ -1,4 +1,4 @@
-/*	$OpenBSD: rtw.c,v 1.54 2006/03/25 22:41:43 djm Exp $	*/
+/*	$OpenBSD: rtw.c,v 1.56 2006/11/26 17:20:33 jsg Exp $	*/
 /*	$NetBSD: rtw.c,v 1.29 2004/12/27 19:49:16 dyoung Exp $ */
 
 /*-
@@ -1329,11 +1329,12 @@ rtw_intr_rx(struct rtw_softc *sc, u_int16_t isr)
 			rr->rr_antsignal = rssi;
 			rr->rr_barker_lock = htole16(sq);
 
-			M_DUP_PKTHDR(&mb, m);
 			mb.m_data = (caddr_t)rr;
 			mb.m_len = sizeof(sc->sc_rxtapu);
 			mb.m_next = m;
-			mb.m_pkthdr.len += mb.m_len;
+			mb.m_nextpkt = NULL;
+			mb.m_type = 0;
+			mb.m_flags = 0;
 			bpf_mtap(sc->sc_radiobpf, &mb, BPF_DIRECTION_IN);
 		}
 #endif /* NPBFILTER > 0 */
@@ -3079,11 +3080,12 @@ rtw_start(struct ifnet *ifp)
 			rt->rt_chan_flags =
 			    htole16(ic->ic_bss->ni_chan->ic_flags);
 
-			M_DUP_PKTHDR(&mb, m0);
 			mb.m_data = (caddr_t)rt;
 			mb.m_len = sizeof(sc->sc_txtapu);
 			mb.m_next = m0;
-			mb.m_pkthdr.len += mb.m_len;
+			mb.m_nextpkt = NULL;
+			mb.m_type = 0;
+			mb.m_flags = 0;
 			bpf_mtap(sc->sc_radiobpf, &mb, BPF_DIRECTION_OUT);
 
 		}
@@ -3760,7 +3762,7 @@ rtw_attach(struct rtw_softc *sc)
 	const char *vername;
 	struct ifnet *ifp;
 	char scratch[sizeof("unknown 0xXXXXXXXX")];
-	int pri, rc, nrate;
+	int pri, rc;
 
 
 	/* Use default DMA memory access */
@@ -3929,14 +3931,7 @@ rtw_attach(struct rtw_softc *sc)
 	ic->ic_caps = IEEE80211_C_PMGT | IEEE80211_C_IBSS |
 	    IEEE80211_C_HOSTAP | IEEE80211_C_MONITOR | IEEE80211_C_WEP;
 
-	nrate = 0;
-	ic->ic_sup_rates[IEEE80211_MODE_11B].rs_rates[nrate++] =
-	    IEEE80211_RATE_BASIC | 2;
-	ic->ic_sup_rates[IEEE80211_MODE_11B].rs_rates[nrate++] =
-	    IEEE80211_RATE_BASIC | 4;
-	ic->ic_sup_rates[IEEE80211_MODE_11B].rs_rates[nrate++] = 11;
-	ic->ic_sup_rates[IEEE80211_MODE_11B].rs_rates[nrate++] = 22;
-	ic->ic_sup_rates[IEEE80211_MODE_11B].rs_nrates = nrate;
+	ic->ic_sup_rates[IEEE80211_MODE_11B] = ieee80211_std_rateset_11b;
 
 	rtw_led_attach(&sc->sc_led_state, (void *)sc);
 

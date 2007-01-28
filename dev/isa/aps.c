@@ -1,4 +1,4 @@
-/*	$OpenBSD: aps.c,v 1.7 2006/04/10 00:57:54 deraadt Exp $	*/
+/*	$OpenBSD: aps.c,v 1.12 2007/01/05 06:36:37 jsg Exp $	*/
 /*
  * Copyright (c) 2005 Jonathan Gray <jsg@openbsd.org>
  *
@@ -31,24 +31,81 @@
 #include <dev/isa/isareg.h>
 #include <dev/isa/isavar.h>
 
-#include <dev/isa/apsreg.h>
-#include <dev/isa/apsvar.h>
-
 #if defined(APSDEBUG)
 #define DPRINTF(x)		do { printf x; } while (0)
 #else
 #define DPRINTF(x)
 #endif
 
-int aps_match(struct device *, void *, void *);
-void aps_attach(struct device *, struct device *, void *);
+#define APS_ACCEL_STATE		0x04
+#define APS_INIT		0x10
+#define APS_STATE		0x11
+#define	APS_XACCEL		0x12
+#define APS_YACCEL		0x14
+#define APS_TEMP		0x16
+#define	APS_XVAR		0x17
+#define APS_YVAR		0x19
+#define APS_TEMP2		0x1b
+#define APS_UNKNOWN		0x1c
+#define APS_INPUT		0x1d
+#define APS_CMD			0x1f
 
-int aps_init(bus_space_tag_t, bus_space_handle_t);
+#define	APS_STATE_NEWDATA	0x50
+
+#define APS_CMD_START		0x01
+
+#define APS_INPUT_KB		(1 << 5)
+#define APS_INPUT_MS		(1 << 6)
+#define APS_INPUT_LIDOPEN	(1 << 7)
+
+#define APS_ADDR_SIZE		0x1f
+
+struct sensor_rec {
+	u_int8_t	state;
+	u_int16_t	x_accel;
+	u_int16_t	y_accel;
+	u_int8_t	temp1;
+	u_int16_t	x_var;
+	u_int16_t	y_var;
+	u_int8_t	temp2;
+	u_int8_t	unk;
+	u_int8_t	input;
+};
+
+#define APS_NUM_SENSORS		9
+
+#define APS_SENSOR_XACCEL	0
+#define APS_SENSOR_YACCEL	1
+#define APS_SENSOR_XVAR		2
+#define APS_SENSOR_YVAR		3
+#define APS_SENSOR_TEMP1	4
+#define APS_SENSOR_TEMP2	5
+#define APS_SENSOR_KBACT	6
+#define APS_SENSOR_MSACT	7
+#define APS_SENSOR_LIDOPEN	8
+
+struct aps_softc {
+	struct device sc_dev;
+
+	bus_space_tag_t aps_iot;
+	bus_space_handle_t aps_ioh;
+
+	struct sensor sensors[APS_NUM_SENSORS];
+	struct sensordev sensordev;
+	void (*refresh_sensor_data)(struct aps_softc *);
+
+	struct sensor_rec aps_data;
+};
+
+int	 aps_match(struct device *, void *, void *);
+void	 aps_attach(struct device *, struct device *, void *);
+
+int	 aps_init(bus_space_tag_t, bus_space_handle_t);
 u_int8_t aps_mem_read_1(bus_space_tag_t, bus_space_handle_t, int, u_int8_t);
-int aps_read_data(struct aps_softc *);
-void aps_refresh_sensor_data(struct aps_softc *sc);
-void aps_refresh(void *);
-void aps_power(int, void *);
+int	 aps_read_data(struct aps_softc *);
+void	 aps_refresh_sensor_data(struct aps_softc *sc);
+void	 aps_refresh(void *);
+void	 aps_power(int, void *);
 
 struct cfattach aps_ca = {
 	sizeof(struct aps_softc),
@@ -146,8 +203,6 @@ aps_attach(struct device *parent, struct device *self, void *aux)
 	if (!aps_init(iot, ioh))
 		goto out;
 
-	sc->numsensors = APS_NUM_SENSORS;
-
 	sc->sensors[APS_SENSOR_XACCEL].type = SENSOR_INTEGER;
 	snprintf(sc->sensors[APS_SENSOR_XACCEL].desc,
 	    sizeof(sc->sensors[APS_SENSOR_XACCEL].desc), "X_ACCEL");
@@ -157,12 +212,7 @@ aps_attach(struct device *parent, struct device *self, void *aux)
 	    sizeof(sc->sensors[APS_SENSOR_YACCEL].desc), "Y_ACCEL");
 
 	sc->sensors[APS_SENSOR_TEMP1].type = SENSOR_TEMP;
-	snprintf(sc->sensors[APS_SENSOR_TEMP1].desc,
-	    sizeof(sc->sensors[APS_SENSOR_TEMP1].desc), "Temp 1");
-
 	sc->sensors[APS_SENSOR_TEMP2].type = SENSOR_TEMP;
-	snprintf(sc->sensors[APS_SENSOR_TEMP2].desc,
-	    sizeof(sc->sensors[APS_SENSOR_TEMP2].desc), "Temp 2");
 
 	sc->sensors[APS_SENSOR_XVAR].type = SENSOR_INTEGER;
 	snprintf(sc->sensors[APS_SENSOR_XVAR].desc,
@@ -172,28 +222,25 @@ aps_attach(struct device *parent, struct device *self, void *aux)
 	snprintf(sc->sensors[APS_SENSOR_YVAR].desc,
 	    sizeof(sc->sensors[APS_SENSOR_YVAR].desc), "Y_VAR");
 
-	sc->sensors[APS_SENSOR_UNK].type = SENSOR_INTEGER;
-	snprintf(sc->sensors[APS_SENSOR_UNK].desc,
-	    sizeof(sc->sensors[APS_SENSOR_UNK].desc), "unknown");
-
-	sc->sensors[APS_SENSOR_KBACT].type = SENSOR_INTEGER;
+	sc->sensors[APS_SENSOR_KBACT].type = SENSOR_INDICATOR;
 	snprintf(sc->sensors[APS_SENSOR_KBACT].desc,
 	    sizeof(sc->sensors[APS_SENSOR_KBACT].desc), "Keyboard Active");
 
-	sc->sensors[APS_SENSOR_MSACT].type = SENSOR_INTEGER;
+	sc->sensors[APS_SENSOR_MSACT].type = SENSOR_INDICATOR;
 	snprintf(sc->sensors[APS_SENSOR_MSACT].desc,
 	    sizeof(sc->sensors[APS_SENSOR_MSACT].desc), "Mouse Active");
 
-	sc->sensors[APS_SENSOR_LIDOPEN].type = SENSOR_INTEGER;
+	sc->sensors[APS_SENSOR_LIDOPEN].type = SENSOR_INDICATOR;
 	snprintf(sc->sensors[APS_SENSOR_LIDOPEN].desc,
 	    sizeof(sc->sensors[APS_SENSOR_LIDOPEN].desc), "Lid Open");
 
 	/* stop hiding and report to the authorities */
-	for (i = 0; i < sc->numsensors; i++) {
-		strlcpy(sc->sensors[i].device, sc->sc_dev.dv_xname,
-		    sizeof(sc->sensors[i].device));
-		sensor_add(&sc->sensors[i]);
+	strlcpy(sc->sensordev.xname, sc->sc_dev.dv_xname,
+	    sizeof(sc->sensordev.xname));
+	for (i = 0; i < APS_NUM_SENSORS ; i++) {
+		sensor_attach(&sc->sensordev, &sc->sensors[i]);
 	}
+	sensordev_install(&sc->sensordev);
 
 	powerhook_establish(aps_power, (void *)sc);
 
@@ -273,7 +320,6 @@ aps_read_data(struct aps_softc *sc)
 	sc->aps_data.x_var = bus_space_read_2(iot, ioh, APS_XVAR);
 	sc->aps_data.y_var = bus_space_read_2(iot, ioh, APS_YVAR);
 	sc->aps_data.temp2 = bus_space_read_1(iot, ioh, APS_TEMP2);
-	sc->aps_data.unk = bus_space_read_1(iot, ioh, APS_UNKNOWN);
 	sc->aps_data.input = bus_space_read_1(iot, ioh, APS_INPUT);
 
 	return (1);
@@ -321,7 +367,6 @@ aps_refresh_sensor_data(struct aps_softc *sc)
 
 	sc->sensors[APS_SENSOR_XVAR].value = sc->aps_data.x_var;
 	sc->sensors[APS_SENSOR_YVAR].value = sc->aps_data.y_var;
-	sc->sensors[APS_SENSOR_UNK].value = sc->aps_data.unk;
 	sc->sensors[APS_SENSOR_KBACT].value =
 	    (sc->aps_data.input &  APS_INPUT_KB) ? 1 : 0;
 	sc->sensors[APS_SENSOR_MSACT].value =

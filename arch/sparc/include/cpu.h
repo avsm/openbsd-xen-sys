@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.h,v 1.24 2005/03/23 17:14:45 miod Exp $	*/
+/*	$OpenBSD: cpu.h,v 1.26 2006/11/29 12:26:14 miod Exp $	*/
 /*	$NetBSD: cpu.h,v 1.24 1997/03/15 22:25:15 pk Exp $ */
 
 /*
@@ -74,8 +74,6 @@
  * definitions of cpu-dependent requirements
  * referenced in generic code
  */
-#define	cpu_swapin(p)	/* nothing */
-#define	cpu_swapout(p)	/* nothing */
 #define cpu_wait(p)	/* nothing */
 
 /*
@@ -132,6 +130,11 @@ extern void	raise(int, int);
 extern int	want_resched;		/* resched() was called */
 #define	need_resched(ci)		(want_resched = 1, want_ast = 1)
 extern int	want_ast;
+
+/*
+ * This is used during profiling to integrate system time.
+ */
+#define	PROC_PC(p)		((p)->p_md.md_tf->tf_pc)
 
 /*
  * Give a profiling tick to the current process when the user profiling

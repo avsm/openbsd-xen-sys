@@ -1,4 +1,4 @@
-/*	$OpenBSD: trap.c,v 1.32 2006/05/08 14:03:35 miod Exp $	*/
+/*	$OpenBSD: trap.c,v 1.36 2006/12/24 20:29:19 miod Exp $	*/
 /*
  * Copyright (c) 2004, Miodrag Vallat.
  * Copyright (c) 1998 Steve Murphree, Jr.
@@ -118,35 +118,15 @@ const char *pbus_exception_type[] = {
 #endif
 
 static inline void
-userret(struct proc *p, struct trapframe *frame, u_quad_t oticks)
+userret(struct proc *p)
 {
 	int sig;
-	struct cpu_info *cpu = curcpu();
 
 	/* take pending signals */
 	while ((sig = CURSIG(p)) != 0)
 		postsig(sig);
-	p->p_priority = p->p_usrpri;
 
-	if (cpu->ci_want_resched) {
-		/*
-		 * We're being preempted.
-		 */
-		preempt(NULL);
-		while ((sig = CURSIG(p)) != 0)
-			postsig(sig);
-	}
-
-	/*
-	 * If profiling, charge recent system time to the trapped pc.
-	 */
-	if (p->p_flag & P_PROFIL) {
-		extern int psratio;
-
-		addupc_task(p, frame->tf_sxip & XIP_ADDR,
-		    (int)(p->p_sticks - oticks) * psratio);
-	}
-	cpu->ci_schedstate.spc_curpriority = p->p_priority;
+	curcpu()->ci_schedstate.spc_curpriority = p->p_priority = p->p_usrpri;
 }
 
 __dead void
@@ -198,7 +178,6 @@ void
 m88100_trap(unsigned type, struct trapframe *frame)
 {
 	struct proc *p;
-	u_quad_t sticks = 0;
 	struct vm_map *map;
 	vaddr_t va, pcb_onfault;
 	vm_prot_t ftype;
@@ -221,7 +200,6 @@ m88100_trap(unsigned type, struct trapframe *frame)
 		p = &proc0;
 
 	if (USERMODE(frame->tf_epsr)) {
-		sticks = p->p_sticks;
 		type += T_USER;
 		p->p_md.md_tf = frame;	/* for ptrace/signals */
 	}
@@ -565,6 +543,8 @@ user_fault:
 			ADDUPROF(p);
 			KERNEL_PROC_UNLOCK(p);
 		}
+		if (curcpu()->ci_want_resched)
+			preempt(NULL);
 		break;
 	}
 
@@ -587,7 +567,7 @@ user_fault:
 		frame->tf_ipfsr = frame->tf_dpfsr = 0;
 	}
 
-	userret(p, frame, sticks);
+	userret(p);
 }
 #endif /* M88100 */
 
@@ -596,7 +576,6 @@ void
 m88110_trap(unsigned type, struct trapframe *frame)
 {
 	struct proc *p;
-	u_quad_t sticks = 0;
 	struct vm_map *map;
 	vaddr_t va, pcb_onfault;
 	vm_prot_t ftype;
@@ -621,7 +600,6 @@ m88110_trap(unsigned type, struct trapframe *frame)
 		p = &proc0;
 
 	if (USERMODE(frame->tf_epsr)) {
-		sticks = p->p_sticks;
 		type += T_USER;
 		p->p_md.md_tf = frame;	/* for ptrace/signals */
 	}
@@ -1082,6 +1060,8 @@ m88110_user_fault:
 			ADDUPROF(p);
 			KERNEL_PROC_UNLOCK(p);
 		}
+		if (curcpu()->ci_want_resched)
+			preempt(NULL);
 		break;
 	}
 
@@ -1098,7 +1078,7 @@ m88110_user_fault:
 		KERNEL_PROC_UNLOCK(p);
 	}
 
-	userret(p, frame, sticks);
+	userret(p);
 }
 #endif /* M88110 */
 
@@ -1124,8 +1104,7 @@ m88100_syscall(register_t code, struct trapframe *tf)
 	struct sysent *callp;
 	struct proc *p;
 	int error;
-	register_t args[11], rval[2], *ap;
-	u_quad_t sticks;
+	register_t args[8], rval[2], *ap;
 
 	uvmexp.syscalls++;
 
@@ -1134,17 +1113,17 @@ m88100_syscall(register_t code, struct trapframe *tf)
 	callp = p->p_emul->e_sysent;
 	nsys  = p->p_emul->e_nsysent;
 
-	sticks = p->p_sticks;
 	p->p_md.md_tf = tf;
 
 	/*
-	 * For 88k, all the arguments are passed in the registers (r2-r12)
+	 * For 88k, all the arguments are passed in the registers (r2-r9),
+	 * and further arguments (if any) on stack.
 	 * For syscall (and __syscall), r2 (and r3) has the actual code.
 	 * __syscall  takes a quad syscall number, so that other
 	 * arguments are at their natural alignments.
 	 */
 	ap = &tf->tf_r[2];
-	nap = 11; /* r2-r12 */
+	nap = 8; /* r2-r9 */
 
 	switch (code) {
 	case SYS_syscall:
@@ -1160,21 +1139,25 @@ m88100_syscall(register_t code, struct trapframe *tf)
 		break;
 	}
 
-	/* Callp currently points to syscall, which returns ENOSYS. */
 	if (code < 0 || code >= nsys)
 		callp += p->p_emul->e_nosys;
-	else {
+	else
 		callp += code;
-		i = callp->sy_argsize / sizeof(register_t);
-		if (i > nap)
-			panic("syscall nargs");
-		/*
-		 * just copy them; syscall stub made sure all the
-		 * args are moved from user stack to registers.
-		 */
+
+	i = callp->sy_argsize / sizeof(register_t);
+	if (i > sizeof(args) / sizeof(register_t))
+		panic("syscall nargs");
+	if (i > nap) {
+		bcopy((caddr_t)ap, (caddr_t)args, nap * sizeof(register_t));
+		error = copyin((caddr_t)tf->tf_r[31], (caddr_t)(args + nap),
+		    (i - nap) * sizeof(register_t));
+	} else {
 		bcopy((caddr_t)ap, (caddr_t)args, i * sizeof(register_t));
+		error = 0;
 	}
 
+	if (error != 0)
+		goto bad;
 	KERNEL_PROC_LOCK(p);
 #ifdef SYSCALL_DEBUG
 	scdebug_call(p, code, args);
@@ -1193,9 +1176,6 @@ m88100_syscall(register_t code, struct trapframe *tf)
 		error = (*callp->sy_call)(p, args, rval);
 	/*
 	 * system call will look like:
-	 *	 ld r10, r31, 32; r10,r11,r12 might be garbage.
-	 *	 ld r11, r31, 36
-	 *	 ld r12, r31, 40
 	 *	 or r13, r0, <code>
 	 *       tb0 0, r0, <128> <- sxip
 	 *	 br err 	  <- snip
@@ -1241,6 +1221,7 @@ m88100_syscall(register_t code, struct trapframe *tf)
 		tf->tf_epsr &= ~PSR_C;
 		break;
 	default:
+bad:
 		if (p->p_emul->e_errno)
 			error = p->p_emul->e_errno[error];
 		tf->tf_r[2] = error;
@@ -1254,7 +1235,7 @@ m88100_syscall(register_t code, struct trapframe *tf)
 	scdebug_ret(p, code, error, rval);
 	KERNEL_PROC_UNLOCK(p);
 #endif
-	userret(p, tf, sticks);
+	userret(p);
 #ifdef KTRACE
 	if (KTRPOINT(p, KTR_SYSRET)) {
 		KERNEL_PROC_LOCK(p);
@@ -1274,8 +1255,7 @@ m88110_syscall(register_t code, struct trapframe *tf)
 	struct sysent *callp;
 	struct proc *p;
 	int error;
-	register_t args[11], rval[2], *ap;
-	u_quad_t sticks;
+	register_t args[8], rval[2], *ap;
 
 	uvmexp.syscalls++;
 
@@ -1284,17 +1264,17 @@ m88110_syscall(register_t code, struct trapframe *tf)
 	callp = p->p_emul->e_sysent;
 	nsys  = p->p_emul->e_nsysent;
 
-	sticks = p->p_sticks;
 	p->p_md.md_tf = tf;
 
 	/*
-	 * For 88k, all the arguments are passed in the registers (r2-r12)
+	 * For 88k, all the arguments are passed in the registers (r2-r9),
+	 * and further arguments (if any) on stack.
 	 * For syscall (and __syscall), r2 (and r3) has the actual code.
 	 * __syscall  takes a quad syscall number, so that other
 	 * arguments are at their natural alignments.
 	 */
 	ap = &tf->tf_r[2];
-	nap = 11;	/* r2-r12 */
+	nap = 8;	/* r2-r9 */
 
 	switch (code) {
 	case SYS_syscall:
@@ -1310,20 +1290,25 @@ m88110_syscall(register_t code, struct trapframe *tf)
 		break;
 	}
 
-	/* Callp currently points to syscall, which returns ENOSYS. */
 	if (code < 0 || code >= nsys)
 		callp += p->p_emul->e_nosys;
-	else {
+	else
 		callp += code;
-		i = callp->sy_argsize / sizeof(register_t);
-		if (i > nap)
-			panic("syscall nargs");
-		/*
-		 * just copy them; syscall stub made sure all the
-		 * args are moved from user stack to registers.
-		 */
+
+	i = callp->sy_argsize / sizeof(register_t);
+	if (i > sizeof(args) > sizeof(register_t))
+		panic("syscall nargs");
+	if (i > nap) {
+		bcopy((caddr_t)ap, (caddr_t)args, nap * sizeof(register_t));
+		error = copyin((caddr_t)tf->tf_r[31], (caddr_t)(args + nap),
+		    (i - nap) * sizeof(register_t));
+	} else {
 		bcopy((caddr_t)ap, (caddr_t)args, i * sizeof(register_t));
+		error = 0;
 	}
+
+	if (error != 0)
+		goto bad;
 	KERNEL_PROC_LOCK(p);
 #ifdef SYSCALL_DEBUG
 	scdebug_call(p, code, args);
@@ -1342,9 +1327,6 @@ m88110_syscall(register_t code, struct trapframe *tf)
 		error = (*callp->sy_call)(p, args, rval);
 	/*
 	 * system call will look like:
-	 *	 ld r10, r31, 32; r10,r11,r12 might be garbage.
-	 *	 ld r11, r31, 36
-	 *	 ld r12, r31, 40
 	 *	 or r13, r0, <code>
 	 *       tb0 0, r0, <128> <- exip
 	 *	 br err 	  <- enip
@@ -1397,6 +1379,7 @@ m88110_syscall(register_t code, struct trapframe *tf)
 			tf->tf_exip += 4;
 		break;
 	default:
+bad:
 		if (p->p_emul->e_errno)
 			error = p->p_emul->e_errno[error];
 		tf->tf_r[2] = error;
@@ -1414,7 +1397,7 @@ m88110_syscall(register_t code, struct trapframe *tf)
 	scdebug_ret(p, code, error, rval);
 	KERNEL_PROC_UNLOCK(p);
 #endif
-	userret(p, tf, sticks);
+	userret(p);
 #ifdef KTRACE
 	if (KTRPOINT(p, KTR_SYSRET)) {
 		KERNEL_PROC_LOCK(p);
@@ -1458,7 +1441,7 @@ child_return(arg)
 #endif
 
 	KERNEL_PROC_UNLOCK(p);
-	userret(p, tf, p->p_sticks);
+	userret(p);
 
 #ifdef KTRACE
 	if (KTRPOINT(p, KTR_SYSRET)) {
@@ -1784,12 +1767,10 @@ cache_flush(struct trapframe *tf)
 {
 	struct proc *p;
 	struct pmap *pmap;
-	u_quad_t sticks;
 
 	if ((p = curproc) == NULL)
 		p = &proc0;
 
-	sticks = p->p_sticks;
 	p->p_md.md_tf = tf;
 
 	pmap = vm_map_pmap(&p->p_vmspace->vm_map);
@@ -1798,5 +1779,5 @@ cache_flush(struct trapframe *tf)
 	tf->tf_snip = tf->tf_snip & ~NIP_E;
 	tf->tf_sfip = tf->tf_sfip & ~FIP_E;
 
-	userret(p, tf, sticks);
+	userret(p);
 }

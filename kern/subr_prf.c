@@ -1,4 +1,4 @@
-/*	$OpenBSD: subr_prf.c,v 1.66 2006/06/01 23:17:23 jason Exp $	*/
+/*	$OpenBSD: subr_prf.c,v 1.68 2006/11/17 09:21:52 jmc Exp $	*/
 /*	$NetBSD: subr_prf.c,v 1.45 1997/10/24 18:14:25 chuck Exp $	*/
 
 /*-
@@ -739,7 +739,7 @@ reswitch:	switch (ch) {
 				while ((n = *b++) != 0) {
 					if (n & 0x80)
 						n &= 0x7f;
-					else if (n < ' ')
+					else if (n <= ' ')
 						n = n - 1;
 					if (_uquad & (1LL << n)) {
 						KPRINTF_PUTCHAR(tmp ? ',':'<');
@@ -1125,7 +1125,7 @@ overflow:
  * XXX - these functions shouldn't be in the kernel, but gcc 3.X feels like
  *       translating some printf calls to puts and since it doesn't seem
  *       possible to just turn off parts of those optimizations (some of
- *       them are really useful, we have to provide a dummy puts and putchar
+ *       them are really useful), we have to provide a dummy puts and putchar
  *	 that are wrappers around printf.
  */
 int	puts(const char *);

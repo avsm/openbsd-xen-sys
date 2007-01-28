@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_zyd.c,v 1.34 2006/11/01 11:52:24 damien Exp $	*/
+/*	$OpenBSD: if_zyd.c,v 1.49 2007/01/02 14:43:50 claudio Exp $	*/
 
 /*-
  * Copyright (c) 2006 by Damien Bergamini <damien.bergamini@free.fr>
@@ -79,6 +79,9 @@ int zyddebug = 1;
 #define DPRINTFN(n, x)
 #endif
 
+static const struct zyd_phy_pair zyd_def_phy[] = ZYD_DEF_PHY;
+static const struct zyd_phy_pair zyd_def_phyB[] = ZYD_DEF_PHYB;
+
 /* various supported device vendors/products */
 #define ZYD_ZD1211_DEV(v, p)	\
 	{ { USB_VENDOR_##v, USB_PRODUCT_##v##_##p }, ZYD_ZD1211 }
@@ -99,16 +102,31 @@ static const struct zyd_type {
 	ZYD_ZD1211_DEV(PLANEX2,		GWUS54GZL),
 	ZYD_ZD1211_DEV(PLANEX3,		GWUS54MINI),
 	ZYD_ZD1211_DEV(SAGEM,		XG760A),
+	ZYD_ZD1211_DEV(SENAO,		NUB8301),
 	ZYD_ZD1211_DEV(SITECOMEU,	WL113),
 	ZYD_ZD1211_DEV(SWEEX,		ZD1211),
 	ZYD_ZD1211_DEV(TEKRAM,		QUICKWLAN),
 	ZYD_ZD1211_DEV(TEKRAM,		ZD1211),
 	ZYD_ZD1211_DEV(TWINMOS,		G240),
+	ZYD_ZD1211_DEV(UMEDIA,		ALL0298V2),
 	ZYD_ZD1211_DEV(UMEDIA,		TEW429UB_A),
 	ZYD_ZD1211_DEV(UMEDIA,		TEW429UB),
 	ZYD_ZD1211_DEV(WISTRONNEWEB,	UR055G),
 	ZYD_ZD1211_DEV(ZYDAS,		ZD1211),
+	ZYD_ZD1211_DEV(ZYXEL,		AG225H),
 	ZYD_ZD1211_DEV(ZYXEL,		ZYAIRG220),
+
+	ZYD_ZD1211B_DEV(ACCTON,		SMCWUSBG),
+	ZYD_ZD1211B_DEV(ASUS,		A9T_WIFI),
+	ZYD_ZD1211B_DEV(CISCOLINKSYS,	WUSBF54G),
+	ZYD_ZD1211B_DEV(FIBERLINE,	WL430U),
+	ZYD_ZD1211B_DEV(PHILIPS,	SNU5600),
+	ZYD_ZD1211B_DEV(SAGEM,		XG76NA),
+	ZYD_ZD1211B_DEV(UMEDIA,		TEW429UBC1),
+	ZYD_ZD1211B_DEV(USR,		USR5423),
+	ZYD_ZD1211B_DEV(ZYXEL,		M202),
+	ZYD_ZD1211B_DEV(ZYXEL,		G220V2),
+	ZYD_ZD1211B_DEV(ZYDAS,		ZD1211B),
 };
 #define zyd_lookup(v, p)	\
 	((const struct zyd_type *)usb_lookup(zyd_devs, v, p))
@@ -143,9 +161,22 @@ int		zyd_rfmd_set_channel(struct zyd_rf *, uint8_t);
 int		zyd_al2230_init(struct zyd_rf *);
 int		zyd_al2230_switch_radio(struct zyd_rf *, int);
 int		zyd_al2230_set_channel(struct zyd_rf *, uint8_t);
+int		zyd_al2230_init_b(struct zyd_rf *);
 int		zyd_al7230B_init(struct zyd_rf *);
 int		zyd_al7230B_switch_radio(struct zyd_rf *, int);
 int		zyd_al7230B_set_channel(struct zyd_rf *, uint8_t);
+int		zyd_al2210_init(struct zyd_rf *);
+int		zyd_al2210_switch_radio(struct zyd_rf *, int);
+int		zyd_al2210_set_channel(struct zyd_rf *, uint8_t);
+int		zyd_gct_init(struct zyd_rf *);
+int		zyd_gct_switch_radio(struct zyd_rf *, int);
+int		zyd_gct_set_channel(struct zyd_rf *, uint8_t);
+int		zyd_maxim_init(struct zyd_rf *);
+int		zyd_maxim_switch_radio(struct zyd_rf *, int);
+int		zyd_maxim_set_channel(struct zyd_rf *, uint8_t);
+int		zyd_maxim2_init(struct zyd_rf *);
+int		zyd_maxim2_switch_radio(struct zyd_rf *, int);
+int		zyd_maxim2_set_channel(struct zyd_rf *, uint8_t);
 int		zyd_rf_attach(struct zyd_softc *, uint8_t);
 const char	*zyd_rf_name(uint8_t);
 int		zyd_hw_init(struct zyd_softc *);
@@ -174,17 +205,6 @@ void		zyd_iter_func(void *, struct ieee80211_node *);
 void		zyd_amrr_timeout(void *);
 void		zyd_newassoc(struct ieee80211com *, struct ieee80211_node *,
 		    int);
-
-/*
- * Supported rates for 802.11b/g modes (in 500Kbps unit).
- */
-static const struct ieee80211_rateset zyd_rateset_11b = {
-	4, { 2, 4, 11, 22 }
-};
-
-static const struct ieee80211_rateset zyd_rateset_11g =	{
-	8, { 12, 18, 24, 36, 48, 72, 96, 108 }
-};
 
 USB_MATCH(zyd)
 {
@@ -325,8 +345,8 @@ zyd_complete_attach(struct zyd_softc *sc)
 	    IEEE80211_C_WEP;		/* s/w WEP */
 
 	/* set supported .11b and .11g rates */
-	ic->ic_sup_rates[IEEE80211_MODE_11B] = zyd_rateset_11b;
-	ic->ic_sup_rates[IEEE80211_MODE_11G] = zyd_rateset_11g;
+	ic->ic_sup_rates[IEEE80211_MODE_11B] = ieee80211_std_rateset_11b;
+	ic->ic_sup_rates[IEEE80211_MODE_11G] = ieee80211_std_rateset_11g;
 
 	/* set supported .11b and .11g channels (1 through 14) */
 	for (i = 1; i <= 14; i++) {
@@ -938,12 +958,38 @@ zyd_al2230_init(struct zyd_rf *rf)
 }
 
 int
+zyd_al2230_init_b(struct zyd_rf *rf)
+{
+#define N(a)	(sizeof (a) / sizeof ((a)[0]))
+	struct zyd_softc *sc = rf->rf_sc;
+	static const struct zyd_phy_pair phyini[] = ZYD_AL2230_PHY_B;
+	static const uint32_t rfini[] = ZYD_AL2230_RF_B;
+	int i, error;
+
+	/* init RF-dependent PHY registers */
+	for (i = 0; i < N(phyini); i++) {
+		error = zyd_write16(sc, phyini[i].reg, phyini[i].val);
+		if (error != 0)
+			return error;
+	}
+
+	/* init AL2230 radio */
+	for (i = 0; i < N(rfini); i++) {
+		if ((error = zyd_rfwrite(sc, rfini[i])) != 0)
+			return error;
+	}
+	return 0;
+#undef N
+}
+
+int
 zyd_al2230_switch_radio(struct zyd_rf *rf, int on)
 {
 	struct zyd_softc *sc = rf->rf_sc;
+	int on251 = (sc->mac_rev == ZYD_ZD1211) ? 0x3f : 0x7f;
 
 	(void)zyd_write16(sc, ZYD_CR11,  on ? 0x00 : 0x04);
-	(void)zyd_write16(sc, ZYD_CR251, on ? 0x3f : 0x2f);
+	(void)zyd_write16(sc, ZYD_CR251, on ? on251 : 0x2f);
 
 	return 0;
 }
@@ -1064,6 +1110,296 @@ zyd_al7230B_set_channel(struct zyd_rf *rf, uint8_t chan)
 #undef N
 }
 
+/*
+ * AL2210 RF methods.
+ */
+int
+zyd_al2210_init(struct zyd_rf *rf)
+{
+#define N(a)	(sizeof (a) / sizeof ((a)[0]))
+	struct zyd_softc *sc = rf->rf_sc;
+	static const struct zyd_phy_pair phyini[] = ZYD_AL2210_PHY;
+	static const uint32_t rfini[] = ZYD_AL2210_RF;
+	uint32_t tmp;
+	int i, error;
+
+	(void)zyd_write32(sc, ZYD_CR18, 2);
+
+	/* init RF-dependent PHY registers */
+	for (i = 0; i < N(phyini); i++) {
+		error = zyd_write16(sc, phyini[i].reg, phyini[i].val);
+		if (error != 0)
+			return error;
+	}
+	/* init AL2210 radio */
+	for (i = 0; i < N(rfini); i++) {
+		if ((error = zyd_rfwrite(sc, rfini[i])) != 0)
+			return error;
+	}
+	(void)zyd_write16(sc, ZYD_CR47, 0x1e);
+	(void)zyd_read32(sc, ZYD_CR_RADIO_PD, &tmp);
+	(void)zyd_write32(sc, ZYD_CR_RADIO_PD, tmp & ~1);
+	(void)zyd_write32(sc, ZYD_CR_RADIO_PD, tmp | 1);
+	(void)zyd_write32(sc, ZYD_CR_RFCFG, 0x05);
+	(void)zyd_write32(sc, ZYD_CR_RFCFG, 0x00);
+	(void)zyd_write16(sc, ZYD_CR47, 0x1e);
+	(void)zyd_write32(sc, ZYD_CR18, 3);
+
+	return 0;
+#undef N
+}
+
+int
+zyd_al2210_switch_radio(struct zyd_rf *rf, int on)
+{
+	/* vendor driver does nothing for this RF chip */
+
+	return 0;
+}
+
+int
+zyd_al2210_set_channel(struct zyd_rf *rf, uint8_t chan)
+{
+	struct zyd_softc *sc = rf->rf_sc;
+	static const uint32_t rfprog[] = ZYD_AL2210_CHANTABLE;
+	uint32_t tmp;
+
+	(void)zyd_write32(sc, ZYD_CR18, 2);
+	(void)zyd_write16(sc, ZYD_CR47, 0x1e);
+	(void)zyd_read32(sc, ZYD_CR_RADIO_PD, &tmp);
+	(void)zyd_write32(sc, ZYD_CR_RADIO_PD, tmp & ~1);
+	(void)zyd_write32(sc, ZYD_CR_RADIO_PD, tmp | 1);
+	(void)zyd_write32(sc, ZYD_CR_RFCFG, 0x05);
+
+	(void)zyd_write32(sc, ZYD_CR_RFCFG, 0x00);
+	(void)zyd_write16(sc, ZYD_CR47, 0x1e);
+
+	/* actually set the channel */
+	(void)zyd_rfwrite(sc, rfprog[chan - 1]);
+
+	(void)zyd_write32(sc, ZYD_CR18, 3);
+
+	return 0;
+}
+
+/*
+ * GCT RF methods.
+ */
+int
+zyd_gct_init(struct zyd_rf *rf)
+{
+#define N(a)	(sizeof (a) / sizeof ((a)[0]))
+	struct zyd_softc *sc = rf->rf_sc;
+	static const struct zyd_phy_pair phyini[] = ZYD_GCT_PHY;
+	static const uint32_t rfini[] = ZYD_GCT_RF;
+	int i, error;
+
+	/* init RF-dependent PHY registers */
+	for (i = 0; i < N(phyini); i++) {
+		error = zyd_write16(sc, phyini[i].reg, phyini[i].val);
+		if (error != 0)
+			return error;
+	}
+	/* init cgt radio */
+	for (i = 0; i < N(rfini); i++) {
+		if ((error = zyd_rfwrite(sc, rfini[i])) != 0)
+			return error;
+	}
+	return 0;
+#undef N
+}
+
+int
+zyd_gct_switch_radio(struct zyd_rf *rf, int on)
+{
+	/* vendor driver does nothing for this RF chip */
+
+	return 0;
+}
+
+int
+zyd_gct_set_channel(struct zyd_rf *rf, uint8_t chan)
+{
+	struct zyd_softc *sc = rf->rf_sc;
+	static const uint32_t rfprog[] = ZYD_GCT_CHANTABLE;
+
+	(void)zyd_rfwrite(sc, 0x1c0000);
+	(void)zyd_rfwrite(sc, rfprog[chan - 1]);
+	(void)zyd_rfwrite(sc, 0x1c0008);
+
+	return 0;
+}
+
+/*
+ * Maxim RF methods.
+ */
+int
+zyd_maxim_init(struct zyd_rf *rf)
+{
+#define N(a)	(sizeof (a) / sizeof ((a)[0]))
+	struct zyd_softc *sc = rf->rf_sc;
+	static const struct zyd_phy_pair phyini[] = ZYD_MAXIM_PHY;
+	static const uint32_t rfini[] = ZYD_MAXIM_RF;
+	uint16_t tmp;
+	int i, error;
+
+	/* init RF-dependent PHY registers */
+	for (i = 0; i < N(phyini); i++) {
+		error = zyd_write16(sc, phyini[i].reg, phyini[i].val);
+		if (error != 0)
+			return error;
+	}
+	(void)zyd_read16(sc, ZYD_CR203, &tmp);
+	(void)zyd_write16(sc, ZYD_CR203, tmp & ~(1 << 4));
+
+	/* init maxim radio */
+	for (i = 0; i < N(rfini); i++) {
+		if ((error = zyd_rfwrite(sc, rfini[i])) != 0)
+			return error;
+	}
+	(void)zyd_read16(sc, ZYD_CR203, &tmp);
+	(void)zyd_write16(sc, ZYD_CR203, tmp | (1 << 4));
+
+	return 0;
+#undef N
+}
+
+int
+zyd_maxim_switch_radio(struct zyd_rf *rf, int on)
+{
+	/* vendor driver does nothing for this RF chip */
+
+	return 0;
+}
+
+int
+zyd_maxim_set_channel(struct zyd_rf *rf, uint8_t chan)
+{
+#define N(a)	(sizeof (a) / sizeof ((a)[0]))
+	struct zyd_softc *sc = rf->rf_sc;
+	static const struct zyd_phy_pair phyini[] = ZYD_MAXIM_PHY;
+	static const uint32_t rfini[] = ZYD_MAXIM_RF;
+	static const struct {
+		uint32_t	r1, r2;
+	} rfprog[] = ZYD_MAXIM_CHANTABLE;
+	uint16_t tmp;
+	int i, error;
+
+	/*
+	 * Do the same as we do when initializing it, except for the channel
+	 * values coming from the two channel tables.
+	 */
+
+	/* init RF-dependent PHY registers */
+	for (i = 0; i < N(phyini); i++) {
+		error = zyd_write16(sc, phyini[i].reg, phyini[i].val);
+		if (error != 0)
+			return error;
+	}
+	(void)zyd_read16(sc, ZYD_CR203, &tmp);
+	(void)zyd_write16(sc, ZYD_CR203, tmp & ~(1 << 4));
+
+	/* first two values taken from the chantables */
+	(void)zyd_rfwrite(sc, rfprog[chan - 1].r1);
+	(void)zyd_rfwrite(sc, rfprog[chan - 1].r2);
+
+	/* init maxim radio - skipping the two first values */
+	for (i = 2; i < N(rfini); i++) {
+		if ((error = zyd_rfwrite(sc, rfini[i])) != 0)
+			return error;
+	}
+	(void)zyd_read16(sc, ZYD_CR203, &tmp);
+	(void)zyd_write16(sc, ZYD_CR203, tmp | (1 << 4));
+
+	return 0;
+#undef N
+}
+
+/*
+ * Maxim2 RF methods.
+ */
+int
+zyd_maxim2_init(struct zyd_rf *rf)
+{
+#define N(a)	(sizeof (a) / sizeof ((a)[0]))
+	struct zyd_softc *sc = rf->rf_sc;
+	static const struct zyd_phy_pair phyini[] = ZYD_MAXIM2_PHY;
+	static const uint32_t rfini[] = ZYD_MAXIM2_RF;
+	uint16_t tmp;
+	int i, error;
+
+	/* init RF-dependent PHY registers */
+	for (i = 0; i < N(phyini); i++) {
+		error = zyd_write16(sc, phyini[i].reg, phyini[i].val);
+		if (error != 0)
+			return error;
+	}
+	(void)zyd_read16(sc, ZYD_CR203, &tmp);
+	(void)zyd_write16(sc, ZYD_CR203, tmp & ~(1 << 4));
+
+	/* init maxim2 radio */
+	for (i = 0; i < N(rfini); i++) {
+		if ((error = zyd_rfwrite(sc, rfini[i])) != 0)
+			return error;
+	}
+	(void)zyd_read16(sc, ZYD_CR203, &tmp);
+	(void)zyd_write16(sc, ZYD_CR203, tmp | (1 << 4));
+
+	return 0;
+#undef N
+}
+
+int
+zyd_maxim2_switch_radio(struct zyd_rf *rf, int on)
+{
+	/* vendor driver does nothing for this RF chip */
+
+	return 0;
+}
+
+int
+zyd_maxim2_set_channel(struct zyd_rf *rf, uint8_t chan)
+{
+#define N(a)	(sizeof (a) / sizeof ((a)[0]))
+	struct zyd_softc *sc = rf->rf_sc;
+	static const struct zyd_phy_pair phyini[] = ZYD_MAXIM2_PHY;
+	static const uint32_t rfini[] = ZYD_MAXIM2_RF;
+	static const struct {
+		uint32_t	r1, r2;
+	} rfprog[] = ZYD_MAXIM2_CHANTABLE;
+	uint16_t tmp;
+	int i, error;
+
+	/*
+	 * Do the same as we do when initializing it, except for the channel
+	 * values coming from the two channel tables.
+	 */
+
+	/* init RF-dependent PHY registers */
+	for (i = 0; i < N(phyini); i++) {
+		error = zyd_write16(sc, phyini[i].reg, phyini[i].val);
+		if (error != 0)
+			return error;
+	}
+	(void)zyd_read16(sc, ZYD_CR203, &tmp);
+	(void)zyd_write16(sc, ZYD_CR203, tmp & ~(1 << 4));
+
+	/* first two values taken from the chantables */
+	(void)zyd_rfwrite(sc, rfprog[chan - 1].r1);
+	(void)zyd_rfwrite(sc, rfprog[chan - 1].r2);
+
+	/* init maxim2 radio - skipping the two first values */
+	for (i = 2; i < N(rfini); i++) {
+		if ((error = zyd_rfwrite(sc, rfini[i])) != 0)
+			return error;
+	}
+	(void)zyd_read16(sc, ZYD_CR203, &tmp);
+	(void)zyd_write16(sc, ZYD_CR203, tmp | (1 << 4));
+
+	return 0;
+#undef N
+}
+
 int
 zyd_rf_attach(struct zyd_softc *sc, uint8_t type)
 {
@@ -1079,7 +1415,10 @@ zyd_rf_attach(struct zyd_softc *sc, uint8_t type)
 		rf->width        = 24;	/* 24-bit RF values */
 		break;
 	case ZYD_RF_AL2230:
-		rf->init         = zyd_al2230_init;
+		if (sc->mac_rev == ZYD_ZD1211B)
+			rf->init = zyd_al2230_init_b;
+		else
+			rf->init = zyd_al2230_init;
 		rf->switch_radio = zyd_al2230_switch_radio;
 		rf->set_channel  = zyd_al2230_set_channel;
 		rf->width        = 24;	/* 24-bit RF values */
@@ -1088,7 +1427,32 @@ zyd_rf_attach(struct zyd_softc *sc, uint8_t type)
 		rf->init         = zyd_al7230B_init;
 		rf->switch_radio = zyd_al7230B_switch_radio;
 		rf->set_channel  = zyd_al7230B_set_channel;
-		rf->width        = 24;	/* 24-bit RF values */		
+		rf->width        = 24;	/* 24-bit RF values */
+		break;
+	case ZYD_RF_AL2210:
+		rf->init         = zyd_al2210_init;
+		rf->switch_radio = zyd_al2210_switch_radio;
+		rf->set_channel  = zyd_al2210_set_channel;
+		rf->width        = 24;	/* 24-bit RF values */
+		break;
+	case ZYD_RF_GCT:
+		rf->init         = zyd_gct_init;
+		rf->switch_radio = zyd_gct_switch_radio;
+		rf->set_channel  = zyd_gct_set_channel;
+		rf->width        = 21;	/* 21-bit RF values */
+		break;
+	case ZYD_RF_MAXIM_NEW:
+		rf->init         = zyd_maxim_init;
+		rf->switch_radio = zyd_maxim_switch_radio;
+		rf->set_channel  = zyd_maxim_set_channel;
+		rf->width        = 18;	/* 18-bit RF values */
+		break;
+	case ZYD_RF_MAXIM_NEW2:
+		rf->init         = zyd_maxim2_init;
+		rf->switch_radio = zyd_maxim2_switch_radio;
+		rf->set_channel  = zyd_maxim2_set_channel;
+		rf->width        = 18;	/* 18-bit RF values */
+		break;
 	default:
 		printf("%s: sorry, radio \"%s\" is not supported yet\n",
 		    USBDEVNAME(sc->sc_dev), zyd_rf_name(type));
@@ -1112,11 +1476,9 @@ zyd_rf_name(uint8_t type)
 int
 zyd_hw_init(struct zyd_softc *sc)
 {
-#define N(a)	(sizeof (a) / sizeof ((a)[0]))
-	static const struct zyd_phy_pair zyd_def_phy[] = ZYD_DEF_PHY;
-	static const struct zyd_mac_pair zyd_def_mac[] = ZYD_DEF_MAC;
 	struct zyd_rf *rf = &sc->sc_rf;
-	int i, error;
+	const struct zyd_phy_pair *phyp;
+	int error;
 
 	/* specify that the plug and play is finished */
 	(void)zyd_write32(sc, ZYD_MAC_AFTER_PNP, 1);
@@ -1135,21 +1497,47 @@ zyd_hw_init(struct zyd_softc *sc)
 
 	/* PHY init */
 	zyd_lock_phy(sc);
-	for (i = 0; i < N(zyd_def_phy); i++) {
-		error = zyd_write16(sc, zyd_def_phy[i].reg,
-		    zyd_def_phy[i].val);
-		if (error != 0)
+	phyp = (sc->mac_rev == ZYD_ZD1211B) ? zyd_def_phyB : zyd_def_phy;
+	for (; phyp->reg != 0; phyp++) {
+		if ((error = zyd_write16(sc, phyp->reg, phyp->val)) != 0)
 			goto fail;
 	}
 	zyd_unlock_phy(sc);
 
 	/* HMAC init */
-	for (i = 0; i < N(zyd_def_mac); i++) {
-		error = zyd_write32(sc, zyd_def_mac[i].reg,
-		    zyd_def_mac[i].val);
-		if (error != 0)
-			goto fail;
+	zyd_write32(sc, ZYD_MAC_ACK_EXT, 0x00000020);
+	zyd_write32(sc, ZYD_CR_ADDA_MBIAS_WT, 0x30000808);
+
+	if (sc->mac_rev == ZYD_ZD1211) {
+		zyd_write32(sc, ZYD_MAC_RETRY, 0x00000002);
+	} else {
+		zyd_write32(sc, ZYD_MAC_RETRY, 0x02020202);
+		zyd_write32(sc, ZYD_MACB_TXPWR_CTL4, 0x007f003f);
+		zyd_write32(sc, ZYD_MACB_TXPWR_CTL3, 0x007f003f);
+		zyd_write32(sc, ZYD_MACB_TXPWR_CTL2, 0x003f001f);
+		zyd_write32(sc, ZYD_MACB_TXPWR_CTL1, 0x001f000f);
+		zyd_write32(sc, ZYD_MACB_AIFS_CTL1, 0x00280028);
+		zyd_write32(sc, ZYD_MACB_AIFS_CTL2, 0x008C003C);
+		zyd_write32(sc, ZYD_MACB_TXOP, 0x01800824);
 	}
+
+	zyd_write32(sc, ZYD_MAC_SNIFFER, 0x00000000);
+	zyd_write32(sc, ZYD_MAC_RXFILTER, 0x00000000);
+	zyd_write32(sc, ZYD_MAC_GHTBL, 0x00000000);
+	zyd_write32(sc, ZYD_MAC_GHTBH, 0x80000000);
+	zyd_write32(sc, ZYD_MAC_MISC, 0x000000a4);
+	zyd_write32(sc, ZYD_CR_ADDA_PWR_DWN, 0x0000007f);
+	zyd_write32(sc, ZYD_MAC_BCNCFG, 0x00f00401);
+	zyd_write32(sc, ZYD_MAC_PHY_DELAY2, 0x00000000);
+	zyd_write32(sc, ZYD_MAC_ACK_EXT, 0x00000080);
+	zyd_write32(sc, ZYD_CR_ADDA_PWR_DWN, 0x00000000);
+	zyd_write32(sc, ZYD_MAC_SIFS_ACK_TIME, 0x00000100);
+	zyd_write32(sc, ZYD_MAC_DIFS_EIFS_SIFS, 0x0547c032);
+	zyd_write32(sc, ZYD_CR_RX_PE_DELAY, 0x00000070);
+	zyd_write32(sc, ZYD_CR_PS_CTRL, 0x10000000);
+	zyd_write32(sc, ZYD_MAC_RTSCTSRATE, 0x02030203);
+	zyd_write32(sc, ZYD_MAC_RX_THRESHOLD, 0x000c0640);
+	zyd_write32(sc, ZYD_MAC_BACKOFF_PROTECT, 0x00000114);
 
 	/* RF chip init */
 	zyd_lock_phy(sc);
@@ -1166,7 +1554,6 @@ zyd_hw_init(struct zyd_softc *sc)
 		goto fail;
 
 fail:	return error;
-#undef N
 }
 
 int
@@ -1315,6 +1702,15 @@ zyd_set_chan(struct zyd_softc *sc, struct ieee80211_channel *c)
 	/* update Tx power */
 	(void)zyd_write32(sc, ZYD_CR31, sc->pwr_int[chan - 1]);
 	(void)zyd_write32(sc, ZYD_CR68, sc->pwr_cal[chan - 1]);
+
+	if (sc->mac_rev == ZYD_ZD1211B) {
+		(void)zyd_write32(sc, ZYD_CR67, sc->ofdm36_cal[chan - 1]);
+		(void)zyd_write32(sc, ZYD_CR66, sc->ofdm48_cal[chan - 1]);
+		(void)zyd_write32(sc, ZYD_CR65, sc->ofdm54_cal[chan - 1]);
+
+		(void)zyd_write32(sc, ZYD_CR69, 0x28);
+		(void)zyd_write32(sc, ZYD_CR69, 0x2a);
+	}
 
 	zyd_unlock_phy(sc);
 }
@@ -1494,11 +1890,12 @@ zyd_rx_data(struct zyd_softc *sc, const uint8_t *buf, uint16_t len)
 		tap->wr_rssi = stat->rssi;
 		tap->wr_rate = rates[plcp->signal & 0xf];
 
-		M_DUP_PKTHDR(&mb, m);
 		mb.m_data = (caddr_t)tap;
 		mb.m_len = sc->sc_rxtap_len;
 		mb.m_next = m;
-		mb.m_pkthdr.len += mb.m_len;
+		mb.m_nextpkt = NULL;
+		mb.m_type = 0;
+		mb.m_flags = 0;
 		bpf_mtap(sc->sc_drvbpf, &mb, BPF_DIRECTION_IN);
 	}
 #endif
@@ -1625,6 +2022,7 @@ zyd_tx_data(struct zyd_softc *sc, struct mbuf *m0, struct ieee80211_node *ni)
 	struct zyd_tx_data *data;
 	struct ieee80211_frame *wh;
 	int xferlen, totlen, rate;
+	uint16_t pktlen;
 	usbd_status error;
 
 	wh = mtod(m0, struct ieee80211_frame *);
@@ -1639,18 +2037,19 @@ zyd_tx_data(struct zyd_softc *sc, struct mbuf *m0, struct ieee80211_node *ni)
 	}
 
 	/* pickup a rate */
-	if ((wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) ==
-	    IEEE80211_FC0_TYPE_MGT) {
-		/* mgmt frames are sent at the lowest available bit-rate */
+	if (IEEE80211_IS_MULTICAST(wh->i_addr1) ||
+	    ((wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) ==
+	     IEEE80211_FC0_TYPE_MGT)) {
+		/* mgmt/multicast frames are sent at the lowest avail. rate */
 		rate = ni->ni_rates.rs_rates[0];
-	} else {
-		if (ic->ic_fixed_rate != -1) {
-			rate = ic->ic_sup_rates[ic->ic_curmode].
-			    rs_rates[ic->ic_fixed_rate];
-		} else
-			rate = ni->ni_rates.rs_rates[ni->ni_txrate];
-	}
+	} else if (ic->ic_fixed_rate != -1) {
+		rate = ic->ic_sup_rates[ic->ic_curmode].
+		    rs_rates[ic->ic_fixed_rate];
+	} else
+		rate = ni->ni_rates.rs_rates[ni->ni_txrate];
 	rate &= IEEE80211_RATE_VAL;
+	if (rate == 0)	/* XXX should not happen */
+		rate = 2;
 
 	data = &sc->tx_data[0];
 	desc = (struct zyd_tx_desc *)data->buf;
@@ -1665,10 +2064,16 @@ zyd_tx_data(struct zyd_softc *sc, struct mbuf *m0, struct ieee80211_node *ni)
 
 	desc->flags = ZYD_TX_FLAG_BACKOFF;
 	if (!IEEE80211_IS_MULTICAST(wh->i_addr1)) {
-		if (totlen > ic->ic_rtsthreshold ||
-		    (ZYD_RATE_IS_OFDM(rate) &&
-		    (ic->ic_flags & IEEE80211_F_USEPROT)))
+		/* multicast frames are not sent at OFDM rates in 802.11b/g */
+		if (totlen > ic->ic_rtsthreshold) {
 			desc->flags |= ZYD_TX_FLAG_RTS;
+		} else if (ZYD_RATE_IS_OFDM(rate) &&
+		    (ic->ic_flags & IEEE80211_F_USEPROT)) {
+			if (ic->ic_protmode == IEEE80211_PROT_CTSONLY)
+				desc->flags |= ZYD_TX_FLAG_CTS_TO_SELF;
+			else if (ic->ic_protmode == IEEE80211_PROT_RTSCTS)
+				desc->flags |= ZYD_TX_FLAG_RTS;
+		}
 	} else
 		desc->flags |= ZYD_TX_FLAG_MULTICAST;
 
@@ -1686,7 +2091,10 @@ zyd_tx_data(struct zyd_softc *sc, struct mbuf *m0, struct ieee80211_node *ni)
 		desc->phy |= ZYD_TX_PHY_SHPREAMBLE;
 
 	/* actual transmit length (XXX why +10?) */
-	desc->pktlen = htole16(sizeof (struct zyd_tx_desc) + totlen + 10);
+	pktlen = sizeof (struct zyd_tx_desc) + 10;
+	if (sc->mac_rev == ZYD_ZD1211)
+		pktlen += totlen;
+	desc->pktlen = htole16(pktlen);
 
 	desc->plcp_length = (16 * totlen + rate - 1) / rate;
 	desc->plcp_service = 0;
@@ -1706,11 +2114,12 @@ zyd_tx_data(struct zyd_softc *sc, struct mbuf *m0, struct ieee80211_node *ni)
 		tap->wt_chan_freq = htole16(ic->ic_bss->ni_chan->ic_freq);
 		tap->wt_chan_flags = htole16(ic->ic_bss->ni_chan->ic_flags);
 
-		M_DUP_PKTHDR(&mb, m0);
 		mb.m_data = (caddr_t)tap;
 		mb.m_len = sc->sc_txtap_len;
 		mb.m_next = m0;
-		mb.m_pkthdr.len += mb.m_len;
+		mb.m_nextpkt = NULL;
+		mb.m_type = 0;
+		mb.m_flags = 0;
 		bpf_mtap(sc->sc_drvbpf, &mb, BPF_DIRECTION_OUT);
 	}
 #endif
@@ -1926,15 +2335,15 @@ zyd_init(struct ifnet *ifp)
 
 	/* set basic rates */
 	if (ic->ic_curmode == IEEE80211_MODE_11B)
-		(void)zyd_write32(sc, ZYD_MAC_BAS_RATE, 0x3);
+		(void)zyd_write32(sc, ZYD_MAC_BAS_RATE, 0x0003);
 	else if (ic->ic_curmode == IEEE80211_MODE_11A)
 		(void)zyd_write32(sc, ZYD_MAC_BAS_RATE, 0x1500);
 	else	/* assumes 802.11b/g */
-		(void)zyd_write32(sc, ZYD_MAC_BAS_RATE, 0x150f);
+		(void)zyd_write32(sc, ZYD_MAC_BAS_RATE, 0x000f);
 
 	/* set mandatory rates */
 	if (ic->ic_curmode == IEEE80211_MODE_11B)
-		(void)zyd_write32(sc, ZYD_MAC_MAN_RATE, 0x0f);
+		(void)zyd_write32(sc, ZYD_MAC_MAN_RATE, 0x000f);
 	else if (ic->ic_curmode == IEEE80211_MODE_11A)
 		(void)zyd_write32(sc, ZYD_MAC_MAN_RATE, 0x1500);
 	else	/* assumes 802.11b/g */

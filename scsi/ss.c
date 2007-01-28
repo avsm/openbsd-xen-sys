@@ -1,4 +1,4 @@
-/*	$OpenBSD: ss.c,v 1.55 2006/05/18 21:27:25 miod Exp $	*/
+/*	$OpenBSD: ss.c,v 1.57 2006/11/28 16:56:50 dlg Exp $	*/
 /*	$NetBSD: ss.c,v 1.10 1996/05/05 19:52:55 christos Exp $	*/
 
 /*
@@ -299,7 +299,7 @@ ssmatch(parent, match, aux)
 	struct device *parent;
 	void *match, *aux;
 {
-	struct scsibus_attach_args *sa = aux;
+	struct scsi_attach_args *sa = aux;
 	int priority;
 
 	(void)scsi_inqmatch(sa->sa_inqbuf,
@@ -320,7 +320,7 @@ ssattach(parent, self, aux)
 	void *aux;
 {
 	struct ss_softc *ss = (void *)self;
-	struct scsibus_attach_args *sa = aux;
+	struct scsi_attach_args *sa = aux;
 	struct scsi_link *sc_link = sa->sa_sc_link;
 
 	SC_DEBUG(sc_link, SDEV_DB2, ("ssattach:\n"));
@@ -572,7 +572,7 @@ ssstrategy(bp)
 		bp->b_bcount = ss->sio.scan_window_size;
 
 	/*
-	 * If it's a null transfer, return immediatly
+	 * If it's a null transfer, return immediately
 	 */
 	if (bp->b_bcount == 0)
 		goto done;

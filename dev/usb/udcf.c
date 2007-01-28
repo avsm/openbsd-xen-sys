@@ -1,4 +1,4 @@
-/*	$OpenBSD: udcf.c,v 1.19 2006/10/27 11:28:40 mbalmer Exp $ */
+/*	$OpenBSD: udcf.c,v 1.28 2006/12/23 17:46:39 deraadt Exp $ */
 
 /*
  * Copyright (c) 2006 Marc Balmer <mbalmer@openbsd.org>
@@ -52,6 +52,9 @@ int udcfdebug = 0;
 #define DPERIOD1	((long) 5 * 60)		/* degrade OK -> WARN */
 #define DPERIOD2	((long) 15 * 60)	/* degrade WARN -> CRIT */
 
+/* max. skew of received time diff vs. measured time diff in percent. */
+#define MAX_SKEW	5
+
 #define CLOCK_DCF77	0
 #define CLOCK_HBG	1
 
@@ -90,10 +93,16 @@ struct udcf_softc {
 	int			sc_level;
 	time_t			sc_last_mg;
 
-	time_t			sc_current;	/* current time information */
+	time_t			sc_current;	/* current time */
 	time_t			sc_next;	/* time to become valid next */
-
+	time_t			sc_last;
+	int			sc_nrecv;	/* consecutive valid times */
+	struct timeval		sc_last_tv;	/* uptime of last valid time */
 	struct sensor		sc_sensor;
+#ifdef UDCF_DEBUG
+	struct sensor		sc_skew;	/* recv vs local skew */
+#endif
+	struct sensordev	sc_sensordev;
 };
 
 /*
@@ -131,7 +140,7 @@ USB_MATCH(udcf)
 	USB_MATCH_START(udcf, uaa);
 
 	if (uaa->iface != NULL)
-		return (UMATCH_NONE);
+		return UMATCH_NONE;
 
 	return uaa->vendor == USB_VENDOR_GUDE &&
 	    uaa->product == USB_PRODUCT_GUDE_DCF ?
@@ -182,15 +191,31 @@ USB_ATTACH(udcf)
 
 	sc->sc_current = 0L;
 	sc->sc_next = 0L;
+	sc->sc_nrecv = 0;
+	sc->sc_last = 0L;
+	sc->sc_last_tv.tv_sec = 0L;
 
-	strlcpy(sc->sc_sensor.device, USBDEVNAME(sc->sc_dev),
-	    sizeof(sc->sc_sensor.device));
+	strlcpy(sc->sc_sensordev.xname, USBDEVNAME(sc->sc_dev),
+	    sizeof(sc->sc_sensordev.xname));
+
 	sc->sc_sensor.type = SENSOR_TIMEDELTA;
 	sc->sc_sensor.status = SENSOR_S_UNKNOWN;
 	sc->sc_sensor.value = 0LL;
 	sc->sc_sensor.flags = 0;
 	strlcpy(sc->sc_sensor.desc, "Unknown", sizeof(sc->sc_sensor.desc));
-	sensor_add(&sc->sc_sensor);
+	sensor_attach(&sc->sc_sensordev, &sc->sc_sensor);
+
+#ifdef UDCF_DEBUG
+	sc->sc_skew.type = SENSOR_TIMEDELTA;
+	sc->sc_skew.status = SENSOR_S_UNKNOWN;
+	sc->sc_skew.value = 0LL;
+	sc->sc_skew.flags = 0;
+	strlcpy(sc->sc_skew.desc, "local clock skew",
+	    sizeof(sc->sc_skew.desc));
+	sensor_attach(&sc->sc_sensordev, &sc->sc_skew);
+#endif
+
+	sensordev_install(&sc->sc_sensordev);
 
 	/* Prepare the USB request to probe the value */
 	sc->sc_req.bmRequestType = UDCF_READ_REQ;
@@ -299,8 +324,7 @@ USB_DETACH(udcf)
 	timeout_del(&sc->sc_ct_to);
 
 	/* Unregister the clock with the kernel */
-	sensor_del(&sc->sc_sensor);
-
+	sensordev_deinstall(&sc->sc_sensordev);
 	usb_rem_task(sc->sc_udev, &sc->sc_task);
 	usb_rem_task(sc->sc_udev, &sc->sc_bv_task);
 	usb_rem_task(sc->sc_udev, &sc->sc_mg_task);
@@ -310,7 +334,7 @@ USB_DETACH(udcf)
 
 	usbd_add_drv_event(USB_EVENT_DRIVER_DETACH, sc->sc_udev,
 	    USBDEV(sc->sc_dev));
-	return (0);
+	return 0;
 }
 
 /* udcf_intr runs in an interrupt context */
@@ -394,7 +418,7 @@ udcf_probe(void *xsc)
 	sc->sc_level = 0;
 	if (sc->sc_minute == 1) {
 		if (sc->sc_sync) {
-			DPRINTF(("synchronized, collecting bits\n"));
+			DPRINTF(("start collecting bits\n"));
 			sc->sc_sync = 0;
 			if (sc->sc_sensor.status == SENSOR_S_UNKNOWN)
 				sc->sc_clocktype = -1;
@@ -403,8 +427,8 @@ udcf_probe(void *xsc)
 			microtime(&sc->sc_sensor.tv);
 			nanotime(&now);
 			sc->sc_current = sc->sc_next;
-			sc->sc_sensor.value = (now.tv_sec - sc->sc_current)
-			    * 1000000000 + now.tv_nsec;
+			sc->sc_sensor.value = (int64_t)(now.tv_sec -
+			    sc->sc_current) * 1000000000LL + now.tv_nsec;
 
 			/* set the clocktype and make sensor valid */
 			if (sc->sc_sensor.status == SENSOR_S_UNKNOWN) {
@@ -422,8 +446,6 @@ udcf_probe(void *xsc)
 			 */
 			timeout_add(&sc->sc_it_to, t_warn);
 		}
-		sc->sc_tbits = 0LL;
-		sc->sc_mask = 1LL;
 		sc->sc_minute = 0;
 	}
 
@@ -460,7 +482,7 @@ udcf_bv_probe(void *xsc)
 		return;
 	}
 
-	DPRINTF((data & 0x01 ? "0" : "1"));
+	DPRINTFN(1, (data & 0x01 ? "0" : "1"));
 	if (!(data & 0x01))
 		sc->sc_tbits |= sc->sc_mask;
 	sc->sc_mask <<= 1;
@@ -471,31 +493,27 @@ void
 udcf_mg_probe(void *xsc)
 {
 	struct udcf_softc	*sc = xsc;
-
 	struct clock_ymdhms	 ymdhm;
+	struct timeval		 monotime;
+	int			 tdiff_recv, tdiff_local;
+	int			 skew;
 	int			 minute_bits, hour_bits, day_bits;
 	int			 month_bits, year_bits, wday;
 	int			 p1, p2, p3;
 	int			 p1_bit, p2_bit, p3_bit;
 	int			 r_bit, a1_bit, a2_bit, z1_bit, z2_bit;
 	int			 s_bit, m_bit;
-
 	u_int32_t		 parity = 0x6996;
 
 	if (sc->sc_sync) {
-		timeout_add(&sc->sc_to, t_mgsync);	/* re-sync in 450 ms */
 		sc->sc_minute = 1;
-		sc->sc_last_mg = time_second;
-		return;
+		goto cleanbits;
 	}
 
 	if (time_second - sc->sc_last_mg < 57) {
-		DPRINTF(("unexpected gap, resync\n"));
-		sc->sc_sync = 1;
-		timeout_add(&sc->sc_to, t_wait);
-		timeout_add(&sc->sc_sl_to, t_wait + t_sl);
-		sc->sc_last_mg = 0;
-		return;
+		DPRINTF(("\nunexpected gap, resync\n"));
+		sc->sc_sync = sc->sc_minute = 1;
+		goto cleanbits;	
 	}
 
 	/* Extract bits w/o parity */
@@ -534,33 +552,76 @@ udcf_mg_probe(void *xsc)
 	if (m_bit == 0 && s_bit == 1 && p1 == p1_bit && p2 == p2_bit &&
 	    p3 == p3_bit && (z1_bit ^ z2_bit)) {
 
-		/* Decode valid time */
+		/* Decode time */
+		if ((ymdhm.dt_year = 2000 + FROMBCD(year_bits)) > 2037) {
+			DPRINTF(("year out of range, resync\n"));
+			sc->sc_sync = 1;
+			goto cleanbits;
+		}
 		ymdhm.dt_min = FROMBCD(minute_bits);
 		ymdhm.dt_hour = FROMBCD(hour_bits);
 		ymdhm.dt_day = FROMBCD(day_bits);
 		ymdhm.dt_mon = FROMBCD(month_bits);
-		ymdhm.dt_year = 2000 + FROMBCD(year_bits);
 		ymdhm.dt_sec = 0;
 
 		sc->sc_next = clock_ymdhms_to_secs(&ymdhm);
+		getmicrouptime(&monotime);
 
 		/* convert to coordinated universal time */
 		sc->sc_next -= z1_bit ? 7200 : 3600;
 
 		DPRINTF(("\n%02d.%02d.%04d %02d:%02d:00 %s",
-		    ymdhm.dt_day, ymdhm.dt_mon + 1, ymdhm.dt_year,
+		    ymdhm.dt_day, ymdhm.dt_mon, ymdhm.dt_year,
 		    ymdhm.dt_hour, ymdhm.dt_min, z1_bit ? "CEST" : "CET"));
-		DPRINTF((r_bit ? ", reserve antenna" : ""));
+		DPRINTF((r_bit ? ", call bit" : ""));
 		DPRINTF((a1_bit ? ", dst chg ann." : ""));
 		DPRINTF((a2_bit ? ", leap sec ann." : ""));
 		DPRINTF(("\n"));
+
+		if (sc->sc_last) {
+			tdiff_recv = sc->sc_next - sc->sc_last;
+			tdiff_local = monotime.tv_sec - sc->sc_last_tv.tv_sec;
+			skew = abs(tdiff_local - tdiff_recv);
+#ifdef UDCF_DEBUG
+			if (sc->sc_skew.status == SENSOR_S_UNKNOWN)
+				sc->sc_skew.status = SENSOR_S_CRIT;
+			sc->sc_skew.value = skew * 1000000000LL;
+			getmicrotime(&sc->sc_skew.tv);
+#endif
+			DPRINTF(("local = %d, recv = %d, skew = %d\n",
+			    tdiff_local, tdiff_recv, skew));
+
+			if (skew && skew * 100LL / tdiff_local > MAX_SKEW) {
+				DPRINTF(("skew out of tolerated range\n"));
+				goto cleanbits;
+			} else {
+				if (sc->sc_nrecv < 2) {
+					sc->sc_nrecv++;
+					DPRINTF(("got frame %d\n",
+					    sc->sc_nrecv));
+				} else {
+					DPRINTF(("data is valid\n"));
+					sc->sc_minute = 1;
+				}
+			}
+		} else {
+			DPRINTF(("received the first frame\n"));
+			sc->sc_nrecv = 1;
+		}
+
+		/* record the time received and when it was received */
+		sc->sc_last = sc->sc_next;
+		sc->sc_last_tv.tv_sec = monotime.tv_sec;
 	} else {
-		DPRINTF(("parity error, resync\n"));
-		sc->sc_sync = 1;
+		DPRINTF(("\nparity error, resync\n"));
+		sc->sc_sync = sc->sc_minute = 1;
 	}
+
+cleanbits:
 	timeout_add(&sc->sc_to, t_mgsync);	/* re-sync in 450 ms */
-	sc->sc_minute = 1;
 	sc->sc_last_mg = time_second;
+	sc->sc_tbits = 0LL;
+	sc->sc_mask = 1LL;
 }
 
 /* detect signal loss */
@@ -587,7 +648,7 @@ udcf_it_probe(void *xsc)
 	if (sc->sc_dying)
 		return;
 
-	DPRINTF(("\ndegrading sensor state"));
+	DPRINTF(("\ndegrading sensor state\n"));
 
 	if (sc->sc_sensor.status == SENSOR_S_OK) {
 		sc->sc_sensor.status = SENSOR_S_WARN;
@@ -596,8 +657,10 @@ udcf_it_probe(void *xsc)
 		 * time information
 		 */
 		timeout_add(&sc->sc_it_to, t_crit);
-	} else
+	} else {
 		sc->sc_sensor.status = SENSOR_S_CRIT;
+		sc->sc_nrecv = 0;
+	}
 }
 
 /* detect clock type */
@@ -635,5 +698,5 @@ udcf_activate(device_ptr_t self, enum devact act)
 		sc->sc_dying = 1;
 		break;
 	}
-	return (0);
+	return 0;
 }

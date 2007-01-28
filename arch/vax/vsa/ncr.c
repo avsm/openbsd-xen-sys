@@ -1,4 +1,4 @@
-/* $OpenBSD: ncr.c,v 1.18 2006/07/19 20:22:38 miod Exp $ */
+/* $OpenBSD: ncr.c,v 1.20 2006/11/28 23:59:45 dlg Exp $ */
 /*	$NetBSD: ncr.c,v 1.32 2000/06/25 16:00:43 ragge Exp $	*/
 
 /*-
@@ -118,7 +118,6 @@ static	void si_dma_free(struct ncr5380_softc *);
 static	void si_dma_setup(struct ncr5380_softc *);
 static	void si_dma_start(struct ncr5380_softc *);
 static	void si_dma_poll(struct ncr5380_softc *);
-static	void si_dma_eop(struct ncr5380_softc *);
 static	void si_dma_stop(struct ncr5380_softc *);
 static	void si_dma_go(void *);
 
@@ -178,6 +177,7 @@ si_attach(parent, self, aux)
 	struct vsbus_attach_args *va = aux;
 	struct si_softc *sc = (struct si_softc *) self;
 	struct ncr5380_softc *ncr_sc = &sc->ncr_sc;
+	struct scsibus_attach_args saa;
 	int tweak, target;
 
 	/* enable interrupts on vsbus too */
@@ -208,7 +208,6 @@ si_attach(parent, self, aux)
 	ncr_sc->sc_dma_setup = si_dma_setup;
 	ncr_sc->sc_dma_start = si_dma_start;
 	ncr_sc->sc_dma_poll  = si_dma_poll;
-	ncr_sc->sc_dma_eop   = si_dma_eop;
 	ncr_sc->sc_dma_stop  = si_dma_stop;
 
 	/* DMA control register offsets */
@@ -262,13 +261,16 @@ si_attach(parent, self, aux)
 	sc->sc_vd.vd_go = si_dma_go;
 	sc->sc_vd.vd_arg = sc;
 
+	bzero(&saa, sizeof(saa));
+	saa.saa_sc_link = &(ncr_sc->sc_link);
+
 	/*
 	 * Initialize si board itself.
 	 */
 	ncr5380_init(ncr_sc);
 	ncr5380_reset_scsibus(ncr_sc);
 	DELAY(2000000);
-	config_found(&(ncr_sc->sc_dev), &(ncr_sc->sc_link), scsiprint);
+	config_found(&(ncr_sc->sc_dev), &saa, scsiprint);
 
 }
 
@@ -436,16 +438,6 @@ si_dma_poll(ncr_sc)
 	struct ncr5380_softc *ncr_sc;
 {
 	printf("si_dma_poll\n");
-}
-
-/*
- * When?
- */
-void
-si_dma_eop(ncr_sc)
-	struct ncr5380_softc *ncr_sc;
-{
-	printf("si_dma_eop\n");
 }
 
 void

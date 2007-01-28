@@ -1,4 +1,4 @@
-/*	$OpenBSD: ami.c,v 1.172 2006/08/03 09:06:51 dlg Exp $	*/
+/*	$OpenBSD: ami.c,v 1.175 2006/12/23 17:46:39 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2001 Michael Shalayeff
@@ -58,7 +58,7 @@
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/proc.h>
-#include <sys/lock.h>
+#include <sys/rwlock.h>
 
 #include <machine/bus.h>
 
@@ -364,6 +364,7 @@ free_ccbs:
 int
 ami_attach(struct ami_softc *sc)
 {
+	struct scsibus_attach_args saa;
 	struct ami_rawsoftc *rsc;
 	struct ami_ccb iccb;
 	struct ami_iocmd *cmd;
@@ -537,9 +538,12 @@ ami_attach(struct ami_softc *sc)
 		    "disk\n", DEVNAME(sc));
 
 	/* lock around ioctl requests */
-	lockinit(&sc->sc_lock, PZERO, DEVNAME(sc), 0, 0);
+	rw_init(&sc->sc_lock, NULL);
 
-	config_found(&sc->sc_dev, &sc->sc_link, scsiprint);
+	bzero(&saa, sizeof(saa));
+	saa.saa_sc_link = &sc->sc_link;
+
+	config_found(&sc->sc_dev, &saa, scsiprint);
 
 	/* can't do bioctls, sensors, or pass-through on broken devices */
 	if (sc->sc_flags & AMI_BROKEN)
@@ -577,7 +581,10 @@ ami_attach(struct ami_softc *sc)
 		rsc->sc_link.adapter_target = 16;
 		rsc->sc_link.adapter_buswidth = 16;
 
-		config_found(&sc->sc_dev, &rsc->sc_link, scsiprint);
+		bzero(&saa, sizeof(saa));
+		saa.saa_sc_link = &rsc->sc_link;
+
+		config_found(&sc->sc_dev, &saa, scsiprint);
 	}
 
 	return (0);
@@ -1698,7 +1705,7 @@ ami_drv_inq(struct ami_softc *sc, u_int8_t ch, u_int8_t tg, u_int8_t page,
 	int error = 0;
 	int s;
 
-	lockmgr(&sc->sc_lock, LK_EXCLUSIVE, NULL);
+	rw_enter_write(&sc->sc_lock);
 
 	s = splbio();
 	ccb = ami_get_ccb(sc);
@@ -1765,7 +1772,7 @@ ptmemerr:
 	splx(s);
 
 err:
-	lockmgr(&sc->sc_lock, LK_RELEASE, NULL);
+	rw_exit_write(&sc->sc_lock);
 	return (error);
 }
 
@@ -1780,7 +1787,7 @@ ami_mgmt(struct ami_softc *sc, u_int8_t opcode, u_int8_t par1, u_int8_t par2,
 	int error = 0;
 	int s;
 
-	lockmgr(&sc->sc_lock, LK_EXCLUSIVE, NULL);
+	rw_enter_write(&sc->sc_lock);
 
 	s = splbio();
 	ccb = ami_get_ccb(sc);
@@ -1838,7 +1845,7 @@ memerr:
 	splx(s);
 
 err:
-	lockmgr(&sc->sc_lock, LK_RELEASE, NULL);
+	rw_exit_write(&sc->sc_lock);
 	return (error);
 }
 
@@ -2441,6 +2448,9 @@ ami_create_sensors(struct ami_softc *sc)
 		return (1);
 	bzero(sc->sc_sensors, sizeof(struct sensor) * sc->sc_nunits);	
 
+	strlcpy(sc->sc_sensordev.xname, DEVNAME(sc),
+	    sizeof(sc->sc_sensordev.xname));
+
 	for (i = 0; i < sc->sc_nunits; i++) {
 		if (ssc->sc_link[i][0] == NULL)
 			goto bad;
@@ -2450,12 +2460,10 @@ ami_create_sensors(struct ami_softc *sc)
 		sc->sc_sensors[i].type = SENSOR_DRIVE;
 		sc->sc_sensors[i].status = SENSOR_S_UNKNOWN;
 
-		strlcpy(sc->sc_sensors[i].device, DEVNAME(sc),
-		    sizeof(sc->sc_sensors[i].device));
 		strlcpy(sc->sc_sensors[i].desc, dev->dv_xname,
 		    sizeof(sc->sc_sensors[i].desc));
 
-		sensor_add(&sc->sc_sensors[i]);
+		sensor_attach(&sc->sc_sensordev, &sc->sc_sensors[i]);
 	}
 
 	sc->sc_bd = malloc(sizeof(*sc->sc_bd), M_DEVBUF, M_WAITOK);
@@ -2465,13 +2473,13 @@ ami_create_sensors(struct ami_softc *sc)
 	if (sensor_task_register(sc, ami_refresh_sensors, 10) != 0)
 		goto freebd;
 
+	sensordev_install(&sc->sc_sensordev);
+
 	return (0);
 
 freebd:
 	free(sc->sc_bd, M_DEVBUF);
 bad:
-	while (--i >= 0)
-		sensor_del(&sc->sc_sensors[i]);
 	free(sc->sc_sensors, M_DEVBUF);
 
 	return (1);

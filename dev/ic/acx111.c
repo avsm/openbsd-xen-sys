@@ -1,4 +1,4 @@
-/*	$OpenBSD: acx111.c,v 1.11 2006/08/19 23:17:12 mglocker Exp $ */
+/*	$OpenBSD: acx111.c,v 1.13 2006/11/26 17:20:33 jsg Exp $ */
 
 /*
  * Copyright (c) 2006 Jonathan Gray <jsg@openbsd.org>
@@ -299,8 +299,8 @@ acx111_set_param(struct acx_softc *sc)
 	    IEEE80211_CHAN_2GHZ;
 	sc->sc_ic.ic_caps = IEEE80211_C_WEP;
 	sc->sc_ic.ic_phytype = IEEE80211_T_OFDM;
-	sc->sc_ic.ic_sup_rates[IEEE80211_MODE_11B] = acx_rates_11b;
-	sc->sc_ic.ic_sup_rates[IEEE80211_MODE_11G] = acx_rates_11g;
+	sc->sc_ic.ic_sup_rates[IEEE80211_MODE_11B] = ieee80211_std_rateset_11b;
+	sc->sc_ic.ic_sup_rates[IEEE80211_MODE_11G] = ieee80211_std_rateset_11g;
 
 	sc->chip_init = acx111_init;
 	sc->chip_write_config = acx111_write_config;
@@ -456,7 +456,8 @@ acx111_set_fw_txdesc_rate(struct acx_softc *sc, struct acx_txbuf *tx_buf,
 
 	rate = acx111_rate_map[rate0];
 	if (rate == 0)
-		panic("no rate map for %d\n", rate0);
+		/* set rate to 1Mbit/s if rate was zero */
+		rate = acx111_rate_map[2];
 
 	FW_TXDESC_SETFIELD_2(sc, tx_buf, u.r2.rate111, rate);
 }

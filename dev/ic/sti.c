@@ -1,4 +1,4 @@
-/*	$OpenBSD: sti.c,v 1.43 2006/04/16 21:03:45 miod Exp $	*/
+/*	$OpenBSD: sti.c,v 1.52 2007/01/11 22:02:03 miod Exp $	*/
 
 /*
  * Copyright (c) 2000-2003 Michael Shalayeff
@@ -32,8 +32,6 @@
  *	X11 support.
  */
 
-#include "wsdisplay.h"
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/device.h>
@@ -49,6 +47,8 @@
 #include <dev/ic/stireg.h>
 #include <dev/ic/stivar.h>
 
+#include "sti.h"
+
 struct cfdriver sti_cd = {
 	NULL, "sti", DV_DULL
 };
@@ -60,7 +60,8 @@ void sti_copycols(void *v, int row, int srccol, int dstcol, int ncols);
 void sti_erasecols(void *v, int row, int startcol, int ncols, long attr);
 void sti_copyrows(void *v, int srcrow, int dstrow, int nrows);
 void sti_eraserows(void *v, int row, int nrows, long attr);
-int  sti_alloc_attr(void *v, int fg, int bg, int flags, long *);
+int  sti_alloc_attr(void *v, int fg, int bg, int flags, long *pattr);
+void sti_unpack_attr(void *v, long attr, int *fg, int *bg, int *ul);
 
 struct wsdisplay_emulops sti_emulops = {
 	sti_cursor,
@@ -70,7 +71,8 @@ struct wsdisplay_emulops sti_emulops = {
 	sti_erasecols,
 	sti_copyrows,
 	sti_eraserows,
-	sti_alloc_attr
+	sti_alloc_attr,
+	sti_unpack_attr
 };
 
 int sti_ioctl(void *v, u_long cmd, caddr_t data, int flag, struct proc *p);
@@ -91,22 +93,6 @@ const struct wsdisplay_accessops sti_accessops = {
 	sti_load_font
 };
 
-struct wsscreen_descr sti_default_screen = {
-	"default", 0, 0,
-	&sti_emulops,
-	0, 0,
-	WSSCREEN_REVERSE | WSSCREEN_UNDERLINE
-};
-
-const struct wsscreen_descr *sti_default_scrlist[] = {
-	&sti_default_screen
-};
-
-struct wsscreen_list sti_default_screenlist = {
-	sizeof(sti_default_scrlist) / sizeof(sti_default_scrlist[0]),
-	sti_default_scrlist
-};
-
 enum sti_bmove_funcs {
 	bmf_clear, bmf_copy, bmf_invert, bmf_underline
 };
@@ -118,34 +104,58 @@ void sti_bmove(struct sti_screen *scr, int, int, int, int, int, int,
 int sti_setcment(struct sti_screen *scr, u_int i, u_char r, u_char g, u_char b);
 int sti_fetchfonts(struct sti_screen *scr, struct sti_inqconfout *cfg,
     u_int32_t addr);
-void sti_screen_setup(struct sti_screen *scr, bus_space_tag_t iot,
-    bus_space_tag_t memt, bus_space_handle_t romh, bus_addr_t base,
+int sti_screen_setup(struct sti_screen *scr, bus_space_tag_t iot,
+    bus_space_tag_t memt, bus_space_handle_t romh, bus_addr_t *bases,
     u_int codebase);
 
-void
+#if NSTI_PCI > 0
+#define	STI_ENABLE_ROM(sc) \
+do { \
+	if ((sc) != NULL && (sc)->sc_enable_rom != NULL) \
+		(*(sc)->sc_enable_rom)(sc); \
+} while (0)
+#define	STI_DISABLE_ROM(sc) \
+do { \
+	if ((sc) != NULL && (sc)->sc_disable_rom != NULL) \
+		(*(sc)->sc_disable_rom)(sc); \
+} while (0)
+#else
+#define	STI_ENABLE_ROM(sc)		do { /* nothing */ } while (0)
+#define	STI_DISABLE_ROM(sc)		do { /* nothing */ } while (0)
+#endif
+
+int
 sti_attach_common(sc, codebase)
 	struct sti_softc *sc;
 	u_int codebase;
 {
 	struct sti_screen *scr;
+	int rc;
 
 	scr = malloc(sizeof(struct sti_screen), M_DEVBUF, M_NOWAIT);
 	if (scr == NULL) {
 		printf("cannot allocate screen data\n");
-		return;
+		return (ENOMEM);
 	}
 
 	bzero(scr, sizeof(struct sti_screen));
 	sc->sc_scr = scr;
+	scr->scr_main = sc;
 
-	sti_screen_setup(scr, sc->iot, sc->memt, sc->romh, sc->base,
-	    codebase);
+	if ((rc = sti_screen_setup(scr, sc->iot, sc->memt, sc->romh, sc->bases,
+	    codebase)) != 0) {
+		free(scr, M_DEVBUF);
+		sc->sc_scr = NULL;
+		return (rc);
+	}
+
 	sti_describe(sc);
+	return (0);
 }
 
-void
+int
 sti_screen_setup(struct sti_screen *scr, bus_space_tag_t iot,
-    bus_space_tag_t memt, bus_space_handle_t romh, bus_addr_t base,
+    bus_space_tag_t memt, bus_space_handle_t romh, bus_addr_t *bases,
     u_int codebase)
 {
 	struct sti_inqconfout cfg;
@@ -156,9 +166,12 @@ sti_screen_setup(struct sti_screen *scr, bus_space_tag_t iot,
 	int error, size, i;
 	int geometry_kluge = 0;
 
+	STI_ENABLE_ROM(scr->scr_main);
+
 	scr->iot = iot;
 	scr->memt = memt;
 	scr->romh = romh;
+	scr->bases = bases;
 	scr->scr_devtype = bus_space_read_1(memt, romh, 3);
 
 	/* { extern int pmapdebug; pmapdebug = 0xfffff; } */
@@ -216,12 +229,14 @@ sti_screen_setup(struct sti_screen *scr, bus_space_tag_t iot,
 		dd->dd_pacode[0xe] = parseword(codebase + 0x0e0) & ~3;
 		dd->dd_pacode[0xf] = parseword(codebase + 0x0f0) & ~3;
 	} else {	/* STI_DEVTYPE4 */
-		bus_space_read_region_4(memt, romh, 0, (u_int32_t *)dd,
-		    sizeof(*dd) / 4);
+		bus_space_read_raw_region_4(memt, romh, 0, (u_int8_t *)dd,
+		    sizeof(*dd));
 		/* fix pacode... */
-		bus_space_read_region_4(memt, romh, codebase,
-		    (u_int32_t *)dd->dd_pacode, sizeof(dd->dd_pacode) / 4);
+		bus_space_read_raw_region_4(memt, romh, codebase,
+		    (u_int8_t *)dd->dd_pacode, sizeof(dd->dd_pacode));
 	}
+
+	STI_DISABLE_ROM(scr->scr_main);
 
 #ifdef STIDEBUG
 	printf("dd:\n"
@@ -247,13 +262,19 @@ sti_screen_setup(struct sti_screen *scr, bus_space_tag_t iot,
 	size = dd->dd_pacode[i] - dd->dd_pacode[STI_BEGIN];
 	if (scr->scr_devtype == STI_DEVTYPE1)
 		size = (size + 3) / 4;
-	if (!(scr->scr_code = uvm_km_alloc1(kernel_map, round_page(size), 0))) {
+	if (size == 0) {
+		printf(": no code for the requested platform\n");
+		return (EINVAL);
+	}
+	if (!(scr->scr_code = uvm_km_alloc(kernel_map, round_page(size)))) {
 		printf(": cannot allocate %u bytes for code\n", size);
-		return;
+		return (ENOMEM);
 	}
 #ifdef STIDEBUG
 	printf("code=0x%x[%x]\n", scr->scr_code, size);
 #endif
+
+	STI_ENABLE_ROM(scr->scr_main);
 
 	/* copy code into memory */
 	if (scr->scr_devtype == STI_DEVTYPE1) {
@@ -265,13 +286,16 @@ sti_screen_setup(struct sti_screen *scr, bus_space_tag_t iot,
 			*p++ = bus_space_read_4(memt, romh, addr) & 0xff;
 
 	} else	/* STI_DEVTYPE4 */
-		bus_space_read_region_4(memt, romh,
-		    dd->dd_pacode[STI_BEGIN], (u_int32_t *)scr->scr_code,
-		    size / 4);
+		bus_space_read_raw_region_4(memt, romh,
+		    dd->dd_pacode[STI_BEGIN], (u_int8_t *)scr->scr_code,
+		    size);
+
+	STI_DISABLE_ROM(scr->scr_main);
 
 #define	O(i)	(dd->dd_pacode[(i)]? (scr->scr_code + \
 	(dd->dd_pacode[(i)] - dd->dd_pacode[0]) / \
 	(scr->scr_devtype == STI_DEVTYPE1? 4 : 1)) : NULL)
+
 	scr->init	= (sti_init_t)	O(STI_INIT_GRAPH);
 	scr->mgmt	= (sti_mgmt_t)	O(STI_STATE_MGMT);
 	scr->unpmv	= (sti_unpmv_t)	O(STI_FONT_UNPMV);
@@ -298,7 +322,7 @@ sti_screen_setup(struct sti_screen *scr, bus_space_tag_t iot,
 	    scr->scr_code + round_page(size), UVM_PROT_RX, FALSE))) {
 		printf(": uvm_map_protect failed (%d)\n", error);
 		uvm_km_free(kernel_map, scr->scr_code, round_page(size));
-		return;
+		return (error);
 	}
 
 	cc = &scr->scr_cfg;
@@ -313,7 +337,7 @@ sti_screen_setup(struct sti_screen *scr, bus_space_tag_t iot,
 			    dd->dd_stimemreq);
 			uvm_km_free(kernel_map, scr->scr_code,
 			    round_page(size));
-			return;
+			return (ENOMEM);
 		}
 	}
 	{
@@ -324,22 +348,29 @@ sti_screen_setup(struct sti_screen *scr, bus_space_tag_t iot,
 #ifdef STIDEBUG
 		printf("stiregions @%p:\n", i);
 #endif
+
+		STI_ENABLE_ROM(scr->scr_main);
+
 		r.last = 0;
 		for (p = cc->regions; !r.last &&
 		     p < &cc->regions[STI_REGION_MAX]; p++) {
 
 			if (scr->scr_devtype == STI_DEVTYPE1)
 				*(u_int *)&r = parseword(i), i+= 16;
-			else
-				*(u_int *)&r = bus_space_read_4(memt, romh, i), i += 4;
+			else {
+				bus_space_read_raw_region_4(memt, romh, i,
+				    (u_int8_t *)&r, 4);
+				i += 4;
+			}
 
-			*p = (p == cc->regions? romh : base) +
-			    (r.offset << PGSHIFT);
+			*p = bases[p - cc->regions] + (r.offset << PGSHIFT);
 #ifdef STIDEBUG
-			printf("%x @ 0x%x%s%s%s%s\n",
+			STI_DISABLE_ROM(scr->scr_main);
+			printf("%08x @ 0x%08x%s%s%s%s\n",
 			    r.length << PGSHIFT, *p, r.sys_only? " sys" : "",
 			    r.cache? " cache" : "", r.btlb? " btlb" : "",
 			    r.last? " last" : "");
+			STI_ENABLE_ROM(scr->scr_main);
 #endif
 
 			/* rom has already been mapped */
@@ -349,7 +380,9 @@ sti_screen_setup(struct sti_screen *scr, bus_space_tag_t iot,
 				    r.cache ? BUS_SPACE_MAP_CACHEABLE : 0,
 				    &fbh)) {
 #ifdef STIDEBUG
+					STI_DISABLE_ROM(scr->scr_main);
 					printf("already mapped region\n");
+					STI_ENABLE_ROM(scr->scr_main);
 #endif
 				} else {
 					if (p - cc->regions == 1) {
@@ -360,11 +393,14 @@ sti_screen_setup(struct sti_screen *scr, bus_space_tag_t iot,
 				}
 			}
 		}
+
+		STI_DISABLE_ROM(scr->scr_main);
 	}
 
 	if ((error = sti_init(scr, 0))) {
 		printf(": can not initialize (%d)\n", error);
-		return;
+		/* XXX free resources */
+		return (ENXIO);
 	}
 
 	bzero(&cfg, sizeof(cfg));
@@ -372,7 +408,8 @@ sti_screen_setup(struct sti_screen *scr, bus_space_tag_t iot,
 	cfg.ext = &ecfg;
 	if ((error = sti_inqcfg(scr, &cfg))) {
 		printf(": error %d inquiring config\n", error);
-		return;
+		/* XXX free resources */
+		return (ENXIO);
 	}
 
 	/*
@@ -402,7 +439,8 @@ sti_screen_setup(struct sti_screen *scr, bus_space_tag_t iot,
 
 	if ((error = sti_init(scr, STI_TEXTMODE))) {
 		printf(": can not initialize (%d)\n", error);
-		return;
+		/* XXX free resources */
+		return (ENXIO);
 	}
 
 #ifdef STIDEBUG
@@ -416,22 +454,33 @@ sti_screen_setup(struct sti_screen *scr, bus_space_tag_t iot,
 
 	if ((error = sti_fetchfonts(scr, &cfg, dd->dd_fntaddr))) {
 		printf(": cannot fetch fonts (%d)\n", error);
-		return;
+		/* XXX free resources */
+		return (ENXIO);
 	}
 
 	/*
-	 * parse screen descriptions:
+	 * setup screen descriptions:
 	 *	figure number of fonts supported;
 	 *	allocate wscons structures;
 	 *	calculate dimensions.
 	 */
 
-	sti_default_screen.ncols = cfg.width / scr->scr_curfont.width;
-	sti_default_screen.nrows = cfg.height / scr->scr_curfont.height;
-	sti_default_screen.fontwidth = scr->scr_curfont.width;
-	sti_default_screen.fontheight = scr->scr_curfont.height;
+	strlcpy(scr->scr_wsd.name, "std", sizeof(scr->scr_wsd.name));
+	scr->scr_wsd.ncols = cfg.width / scr->scr_curfont.width;
+	scr->scr_wsd.nrows = cfg.height / scr->scr_curfont.height;
+	scr->scr_wsd.textops = &sti_emulops;
+	scr->scr_wsd.fontwidth = scr->scr_curfont.width;
+	scr->scr_wsd.fontheight = scr->scr_curfont.height;
+	scr->scr_wsd.capabilities = 0;
+
+	scr->scr_scrlist[0] = &scr->scr_wsd;
+	scr->scr_screenlist.nscreens = 1;
+	scr->scr_screenlist.screens =
+	    (const struct wsscreen_descr **)scr->scr_scrlist;
 
 	/* { extern int pmapdebug; pmapdebug = 0; } */
+
+	return (0);
 }
 
 void
@@ -464,17 +513,18 @@ sti_end_attach(void *v)
 	sc->sc_wsmode = WSDISPLAYIO_MODE_EMUL;
 
 	waa.console = sc->sc_flags & STI_CONSOLE ? 1 : 0;
-	waa.scrdata = &sti_default_screenlist;
+	waa.scrdata = &sc->sc_scr->scr_screenlist;
 	waa.accessops = &sti_accessops;
 	waa.accesscookie = sc;
+	waa.defaultscreens = 0;
 
 	/* attach as console if required */
 	if (waa.console && !ISSET(sc->sc_flags, STI_ATTACHED)) {
 		long defattr;
 
 		sti_alloc_attr(sc, 0, 0, 0, &defattr);
-		wsdisplay_cnattach(&sti_default_screen, sc->sc_scr,
-		    0, sti_default_screen.nrows - 1, defattr);
+		wsdisplay_cnattach(&sc->sc_scr->scr_wsd, sc->sc_scr,
+		    0, sc->sc_scr->scr_wsd.nrows - 1, defattr);
 		sc->sc_flags |= STI_ATTACHED;
 	}
 
@@ -489,7 +539,8 @@ sti_rom_size(bus_space_tag_t iot, bus_space_handle_t ioh)
 
 	devtype = bus_space_read_1(iot, ioh, 3);
 	if (devtype == STI_DEVTYPE4) {
-		romend = bus_space_read_4(iot, ioh, 0x18);
+		bus_space_read_raw_region_4(iot, ioh, 0x18,
+		    (u_int8_t *)&romend, 4);
 	} else {
 		romend =
 		    (bus_space_read_1(iot, ioh, 0x50 +  3) << 24) |
@@ -524,6 +575,9 @@ sti_fetchfonts(struct sti_screen *scr, struct sti_inqconfout *cfg,
 	/*
 	 * Get the first PROM font in memory
 	 */
+
+	STI_ENABLE_ROM(scr->scr_main);
+
 	do {
 		if (scr->scr_devtype == STI_DEVTYPE1) {
 			fp->first  = parseshort(addr + 0x00);
@@ -542,8 +596,8 @@ sti_fetchfonts(struct sti_screen *scr, struct sti_inqconfout *cfg,
 			fp->uoffset= bus_space_read_1(memt, romh,
 			    addr + 0x37);
 		} else	/* STI_DEVTYPE4 */
-			bus_space_read_region_4(memt, romh, addr,
-			    (u_int32_t *)fp, sizeof(struct sti_font) / 4);
+			bus_space_read_raw_region_4(memt, romh, addr,
+			    (u_int8_t *)fp, sizeof(struct sti_font));
 
 		size = sizeof(struct sti_font) +
 		    (fp->last - fp->first + 1) * fp->bpc;
@@ -553,11 +607,13 @@ sti_fetchfonts(struct sti_screen *scr, struct sti_inqconfout *cfg,
 		if (scr->scr_romfont == NULL)
 			return (ENOMEM);
 
-		bus_space_read_region_4(memt, romh, addr,
-		    (u_int32_t *)scr->scr_romfont, size / 4);
+		bus_space_read_raw_region_4(memt, romh, addr,
+		    (u_int8_t *)scr->scr_romfont, size);
 
 		addr = NULL; /* fp->next */
 	} while (addr);
+
+	STI_DISABLE_ROM(scr->scr_main);
 
 #ifdef notyet
 	/*
@@ -893,16 +949,63 @@ sti_cursor(v, on, row, col)
 	    fp->height, fp->width, bmf_invert);
 }
 
+/*
+ * ISO 8859-1 part of Unicode to HP Roman font index conversion array.
+ */
+static const u_int8_t
+sti_unitoroman[0x100 - 0xa0] = {
+	0xa0, 0xb8, 0xbf, 0xbb, 0xba, 0xbc,    0, 0xbd,
+	0xab,    0, 0xf9, 0xfb,    0, 0xf6,    0, 0xb0,
+	
+	0xb3, 0xfe,    0,    0, 0xa8, 0xf3, 0xf4, 0xf2,
+	   0,    0, 0xfa, 0xfd, 0xf7, 0xf8,    0, 0xb9,
+
+	0xa1, 0xe0, 0xa2, 0xe1, 0xd8, 0xd0, 0xd3, 0xb4,
+	0xa3, 0xdc, 0xa4, 0xa5, 0xe6, 0xe5, 0xa6, 0xa7,
+
+	0xe3, 0xb6, 0xe8, 0xe7, 0xdf, 0xe9, 0xda,    0,
+	0xd2, 0xad, 0xed, 0xae, 0xdb, 0xb1, 0xf0, 0xde,
+
+	0xc8, 0xc4, 0xc0, 0xe2, 0xcc, 0xd4, 0xd7, 0xb5,
+	0xc9, 0xc5, 0xc1, 0xcd, 0xd9, 0xd5, 0xd1, 0xdd,
+
+	0xe4, 0xb7, 0xca, 0xc6, 0xc2, 0xea, 0xce,    0,
+	0xd6, 0xcb, 0xc7, 0xc3, 0xcf, 0xb2, 0xf1, 0xef
+};
+
 int
 sti_mapchar(v, uni, index)
 	void *v;
 	int uni;
 	u_int *index;
 {
-	if (uni < 256)
-		*index = uni;
+	struct sti_screen *scr = v;
+	struct sti_font *fp = &scr->scr_curfont;
+	int c;
 
-	return 1;
+	switch (fp->type) {
+	case STI_FONT_HPROMAN8:
+		if (uni >= 0x80 && uni < 0xa0)
+			c = -1;
+		else if (uni >= 0xa0 && uni < 0x100) {
+			c = (int)sti_unitoroman[uni - 0xa0];
+			if (c == 0)
+				c = -1;
+		} else
+			c = uni;
+		break;
+	default:
+		c = uni;
+		break;
+	}
+
+	if (c == -1 || c < fp->first || c > fp->last) {
+		*index = ' ';
+		return (0);
+	}
+
+	*index = c;
+	return (5);
 }
 
 void
@@ -1034,8 +1137,19 @@ sti_alloc_attr(v, fg, bg, flags, pattr)
 	return 0;
 }
 
+void
+sti_unpack_attr(void *v, long attr, int *fg, int *bg, int *ul)
+{
+	*fg = WSCOL_WHITE;
+	*bg = WSCOL_BLACK;
+	if (ul != NULL)
+		*ul = 0;
+}
+
+#if NSTI_SGC > 0
+
 /*
- * Console support
+ * Early console support
  */
 
 void
@@ -1046,7 +1160,7 @@ sti_clear(struct sti_screen *scr)
 }
 
 int
-sti_cnattach(struct sti_screen *scr, bus_space_tag_t iot, bus_addr_t base,
+sti_cnattach(struct sti_screen *scr, bus_space_tag_t iot, bus_addr_t *bases,
     u_int codebase)
 {
 	bus_space_handle_t ioh;
@@ -1054,7 +1168,7 @@ sti_cnattach(struct sti_screen *scr, bus_space_tag_t iot, bus_addr_t base,
 	int error;
 	long defattr;
 
-	if ((error = bus_space_map(iot, base, PAGE_SIZE, 0, &ioh)) != 0)
+	if ((error = bus_space_map(iot, bases[0], PAGE_SIZE, 0, &ioh)) != 0)
 		return (error);
 
 	/*
@@ -1064,13 +1178,17 @@ sti_cnattach(struct sti_screen *scr, bus_space_tag_t iot, bus_addr_t base,
 
 	bus_space_unmap(iot, ioh, PAGE_SIZE);
 
-	if ((error = bus_space_map(iot, base, romend, 0, &ioh)) != 0)
+	if ((error = bus_space_map(iot, bases[0], romend, 0, &ioh)) != 0)
 		return (error);
 
-	sti_screen_setup(scr, iot, iot, ioh, base, codebase);
+	bases[0] = ioh;
+	if (sti_screen_setup(scr, iot, iot, ioh, bases, codebase) != 0)
+		panic(__func__);
 
 	sti_alloc_attr(scr, 0, 0, 0, &defattr);
-	wsdisplay_cnattach(&sti_default_screen, scr, 0, 0, defattr);
+	wsdisplay_cnattach(&scr->scr_wsd, scr, 0, 0, defattr);
 
 	return (0);
 }
+
+#endif	/* NSTI_SGC > 0 */

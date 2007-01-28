@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bnx.c,v 1.31 2006/10/25 02:37:50 brad Exp $	*/
+/*	$OpenBSD: if_bnx.c,v 1.41 2007/01/21 01:08:03 mcbride Exp $	*/
 
 /*-
  * Copyright (c) 2006 Broadcom Corporation
@@ -141,6 +141,8 @@ u_int32_t *bnx_TXP_b06FwSbss;
 u_int32_t *bnx_rv2p_proc1;
 u_int32_t *bnx_rv2p_proc2;
 
+void	nswaph(u_int32_t *p, int wcount);
+
 /****************************************************************************/
 /* BNX Driver Version                                                       */
 /****************************************************************************/
@@ -188,6 +190,9 @@ const struct pci_matchid bnx_devices[] = {
 	{ PCI_VENDOR_BROADCOM, PCI_PRODUCT_BROADCOM_BCM5706S },
 	{ PCI_VENDOR_BROADCOM, PCI_PRODUCT_BROADCOM_BCM5708 },
 	{ PCI_VENDOR_BROADCOM, PCI_PRODUCT_BROADCOM_BCM5708S }
+#if 0
+	{ PCI_VENDOR_BROADCOM, PCI_PRODUCT_BROADCOM_BCM5709 }
+#endif
 };
 
 /****************************************************************************/
@@ -421,6 +426,15 @@ bnx_probe(struct device *parent, void *match, void *aux)
 	    sizeof(bnx_devices)/sizeof(bnx_devices[0])));
 }
 
+void
+nswaph(u_int32_t *p, int wcount)
+{
+	for (; wcount; wcount -=4) {
+		*p = ntohl(*p);
+		p++;
+	}
+}
+
 int
 bnx_read_firmware(struct bnx_softc *sc)
 {
@@ -442,119 +456,141 @@ bnx_read_firmware(struct bnx_softc *sc)
 
 	hdr = (struct bnx_firmware_header *)p;
 
-	bnx_COM_b06FwReleaseMajor = hdr->bnx_COM_b06FwReleaseMajor;
-	bnx_COM_b06FwReleaseMinor = hdr->bnx_COM_b06FwReleaseMinor;
-	bnx_COM_b06FwReleaseFix = hdr->bnx_COM_b06FwReleaseFix;
-	bnx_COM_b06FwStartAddr = hdr->bnx_COM_b06FwStartAddr;
-	bnx_COM_b06FwTextAddr = hdr->bnx_COM_b06FwTextAddr;
-	bnx_COM_b06FwTextLen = hdr->bnx_COM_b06FwTextLen;
-	bnx_COM_b06FwDataAddr = hdr->bnx_COM_b06FwDataAddr;
-	bnx_COM_b06FwDataLen = hdr->bnx_COM_b06FwDataLen;
-	bnx_COM_b06FwRodataAddr = hdr->bnx_COM_b06FwRodataAddr;
-	bnx_COM_b06FwRodataLen = hdr->bnx_COM_b06FwRodataLen;
-	bnx_COM_b06FwBssAddr = hdr->bnx_COM_b06FwBssAddr;
-	bnx_COM_b06FwBssLen = hdr->bnx_COM_b06FwBssLen;
-	bnx_COM_b06FwSbssAddr = hdr->bnx_COM_b06FwSbssAddr;
-	bnx_COM_b06FwSbssLen = hdr->bnx_COM_b06FwSbssLen;
+	bnx_COM_b06FwReleaseMajor = ntohl(hdr->bnx_COM_b06FwReleaseMajor);
+	bnx_COM_b06FwReleaseMinor = ntohl(hdr->bnx_COM_b06FwReleaseMinor);
+	bnx_COM_b06FwReleaseFix = ntohl(hdr->bnx_COM_b06FwReleaseFix);
+	bnx_COM_b06FwStartAddr = ntohl(hdr->bnx_COM_b06FwStartAddr);
+	bnx_COM_b06FwTextAddr = ntohl(hdr->bnx_COM_b06FwTextAddr);
+	bnx_COM_b06FwTextLen = ntohl(hdr->bnx_COM_b06FwTextLen);
+	bnx_COM_b06FwDataAddr = ntohl(hdr->bnx_COM_b06FwDataAddr);
+	bnx_COM_b06FwDataLen = ntohl(hdr->bnx_COM_b06FwDataLen);
+	bnx_COM_b06FwRodataAddr = ntohl(hdr->bnx_COM_b06FwRodataAddr);
+	bnx_COM_b06FwRodataLen = ntohl(hdr->bnx_COM_b06FwRodataLen);
+	bnx_COM_b06FwBssAddr = ntohl(hdr->bnx_COM_b06FwBssAddr);
+	bnx_COM_b06FwBssLen = ntohl(hdr->bnx_COM_b06FwBssLen);
+	bnx_COM_b06FwSbssAddr = ntohl(hdr->bnx_COM_b06FwSbssAddr);
+	bnx_COM_b06FwSbssLen = ntohl(hdr->bnx_COM_b06FwSbssLen);
 
-	bnx_RXP_b06FwReleaseMajor = hdr->bnx_RXP_b06FwReleaseMajor;
-	bnx_RXP_b06FwReleaseMinor = hdr->bnx_RXP_b06FwReleaseMinor;
-	bnx_RXP_b06FwReleaseFix = hdr->bnx_RXP_b06FwReleaseFix;
-	bnx_RXP_b06FwStartAddr = hdr->bnx_RXP_b06FwStartAddr;
-	bnx_RXP_b06FwTextAddr = hdr->bnx_RXP_b06FwTextAddr;
-	bnx_RXP_b06FwTextLen = hdr->bnx_RXP_b06FwTextLen;
-	bnx_RXP_b06FwDataAddr = hdr->bnx_RXP_b06FwDataAddr;
-	bnx_RXP_b06FwDataLen = hdr->bnx_RXP_b06FwDataLen;
-	bnx_RXP_b06FwRodataAddr = hdr->bnx_RXP_b06FwRodataAddr;
-	bnx_RXP_b06FwRodataLen = hdr->bnx_RXP_b06FwRodataLen;
-	bnx_RXP_b06FwBssAddr = hdr->bnx_RXP_b06FwBssAddr;
-	bnx_RXP_b06FwBssLen = hdr->bnx_RXP_b06FwBssLen;
-	bnx_RXP_b06FwSbssAddr = hdr->bnx_RXP_b06FwSbssAddr;
-	bnx_RXP_b06FwSbssLen = hdr->bnx_RXP_b06FwSbssLen;
+	bnx_RXP_b06FwReleaseMajor = ntohl(hdr->bnx_RXP_b06FwReleaseMajor);
+	bnx_RXP_b06FwReleaseMinor = ntohl(hdr->bnx_RXP_b06FwReleaseMinor);
+	bnx_RXP_b06FwReleaseFix = ntohl(hdr->bnx_RXP_b06FwReleaseFix);
+	bnx_RXP_b06FwStartAddr = ntohl(hdr->bnx_RXP_b06FwStartAddr);
+	bnx_RXP_b06FwTextAddr = ntohl(hdr->bnx_RXP_b06FwTextAddr);
+	bnx_RXP_b06FwTextLen = ntohl(hdr->bnx_RXP_b06FwTextLen);
+	bnx_RXP_b06FwDataAddr = ntohl(hdr->bnx_RXP_b06FwDataAddr);
+	bnx_RXP_b06FwDataLen = ntohl(hdr->bnx_RXP_b06FwDataLen);
+	bnx_RXP_b06FwRodataAddr = ntohl(hdr->bnx_RXP_b06FwRodataAddr);
+	bnx_RXP_b06FwRodataLen = ntohl(hdr->bnx_RXP_b06FwRodataLen);
+	bnx_RXP_b06FwBssAddr = ntohl(hdr->bnx_RXP_b06FwBssAddr);
+	bnx_RXP_b06FwBssLen = ntohl(hdr->bnx_RXP_b06FwBssLen);
+	bnx_RXP_b06FwSbssAddr = ntohl(hdr->bnx_RXP_b06FwSbssAddr);
+	bnx_RXP_b06FwSbssLen = ntohl(hdr->bnx_RXP_b06FwSbssLen);
 
-	bnx_TPAT_b06FwReleaseMajor = hdr->bnx_TPAT_b06FwReleaseMajor;
-	bnx_TPAT_b06FwReleaseMinor = hdr->bnx_TPAT_b06FwReleaseMinor;
-	bnx_TPAT_b06FwReleaseFix = hdr->bnx_TPAT_b06FwReleaseFix;
-	bnx_TPAT_b06FwStartAddr = hdr->bnx_TPAT_b06FwStartAddr;
-	bnx_TPAT_b06FwTextAddr = hdr->bnx_TPAT_b06FwTextAddr;
-	bnx_TPAT_b06FwTextLen = hdr->bnx_TPAT_b06FwTextLen;
-	bnx_TPAT_b06FwDataAddr = hdr->bnx_TPAT_b06FwDataAddr;
-	bnx_TPAT_b06FwDataLen = hdr->bnx_TPAT_b06FwDataLen;
-	bnx_TPAT_b06FwRodataAddr = hdr->bnx_TPAT_b06FwRodataAddr;
-	bnx_TPAT_b06FwRodataLen = hdr->bnx_TPAT_b06FwRodataLen;
-	bnx_TPAT_b06FwBssAddr = hdr->bnx_TPAT_b06FwBssAddr;
-	bnx_TPAT_b06FwBssLen = hdr->bnx_TPAT_b06FwBssLen;
-	bnx_TPAT_b06FwSbssAddr = hdr->bnx_TPAT_b06FwSbssAddr;
-	bnx_TPAT_b06FwSbssLen = hdr->bnx_TPAT_b06FwSbssLen;
+	bnx_TPAT_b06FwReleaseMajor = ntohl(hdr->bnx_TPAT_b06FwReleaseMajor);
+	bnx_TPAT_b06FwReleaseMinor = ntohl(hdr->bnx_TPAT_b06FwReleaseMinor);
+	bnx_TPAT_b06FwReleaseFix = ntohl(hdr->bnx_TPAT_b06FwReleaseFix);
+	bnx_TPAT_b06FwStartAddr = ntohl(hdr->bnx_TPAT_b06FwStartAddr);
+	bnx_TPAT_b06FwTextAddr = ntohl(hdr->bnx_TPAT_b06FwTextAddr);
+	bnx_TPAT_b06FwTextLen = ntohl(hdr->bnx_TPAT_b06FwTextLen);
+	bnx_TPAT_b06FwDataAddr = ntohl(hdr->bnx_TPAT_b06FwDataAddr);
+	bnx_TPAT_b06FwDataLen = ntohl(hdr->bnx_TPAT_b06FwDataLen);
+	bnx_TPAT_b06FwRodataAddr = ntohl(hdr->bnx_TPAT_b06FwRodataAddr);
+	bnx_TPAT_b06FwRodataLen = ntohl(hdr->bnx_TPAT_b06FwRodataLen);
+	bnx_TPAT_b06FwBssAddr = ntohl(hdr->bnx_TPAT_b06FwBssAddr);
+	bnx_TPAT_b06FwBssLen = ntohl(hdr->bnx_TPAT_b06FwBssLen);
+	bnx_TPAT_b06FwSbssAddr = ntohl(hdr->bnx_TPAT_b06FwSbssAddr);
+	bnx_TPAT_b06FwSbssLen = ntohl(hdr->bnx_TPAT_b06FwSbssLen);
 
-	bnx_TXP_b06FwReleaseMajor = hdr->bnx_TXP_b06FwReleaseMajor;
-	bnx_TXP_b06FwReleaseMinor = hdr->bnx_TXP_b06FwReleaseMinor;
-	bnx_TXP_b06FwReleaseFix = hdr->bnx_TXP_b06FwReleaseFix;
-	bnx_TXP_b06FwStartAddr = hdr->bnx_TXP_b06FwStartAddr;
-	bnx_TXP_b06FwTextAddr = hdr->bnx_TXP_b06FwTextAddr;
-	bnx_TXP_b06FwTextLen = hdr->bnx_TXP_b06FwTextLen;
-	bnx_TXP_b06FwDataAddr = hdr->bnx_TXP_b06FwDataAddr;
-	bnx_TXP_b06FwDataLen = hdr->bnx_TXP_b06FwDataLen;
-	bnx_TXP_b06FwRodataAddr = hdr->bnx_TXP_b06FwRodataAddr;
-	bnx_TXP_b06FwRodataLen = hdr->bnx_TXP_b06FwRodataLen;
-	bnx_TXP_b06FwBssAddr = hdr->bnx_TXP_b06FwBssAddr;
-	bnx_TXP_b06FwBssLen = hdr->bnx_TXP_b06FwBssLen;
-	bnx_TXP_b06FwSbssAddr = hdr->bnx_TXP_b06FwSbssAddr;
-	bnx_TXP_b06FwSbssLen = hdr->bnx_TXP_b06FwSbssLen;
+	bnx_TXP_b06FwReleaseMajor = ntohl(hdr->bnx_TXP_b06FwReleaseMajor);
+	bnx_TXP_b06FwReleaseMinor = ntohl(hdr->bnx_TXP_b06FwReleaseMinor);
+	bnx_TXP_b06FwReleaseFix = ntohl(hdr->bnx_TXP_b06FwReleaseFix);
+	bnx_TXP_b06FwStartAddr = ntohl(hdr->bnx_TXP_b06FwStartAddr);
+	bnx_TXP_b06FwTextAddr = ntohl(hdr->bnx_TXP_b06FwTextAddr);
+	bnx_TXP_b06FwTextLen = ntohl(hdr->bnx_TXP_b06FwTextLen);
+	bnx_TXP_b06FwDataAddr = ntohl(hdr->bnx_TXP_b06FwDataAddr);
+	bnx_TXP_b06FwDataLen = ntohl(hdr->bnx_TXP_b06FwDataLen);
+	bnx_TXP_b06FwRodataAddr = ntohl(hdr->bnx_TXP_b06FwRodataAddr);
+	bnx_TXP_b06FwRodataLen = ntohl(hdr->bnx_TXP_b06FwRodataLen);
+	bnx_TXP_b06FwBssAddr = ntohl(hdr->bnx_TXP_b06FwBssAddr);
+	bnx_TXP_b06FwBssLen = ntohl(hdr->bnx_TXP_b06FwBssLen);
+	bnx_TXP_b06FwSbssAddr = ntohl(hdr->bnx_TXP_b06FwSbssAddr);
+	bnx_TXP_b06FwSbssLen = ntohl(hdr->bnx_TXP_b06FwSbssLen);
 
-	bnx_rv2p_proc1len = hdr->bnx_rv2p_proc1len;
-	bnx_rv2p_proc2len = hdr->bnx_rv2p_proc2len;
+	bnx_rv2p_proc1len = ntohl(hdr->bnx_rv2p_proc1len);
+	bnx_rv2p_proc2len = ntohl(hdr->bnx_rv2p_proc2len);
 
 	q = p + sizeof(*hdr);
 
 	bnx_COM_b06FwText = (u_int32_t *)q;
 	q += bnx_COM_b06FwTextLen;
+	nswaph(bnx_COM_b06FwText, bnx_COM_b06FwTextLen);
 	bnx_COM_b06FwData = (u_int32_t *)q;
 	q += bnx_COM_b06FwDataLen;
+	nswaph(bnx_COM_b06FwData, bnx_COM_b06FwDataLen);
 	bnx_COM_b06FwRodata = (u_int32_t *)q;
 	q += bnx_COM_b06FwRodataLen;
+	nswaph(bnx_COM_b06FwRodata, bnx_COM_b06FwRodataLen);
 	bnx_COM_b06FwBss = (u_int32_t *)q;
 	q += bnx_COM_b06FwBssLen;
+	nswaph(bnx_COM_b06FwBss, bnx_COM_b06FwBssLen);
 	bnx_COM_b06FwSbss = (u_int32_t *)q;
 	q += bnx_COM_b06FwSbssLen;
+	nswaph(bnx_COM_b06FwSbss, bnx_COM_b06FwSbssLen);
 
 	bnx_RXP_b06FwText = (u_int32_t *)q;
 	q += bnx_RXP_b06FwTextLen;
+	nswaph(bnx_RXP_b06FwText, bnx_RXP_b06FwTextLen);
 	bnx_RXP_b06FwData = (u_int32_t *)q;
 	q += bnx_RXP_b06FwDataLen;
+	nswaph(bnx_RXP_b06FwData, bnx_RXP_b06FwDataLen);
 	bnx_RXP_b06FwRodata = (u_int32_t *)q;
 	q += bnx_RXP_b06FwRodataLen;
+	nswaph(bnx_RXP_b06FwRodata, bnx_RXP_b06FwRodataLen);
 	bnx_RXP_b06FwBss = (u_int32_t *)q;
 	q += bnx_RXP_b06FwBssLen;
+	nswaph(bnx_RXP_b06FwBss, bnx_RXP_b06FwBssLen);
 	bnx_RXP_b06FwSbss = (u_int32_t *)q;
 	q += bnx_RXP_b06FwSbssLen;
+	nswaph(bnx_RXP_b06FwSbss, bnx_RXP_b06FwSbssLen);
 
 	bnx_TPAT_b06FwText = (u_int32_t *)q;
 	q += bnx_TPAT_b06FwTextLen;
+	nswaph(bnx_TPAT_b06FwText, bnx_TPAT_b06FwTextLen);
 	bnx_TPAT_b06FwData = (u_int32_t *)q;
 	q += bnx_TPAT_b06FwDataLen;
+	nswaph(bnx_TPAT_b06FwData, bnx_TPAT_b06FwDataLen);
 	bnx_TPAT_b06FwRodata = (u_int32_t *)q;
 	q += bnx_TPAT_b06FwRodataLen;
+	nswaph(bnx_TPAT_b06FwRodata, bnx_TPAT_b06FwRodataLen);
 	bnx_TPAT_b06FwBss = (u_int32_t *)q;
 	q += bnx_TPAT_b06FwBssLen;
+	nswaph(bnx_TPAT_b06FwBss, bnx_TPAT_b06FwBssLen);
 	bnx_TPAT_b06FwSbss = (u_int32_t *)q;
 	q += bnx_TPAT_b06FwSbssLen;
+	nswaph(bnx_TPAT_b06FwSbss, bnx_TPAT_b06FwSbssLen);
 
 	bnx_TXP_b06FwText = (u_int32_t *)q;
 	q += bnx_TXP_b06FwTextLen;
+	nswaph(bnx_TXP_b06FwText, bnx_TXP_b06FwTextLen);
 	bnx_TXP_b06FwData = (u_int32_t *)q;
 	q += bnx_TXP_b06FwDataLen;
+	nswaph(bnx_TXP_b06FwData, bnx_TXP_b06FwDataLen);
 	bnx_TXP_b06FwRodata = (u_int32_t *)q;
 	q += bnx_TXP_b06FwRodataLen;
+	nswaph(bnx_TXP_b06FwRodata, bnx_TXP_b06FwRodataLen);
 	bnx_TXP_b06FwBss = (u_int32_t *)q;
 	q += bnx_TXP_b06FwBssLen;
+	nswaph(bnx_TXP_b06FwBss, bnx_TXP_b06FwBssLen);
 	bnx_TXP_b06FwSbss = (u_int32_t *)q;
 	q += bnx_TXP_b06FwSbssLen;
+	nswaph(bnx_TXP_b06FwSbss, bnx_TXP_b06FwSbssLen);
 
 	bnx_rv2p_proc1 = (u_int32_t *)q;
 	q += bnx_rv2p_proc1len;
+	nswaph(bnx_rv2p_proc1, bnx_rv2p_proc1len);
 	bnx_rv2p_proc2 = (u_int32_t *)q;
 	q += bnx_rv2p_proc2len;
+	nswaph(bnx_rv2p_proc2, bnx_rv2p_proc2len);
 	
 	if (q - p != size) {
 		free(p, M_DEVBUF);
@@ -585,7 +621,6 @@ bnx_attach(struct device *parent, struct device *self, void *aux)
 	u_int32_t		val;
 	pcireg_t		memtype;
 	const char 		*intrstr = NULL;
-	pci_intr_handle_t	ih;
 
 	sc->bnx_pa = *pa;
 
@@ -605,12 +640,11 @@ bnx_attach(struct device *parent, struct device *self, void *aux)
 		return;
 	}
 
-	if (pci_intr_map(pa, &ih)) {
+	if (pci_intr_map(pa, &sc->bnx_ih)) {
 		printf(": couldn't map interrupt\n");
 		goto bnx_attach_fail;
 	}
-
-	intrstr = pci_intr_string(pc, ih);
+	intrstr = pci_intr_string(pc, sc->bnx_ih);
 
 	/*
 	 * Configure byte swap and enable indirect register access.
@@ -702,16 +736,6 @@ bnx_attach(struct device *parent, struct device *self, void *aux)
 	if (val & BNX_PCICFG_MISC_STATUS_32BIT_DET)
 		sc->bnx_flags |= BNX_PCI_32BIT_FLAG;
 
-	/* Hookup IRQ last. */
-	sc->bnx_intrhand = pci_intr_establish(pc, ih, IPL_NET, bnx_intr, sc,
-	    sc->bnx_dev.dv_xname);
-	if (sc->bnx_intrhand == NULL) {
-		printf("%s: couldn't establish interrupt", sc->bnx_dev.dv_xname);
-		if (intrstr != NULL)
-			printf(" at %s", intrstr);
-		printf("\n");
-		goto bnx_attach_fail;
-	}
 	printf(": %s\n", intrstr);
 
 	mountroothook_establish(bnx_attachhook, sc);
@@ -727,6 +751,7 @@ bnx_attachhook(void *xsc)
 {
 	struct bnx_softc *sc = xsc;
 	struct pci_attach_args *pa = &sc->bnx_pa;
+	pci_chipset_tag_t	pc = pa->pa_pc;
 	struct ifnet		*ifp;
 	u_int32_t		val;
 	int error;
@@ -838,22 +863,16 @@ bnx_attachhook(void *xsc)
         else
                 ifp->if_baudrate = IF_Gbps(1);
 	ifp->if_hardmtu = BNX_MAX_JUMBO_MTU;
-	IFQ_SET_MAXLEN(&ifp->if_snd, USABLE_TX_BD);
+	IFQ_SET_MAXLEN(&ifp->if_snd, USABLE_TX_BD - 1);
 	IFQ_SET_READY(&ifp->if_snd);
 	bcopy(sc->eaddr, sc->arpcom.ac_enaddr, ETHER_ADDR_LEN);
 	bcopy(sc->bnx_dev.dv_xname, ifp->if_xname, IFNAMSIZ);
 
-	ifp->if_capabilities = IFCAP_VLAN_MTU;
+	ifp->if_capabilities = IFCAP_VLAN_MTU | IFCAP_CSUM_TCPv4 |
+			       IFCAP_CSUM_UDPv4;
 
-#ifdef BNX_CSUM
-	ifp->if_capabilities |= IFCAP_CSUM_IPv4|IFCAP_CSUM_TCPv4|
-				IFCAP_CSUM_UDPv4;
-#endif
-
-#ifdef BNX_VLAN
 #if NVLAN > 0
 	ifp->if_capabilities |= IFCAP_VLAN_HWTAGGING;
-#endif
 #endif
 
 	sc->mbuf_alloc_size = BNX_MAX_MRU;
@@ -894,6 +913,15 @@ bnx_attachhook(void *xsc)
 
 	/* Get the firmware running so ASF still works. */
 	bnx_mgmt_init(sc);
+
+	/* Hookup IRQ last. */
+	sc->bnx_intrhand = pci_intr_establish(pc, sc->bnx_ih, IPL_NET,
+	    bnx_intr, sc, sc->bnx_dev.dv_xname);
+	if (sc->bnx_intrhand == NULL) {
+		printf("%s: couldn't establish interrupt\n",
+		    sc->bnx_dev.dv_xname);
+		goto bnx_attach_fail;
+	}
 
 	goto bnx_attach_exit;
 
@@ -2262,7 +2290,7 @@ bnx_dma_alloc(struct bnx_softc *sc)
 		}
 
 		if (bus_dmamap_load(sc->bnx_dmatag, sc->tx_bd_chain_map[i],
-		    (caddr_t)sc->tx_bd_chain[i], BNX_STATS_BLK_SZ, NULL,
+		    (caddr_t)sc->tx_bd_chain[i], BNX_TX_CHAIN_PAGE_SZ, NULL,
 		    BUS_DMA_NOWAIT)) {
 			printf(": Could not load TX desc %d DMA memory!\n", i);
 			rc = ENOMEM;
@@ -2323,7 +2351,7 @@ bnx_dma_alloc(struct bnx_softc *sc)
 		}
 
 		if (bus_dmamap_load(sc->bnx_dmatag, sc->rx_bd_chain_map[i],
-		    (caddr_t)sc->rx_bd_chain[i], BNX_STATS_BLK_SZ, NULL,
+		    (caddr_t)sc->rx_bd_chain[i], BNX_RX_CHAIN_PAGE_SZ, NULL,
 		    BUS_DMA_NOWAIT)) {
 			printf(": Could not load Rx desc %d DMA memory!\n", i);
 			rc = ENOMEM;
@@ -3942,7 +3970,7 @@ bnx_rx_intr(struct bnx_softc *sc)
 				}
 				m_copydata(m, 0, ETHER_HDR_LEN, (caddr_t)&vh);
 				vh.evl_proto = vh.evl_encap_proto;
-				vh.evl_tag = l2fhdr->l2_fhdr_vlan_tag >> 16;
+				vh.evl_tag = l2fhdr->l2_fhdr_vlan_tag;
 				vh.evl_encap_proto = htons(ETHERTYPE_VLAN);
 				m_adj(m, ETHER_HDR_LEN);
 				if ((m = m_prepend(m, sizeof(vh), M_DONTWAIT)) == NULL)
@@ -4076,8 +4104,7 @@ bnx_tx_intr(struct bnx_softc *sc)
 		 */
 		if (sc->tx_mbuf_ptr[sw_tx_chain_cons] != NULL) {
 			/* Validate that this is the last tx_bd. */
-			DBRUNIF((!(txbd->tx_bd_vlan_tag_flags &
-			    TX_BD_FLAGS_END)),
+			DBRUNIF((!(txbd->tx_bd_flags & TX_BD_FLAGS_END)),
 			    printf("%s: tx_bd END flag not set but "
 			    "txmbuf == NULL!\n");
 			    bnx_breakpoint(sc));
@@ -4293,36 +4320,32 @@ bnx_tx_encap(struct bnx_softc *sc, struct mbuf **m_head)
 	bus_dmamap_t		map;
 	struct tx_bd 		*txbd = NULL;
 	struct mbuf		*m0;
-	u_int32_t		vlan_tag_flags = 0;
-	u_int32_t		addr, prod_bseq;
+	u_int16_t		vlan_tag = 0, flags = 0;
 	u_int16_t		chain_prod, prod;
 #ifdef BNX_DEBUG
 	u_int16_t		debug_prod;
 #endif
+	u_int32_t		addr, prod_bseq;
 	int			i, error, rc = 0;
 
 	m0 = *m_head;
-#ifdef BNX_CSUM
 	/* Transfer any checksum offload flags to the bd. */
 	if (m0->m_pkthdr.csum_flags) {
 		if (m0->m_pkthdr.csum_flags & M_IPV4_CSUM_OUT)
-			vlan_tag_flags |= TX_BD_FLAGS_IP_CKSUM;
+			flags |= TX_BD_FLAGS_IP_CKSUM;
 		if (m0->m_pkthdr.csum_flags &
 		    (M_TCPV4_CSUM_OUT | M_UDPV4_CSUM_OUT))
-			vlan_tag_flags |= TX_BD_FLAGS_TCP_UDP_CKSUM;
+			flags |= TX_BD_FLAGS_TCP_UDP_CKSUM;
 	}
-#endif
 
-#ifdef BNX_VLAN
 #if NVLAN > 0
 	/* Transfer any VLAN tags to the bd. */
 	if ((m0->m_flags & (M_PROTO1|M_PKTHDR)) == (M_PROTO1|M_PKTHDR) &&
 	    m0->m_pkthdr.rcvif != NULL) {
 		struct ifvlan *ifv = m0->m_pkthdr.rcvif->if_softc;
-		vlan_tag_flags |= (TX_BD_FLAGS_VLAN_TAG |
-		    (htons(ifv->ifv_tag) << 16));
+		flags |= TX_BD_FLAGS_VLAN_TAG;
+		vlan_tag = ifv->ifv_tag;
 	}
-#endif
 #endif
 
 	/* Map the mbuf into DMAable memory. */
@@ -4377,15 +4400,16 @@ bnx_tx_encap(struct bnx_softc *sc, struct mbuf **m_head)
 		addr = (u_int32_t)((u_int64_t)map->dm_segs[i].ds_addr >> 32);
 		txbd->tx_bd_haddr_hi = htole32(addr);
 		txbd->tx_bd_mss_nbytes = htole16(map->dm_segs[i].ds_len);
-		txbd->tx_bd_vlan_tag_flags = htole16(vlan_tag_flags);
+		txbd->tx_bd_vlan_tag = htole16(vlan_tag);
+		txbd->tx_bd_flags = htole16(flags);
 		prod_bseq += map->dm_segs[i].ds_len;
 		if (i == 0)
-			txbd->tx_bd_vlan_tag_flags |=htole16(TX_BD_FLAGS_START);
+			txbd->tx_bd_flags |= htole16(TX_BD_FLAGS_START);
 		prod = NEXT_TX_BD(prod);
  	}
  
 	/* Set the END flag on the last TX buffer descriptor. */
-	txbd->tx_bd_vlan_tag_flags |= htole16(TX_BD_FLAGS_END);
+	txbd->tx_bd_flags |= htole16(TX_BD_FLAGS_END);
 
 	DBRUN(BNX_INFO_SEND, bnx_dump_tx_chain(sc, debug_prod, nseg));
 
@@ -4395,17 +4419,14 @@ bnx_tx_encap(struct bnx_softc *sc, struct mbuf **m_head)
 		__FUNCTION__, prod, chain_prod, prod_bseq);
 
 	/*
-	 * Ensure that the map for this transmission
-	 * is placed at the array index of the last
-	 * descriptor in this chain.  This is done
-	 * because a single map is used for all 
-	 * segments of the mbuf and we don't want to
-	 * delete the map before all of the segments
-	 * have been freed.
+	 * Ensure that the mbuf pointer for this
+	 * transmission is placed at the array
+	 * index of the last descriptor in this
+	 * chain.  This is done because a single
+	 * map is used for all segments of the mbuf
+	 * and we don't want to unload the map before
+	 * all of the segments have been freed.
 	 */
-	sc->tx_mbuf_map[TX_CHAIN_IDX(sc->tx_prod)] =
-		sc->tx_mbuf_map[chain_prod];
-	sc->tx_mbuf_map[chain_prod] = map;
 	sc->tx_mbuf_ptr[chain_prod] = m0;
 	sc->used_tx_bd += map->dm_nsegs;
 
@@ -4417,7 +4438,7 @@ bnx_tx_encap(struct bnx_softc *sc, struct mbuf **m_head)
 	DBRUN(BNX_VERBOSE_SEND, bnx_dump_tx_mbuf_chain(sc, chain_prod, 
 	    map_arg.maxsegs));
 
-	/* prod still points the last used tx_bd at this point. */
+	/* prod points to the next free tx_bd at this point. */
 	sc->tx_prod = prod;
 	sc->tx_prod_bseq = prod_bseq;
 
@@ -4453,8 +4474,11 @@ bnx_start(struct ifnet *ifp)
 	    "tx_chain_prod = %04X, tx_prod_bseq = 0x%08X\n",
 	    __FUNCTION__, tx_prod, tx_chain_prod, sc->tx_prod_bseq);
 
-	/* Keep adding entries while there is space in the ring. */
-	while (sc->tx_mbuf_ptr[tx_chain_prod] == NULL) {
+	/*
+	 * Keep adding entries while there is space in the ring.  We keep
+	 * BNX_TX_SLACK_SPACE entries unused at all times.
+	 */
+	while (sc->used_tx_bd < USABLE_TX_BD - BNX_TX_SLACK_SPACE) {
 		/* Check for any frames to send. */
 		IFQ_POLL(&ifp->if_snd, m_head);
 		if (m_head == NULL)
@@ -4556,7 +4580,7 @@ bnx_ioctl(struct ifnet *ifp, u_long command, caddr_t data)
 				bnx_set_rx_mode(sc);
 			} else {
 				if (!(ifp->if_flags & IFF_RUNNING))
-					bnx_init(ifp);
+					bnx_init(sc);
 			}
 		} else {
 			if (ifp->if_flags & IFF_RUNNING)
@@ -5190,9 +5214,10 @@ bnx_dump_txbd(struct bnx_softc *sc, int idx, struct tx_bd *txbd)
 	else
 		/* Normal tx_bd entry. */
 		BNX_PRINTF(sc, "tx_bd[0x%04X]: haddr = 0x%08X:%08X, nbytes = "
-		    "0x%08X, flags = 0x%08X\n", idx, 
+		    "0x%08X, vlan tag = 0x%4X, flags = 0x%08X\n", idx, 
 		    txbd->tx_bd_haddr_hi, txbd->tx_bd_haddr_lo,
-		    txbd->tx_bd_mss_nbytes, txbd->tx_bd_vlan_tag_flags);
+		    txbd->tx_bd_mss_nbytes, txbd->tx_bd_vlan_tag,
+		    txbd->tx_bd_flags);
 }
 
 void

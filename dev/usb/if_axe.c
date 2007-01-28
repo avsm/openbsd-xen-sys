@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_axe.c,v 1.54 2006/07/09 22:46:38 dlg Exp $	*/
+/*	$OpenBSD: if_axe.c,v 1.58 2007/01/18 04:36:57 jsg Exp $	*/
 
 /*
  * Copyright (c) 1997, 1998, 1999, 2000-2003
@@ -134,18 +134,23 @@ Static const struct axe_type axe_devs[] = {
 	{ { USB_VENDOR_ASIX, USB_PRODUCT_ASIX_AX88772}, AX772 },
 	{ { USB_VENDOR_ASIX, USB_PRODUCT_ASIX_AX88178}, AX178 },
 	{ { USB_VENDOR_ATEN, USB_PRODUCT_ATEN_UC210T}, 0 },
+	{ { USB_VENDOR_BELKIN, USB_PRODUCT_BELKIN_F5D5055 }, AX178 },
 	{ { USB_VENDOR_BILLIONTON, USB_PRODUCT_BILLIONTON_SNAPPORT}, 0 },
 	{ { USB_VENDOR_BILLIONTON, USB_PRODUCT_BILLIONTON_USB2AR}, 0},
 	{ { USB_VENDOR_CISCOLINKSYS, USB_PRODUCT_CISCOLINKSYS_USB200MV2}, AX772 },
 	{ { USB_VENDOR_COREGA, USB_PRODUCT_COREGA_FETHER_USB2_TX }, 0},
 	{ { USB_VENDOR_DLINK, USB_PRODUCT_DLINK_DUBE100}, 0 },
+	{ { USB_VENDOR_DLINK, USB_PRODUCT_DLINK_DUBE100B1 }, AX772 },
 	{ { USB_VENDOR_GOODWAY, USB_PRODUCT_GOODWAY_GWUSB2E}, 0 },
 	{ { USB_VENDOR_JVC, USB_PRODUCT_JVC_MP_PRX1}, 0 },
 	{ { USB_VENDOR_LINKSYS2, USB_PRODUCT_LINKSYS2_USB200M}, 0 },
+	{ { USB_VENDOR_LINKSYS4, USB_PRODUCT_LINKSYS4_USB1000 }, AX178 },
 	{ { USB_VENDOR_MELCO, USB_PRODUCT_MELCO_LUAU2KTX}, 0 },
 	{ { USB_VENDOR_NETGEAR, USB_PRODUCT_NETGEAR_FA120}, 0 },
+	{ { USB_VENDOR_PLANEX3, USB_PRODUCT_PLANEX3_GU1000T }, AX178 },
 	{ { USB_VENDOR_SYSTEMTALKS, USB_PRODUCT_SYSTEMTALKS_SGCX2UL}, 0 },
 	{ { USB_VENDOR_SITECOM, USB_PRODUCT_SITECOM_LN029}, 0 },
+	{ { USB_VENDOR_SITECOMEU, USB_PRODUCT_SITECOMEU_LN028 }, AX178 },
 	{ { 0, 0}, 0 }
 };
 
@@ -469,10 +474,10 @@ axe_ax88178_init(struct axe_softc *sc)
 	}
 
 	/* soft reset */
-	axe_cmd(sc, AXE_CMD_SW_RESET_REG, 0, 0, NULL);
+	axe_cmd(sc, AXE_CMD_SW_RESET_REG, 0, AXE_SW_RESET_CLEAR, NULL);
 	usbd_delay_ms(sc->axe_udev, 150);
 	axe_cmd(sc, AXE_CMD_SW_RESET_REG, 0,
-	    AXE_178_RESET_PRL | AXE_178_RESET_MAGIC, NULL);
+	    AXE_SW_RESET_PRL | AXE_178_RESET_MAGIC, NULL);
 	usbd_delay_ms(sc->axe_udev, 150);
 	axe_cmd(sc, AXE_CMD_RXCTL_WRITE, 0, 0, NULL);
 }
@@ -483,24 +488,37 @@ axe_ax88772_init(struct axe_softc *sc)
 	axe_cmd(sc, AXE_CMD_WRITE_GPIO, 0, 0x00b0, NULL);
 	usbd_delay_ms(sc->axe_udev, 40);
 
-	/* ask for embedded PHY */
-	axe_cmd(sc, AXE_CMD_SW_PHY_SELECT, 0, 0x01, NULL);
-	usbd_delay_ms(sc->axe_udev, 10);
+	if (sc->axe_phyaddrs[1] == AXE_INTPHY) {
+		/* ask for the embedded PHY */
+		axe_cmd(sc, AXE_CMD_SW_PHY_SELECT, 0, 0x01, NULL);
+		usbd_delay_ms(sc->axe_udev, 10);
 
-	/* power down and reset state, pin reset state */
-	axe_cmd(sc, AXE_CMD_SW_RESET_REG, 0, 0x00, NULL);
-	usbd_delay_ms(sc->axe_udev, 60);
+		/* power down and reset state, pin reset state */
+		axe_cmd(sc, AXE_CMD_SW_RESET_REG, 0, AXE_SW_RESET_CLEAR, NULL);
+		usbd_delay_ms(sc->axe_udev, 60);
 
-	/* power down/reset state, pin operating state */
-	axe_cmd(sc, AXE_CMD_SW_RESET_REG, 0, 0x48, NULL);
+		/* power down/reset state, pin operating state */
+		axe_cmd(sc, AXE_CMD_SW_RESET_REG, 0,
+		    AXE_SW_RESET_IPPD | AXE_SW_RESET_PRL, NULL);
+		usbd_delay_ms(sc->axe_udev, 150);
+
+		/* power up, reset */
+		axe_cmd(sc, AXE_CMD_SW_RESET_REG, 0, AXE_SW_RESET_PRL, NULL);
+
+		/* power up, operating */
+		axe_cmd(sc, AXE_CMD_SW_RESET_REG, 0,
+		    AXE_SW_RESET_IPRL | AXE_SW_RESET_PRL, NULL);
+	} else {
+		/* ask for external PHY */
+		axe_cmd(sc, AXE_CMD_SW_PHY_SELECT, 0, 0x00, NULL);
+		usbd_delay_ms(sc->axe_udev, 10);
+
+		/* power down internal PHY */
+		axe_cmd(sc, AXE_CMD_SW_RESET_REG, 0,
+		    AXE_SW_RESET_IPPD | AXE_SW_RESET_PRL, NULL);
+	}
+
 	usbd_delay_ms(sc->axe_udev, 150);
-
-	/* power up, reset */
-	axe_cmd(sc, AXE_CMD_SW_RESET_REG, 0, 0x08, NULL);
-
-	/* power up, operating */
-	axe_cmd(sc, AXE_CMD_SW_RESET_REG, 0, 0x28, NULL);
-
 	axe_cmd(sc, AXE_CMD_RXCTL_WRITE, 0, 0, NULL);
 }
 
@@ -600,6 +618,12 @@ USB_ATTACH(axe)
 
 	s = splnet();
 
+	/* We need the PHYID for init dance in some cases */
+	axe_cmd(sc, AXE_CMD_READ_PHYID, 0, 0, (void *)&sc->axe_phyaddrs);
+
+	DPRINTF((" phyaddrs[0]: %x phyaddrs[1]: %x\n",
+	    sc->axe_phyaddrs[0], sc->axe_phyaddrs[1]));
+
 	if (sc->axe_flags & AX178) {
 		axe_ax88178_init(sc);
 		printf(", AX88178");
@@ -618,13 +642,9 @@ USB_ATTACH(axe)
 		axe_cmd(sc, AXE_172_CMD_READ_NODEID, 0, 0, &eaddr);
 
 	/*
-	 * Load IPG values and PHY indexes.
+	 * Load IPG values
 	 */
 	axe_cmd(sc, AXE_CMD_READ_IPG012, 0, 0, (void *)&sc->axe_ipgs);
-	axe_cmd(sc, AXE_CMD_READ_PHYID, 0, 0, (void *)&sc->axe_phyaddrs);
-
-	DPRINTF((" phyaddrs[0]: %x phyaddrs[1]: %x\n",
-	    sc->axe_phyaddrs[0], sc->axe_phyaddrs[1]));
 
 	/*
 	 * Work around broken adapters that appear to lie about
@@ -1135,8 +1155,8 @@ axe_encap(struct axe_softc *sc, struct mbuf *m, int idx)
 	c->axe_mbuf = m;
 
 	usbd_setup_xfer(c->axe_xfer, sc->axe_ep[AXE_ENDPT_TX],
-	    c, c->axe_buf, length, USBD_FORCE_SHORT_XFER, 10000,
-	    axe_txeof);
+	    c, c->axe_buf, length, USBD_FORCE_SHORT_XFER | USBD_NO_COPY,
+	    10000, axe_txeof);
 
 	/* Transmit */
 	err = usbd_transfer(c->axe_xfer);
@@ -1202,9 +1222,6 @@ axe_init(void *xsc)
 	usbd_status		err;
 	int			rxmode;
 	int			i, s;
-
-	if (ifp->if_flags & IFF_RUNNING)
-		return;
 
 	s = splnet();
 
@@ -1312,21 +1329,18 @@ axe_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	switch(cmd) {
 	case SIOCSIFADDR:
 		ifp->if_flags |= IFF_UP;
-		axe_init(sc);
-
-		switch (ifa->ifa_addr->sa_family) {
+		if (!(ifp->if_flags & IFF_RUNNING))
+			axe_init(sc);
 #ifdef INET
-		case AF_INET:
+		if (ifa->ifa_addr->sa_family == AF_INET)
 			arp_ifinit(&sc->arpcom, ifa);
-			break;
-#endif /* INET */
-		}
+#endif
 		break;
 
 	case SIOCSIFMTU:
-		if (ifr->ifr_mtu > ETHERMTU)
+		if (ifr->ifr_mtu < ETHERMIN || ifr->ifr_mtu > ifp->if_hardmtu)
 			error = EINVAL;
-		else
+		else if (ifp->if_mtu != ifr->ifr_mtu)
 			ifp->if_mtu = ifr->ifr_mtu;
 		break;
 
@@ -1355,7 +1369,6 @@ axe_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 				axe_stop(sc);
 		}
 		sc->axe_if_flags = ifp->if_flags;
-		error = 0;
 		break;
 	case SIOCADDMULTI:
 	case SIOCDELMULTI:
@@ -1405,7 +1418,7 @@ axe_watchdog(struct ifnet *ifp)
 	usbd_get_xfer_status(c->axe_xfer, NULL, NULL, NULL, &stat);
 	axe_txeof(c->axe_xfer, c, stat);
 
-	if (ifp->if_snd.ifq_head != NULL)
+	if (!IFQ_IS_EMPTY(&ifp->if_snd))
 		axe_start(ifp);
 	splx(s);
 }

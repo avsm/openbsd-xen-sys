@@ -1,4 +1,4 @@
-/*	$OpenBSD: locore.s,v 1.61 2006/08/27 21:19:02 kettenis Exp $	*/
+/*	$OpenBSD: locore.s,v 1.69 2007/01/06 23:07:13 kettenis Exp $	*/
 /*	$NetBSD: locore.s,v 1.137 2001/08/13 06:10:10 jdolecek Exp $	*/
 
 /*
@@ -2195,6 +2195,7 @@ winfixsave:
 1:
 #if 1
 	/* Now we need to blast away the D$ to make sure we're in sync */
+dlflush1:
 	stxa	%g0, [%g7] ASI_DCACHE_TAG
 	brnz,pt	%g7, 1b
 	 dec	8, %g7
@@ -4094,17 +4095,7 @@ dostart:
 	sethi	%hi(_C_LABEL(nwindows)), %o1	! may as well tell everyone
 	st	%o0, [%o1 + %lo(_C_LABEL(nwindows))]
 
-#if defined(HORRID_III_HACK)
-	/*
-	 * Check for UltraSPARC III
-	 */
-	rdpr	%ver, %g1
-	srlx	%g1, 32, %g1
-	sll	%g1, 16, %g1
-	srl	%g1, 16, %g1
-	cmp	%g1, 0x0014
-	bl,pt	%icc, 1f
-	 nop
+#if 0
 	/*
 	 * Disable the DCACHE entirely for debug.
 	 */
@@ -4246,6 +4237,7 @@ _C_LABEL(cpu_initialize):
 
 	set	(1<<14)-8, %o0			! Clear out DCACHE
 1:
+dlflush2:
 	stxa	%g0, [%o0] ASI_DCACHE_TAG	! clear DCACHE line
 	membar	#Sync
 	brnz,pt	%o0, 1b
@@ -4715,12 +4707,6 @@ _C_LABEL(tlb_flush_pte):
 	stxa	%g2, [%g2] ASI_IMMU_DEMAP		! to both TLBs
 	membar	#Sync					! No real reason for this XXXX
 	flush	%o4
-	srl	%g2, 0, %g2				! and make sure it's both 32- and 64-bit entries
-	stxa	%g2, [%g2] ASI_DMMU_DEMAP		! Do the demap
-	membar	#Sync
-	stxa	%g2, [%g2] ASI_IMMU_DEMAP		! Do the demap
-	membar	#Sync					! No real reason for this XXXX
-	flush	%o4
 	stxa	%g1, [%o2] ASI_DMMU			! Restore asi
 	membar	#Sync					! No real reason for this XXXX
 	flush	%o4
@@ -4800,44 +4786,16 @@ _C_LABEL(tlb_flush_ctx):
 	 nop
 
 /*
- * blast_vcache()
- *
- * Clear out all of D$ regardless of contents
- * Does not modify %o0
- *
- */
-	.align 8
-	.globl	_C_LABEL(blast_vcache)
-	.proc 1
-	FTYPE(blast_vcache)
-_C_LABEL(blast_vcache):
-/*
- * We turn off interrupts for the duration to prevent RED exceptions.
- */
-	rdpr	%pstate, %o3
-	set	(2*NBPG)-8, %o1
-	andn	%o3, PSTATE_IE, %o4			! Turn off PSTATE_IE bit
-	wrpr	%o4, 0, %pstate
-1:
-	stxa	%g0, [%o1] ASI_DCACHE_TAG
-	brnz,pt	%o1, 1b
-	 dec	8, %o1
-	sethi	%hi(KERNBASE), %o2
-	flush	%o2
-	retl
-	 wrpr	%o3, %pstate
-
-/*
- * dcache_flush_page(vaddr_t pa)
+ * dcache_flush_page(paddr_t pa)
  *
  * Clear one page from D$.
  *
  */
 	.align 8
-	.globl	_C_LABEL(dcache_flush_page)
+	.globl	_C_LABEL(us_dcache_flush_page)
 	.proc 1
-	FTYPE(dcache_flush_page)
-_C_LABEL(dcache_flush_page):
+	FTYPE(us_dcache_flush_page)
+_C_LABEL(us_dcache_flush_page):
 
 	!! Try using cache_flush_phys for a change.
 
@@ -4862,6 +4820,7 @@ _C_LABEL(dcache_flush_page):
 	bne,pt	%xcc, 1b
 	 membar	#LoadStore
 	
+dlflush3:
 	stxa	%g0, [%o0] ASI_DCACHE_TAG
 	ba,pt	%icc, 1b
 	 membar	#StoreLoad
@@ -4872,6 +4831,28 @@ _C_LABEL(dcache_flush_page):
 	flush	%o5
 	retl
 	 membar	#Sync
+
+	.align 8
+	.globl  _C_LABEL(us3_dcache_flush_page)
+	.proc 1
+	FTYPE(us3_dcache_flush_page)
+_C_LABEL(us3_dcache_flush_page):
+	ldxa    [%g0] ASI_MCCR, %o1
+	btst    MCCR_DCACHE_EN, %o1
+	bz,pn   %icc, 1f
+	 nop
+	sethi   %hi(PAGE_SIZE), %o4
+	or      %g0, (PAGE_SIZE - 1), %o3
+	andn    %o0, %o3, %o0
+2:
+	subcc   %o4, 32, %o4
+	stxa    %g0, [%o0 + %o4] ASI_DCACHE_INVALIDATE
+	membar  #Sync
+	bne,pt  %icc, 2b
+	 nop
+1:
+	retl
+	 nop
 
 /*
  * cache_flush_virt(va, len)
@@ -4896,6 +4877,7 @@ _C_LABEL(cache_flush_virt):
 
 	!! Clear from start to end
 1:
+dlflush4:
 	stxa	%g0, [%o0] ASI_DCACHE_TAG
 	dec	16, %o4
 	brgz,pt	%o4, 1b
@@ -4906,19 +4888,6 @@ _C_LABEL(cache_flush_virt):
 	membar	#Sync
 	retl
 	 nop
-
-	!! We got a hole.  Clear from start to hole
-	clr	%o4
-3:
-	stxa	%g0, [%o4] ASI_DCACHE_TAG
-	dec	16, %o1
-	brgz,pt	%o1, 3b
-	 inc	16, %o4
-
-	!! Now clear to the end.
-	sub	%o3, %o2, %o4	! Size to clear (NBPG - end)
-	ba,pt	%icc, 1b
-	 mov	%o2, %o0	! Start of clear
 
 /*
  *	cache_flush_phys(paddr_t, psize_t, int);
@@ -4963,6 +4932,7 @@ _C_LABEL(cache_flush_phys):
 	 nop
 
 	membar	#LoadStore
+dlflush5:
 	stxa	%g0, [%o4] ASI_DCACHE_TAG ! Just right
 2:
 	membar	#StoreLoad
@@ -6324,6 +6294,7 @@ ENTRY(pmap_zero_phys)
 	dec	8, %o2
 	stxa	%g0, [%o0] ASI_PHYS_CACHED
 	inc	8, %o0
+dlflush6:
 	stxa	%g0, [%o1] ASI_DCACHE_TAG
 	brgz	%o2, 1b
 	 inc	16, %o1
@@ -9592,7 +9563,7 @@ ENTRY(longjmp)
 	mov	CTX_SECONDARY, %o4
 	stxa	%o3, [%o3] ASI_IMMU_DEMAP
 	membar	#Sync
-	stxa	%o0, [%o4] ASI_DMMU		! Maybe we should invali
+	stxa	%o0, [%o4] ASI_DMMU		! Maybe we should invalidate the old context?
 	membar	#Sync				! No real reason for this XXXX
 	sethi	%hi(KERNBASE), %o2
 	flush	%o2
@@ -9621,3 +9592,13 @@ _C_LABEL(proc0paddr):
 	.comm	_C_LABEL(trapdebug), 4
 	.comm	_C_LABEL(pmapdebug), 4
 #endif	/* DEBUG */
+
+	.globl	_C_LABEL(dlflush_start)
+_C_LABEL(dlflush_start):
+	.xword	dlflush1
+	.xword	dlflush2
+	.xword	dlflush3
+	.xword	dlflush4
+	.xword	dlflush5
+	.xword	dlflush6
+	.xword 0

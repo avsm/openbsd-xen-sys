@@ -1,4 +1,4 @@
-/*	$OpenBSD: mld6.c,v 1.20 2006/03/05 21:48:57 miod Exp $	*/
+/*	$OpenBSD: mld6.c,v 1.22 2006/11/17 01:11:23 itojun Exp $	*/
 /*	$KAME: mld6.c,v 1.26 2001/02/16 14:50:35 itojun Exp $	*/
 
 /*
@@ -117,13 +117,11 @@ mld6_init()
 	/* XXX: grotty hard coding... */
 	hbh_buf[2] = IP6OPT_PADN;	/* 2 byte padding */
 	hbh_buf[3] = 0;
-	hbh_buf[4] = IP6OPT_RTALERT;
+	hbh_buf[4] = IP6OPT_ROUTER_ALERT;
 	hbh_buf[5] = IP6OPT_RTALERT_LEN - 2;
 	bcopy((caddr_t)&rtalert_code, &hbh_buf[6], sizeof(u_int16_t));
 
 	ip6_opts.ip6po_hbh = hbh;
-	/* We will specify the hoplimit by a multicast option. */
-	ip6_opts.ip6po_hlim = -1;
 }
 
 void
@@ -167,7 +165,7 @@ mld6_stop_listening(in6m)
 
 	if (in6m->in6m_state == MLD_IREPORTEDLAST &&
 	    (!IN6_ARE_ADDR_EQUAL(&in6m->in6m_addr, &mld_all_nodes_linklocal)) &&
-	    IPV6_ADDR_MC_SCOPE(&in6m->in6m_addr) > IPV6_ADDR_SCOPE_NODELOCAL)
+	    IPV6_ADDR_MC_SCOPE(&in6m->in6m_addr) > IPV6_ADDR_SCOPE_INTFACELOCAL)
 		mld6_sendpkt(in6m, MLD_LISTENER_DONE,
 		    &mld_all_routers_linklocal);
 }

@@ -1,4 +1,4 @@
-/*	$OpenBSD: hme.c,v 1.42 2006/03/25 22:41:43 djm Exp $	*/
+/*	$OpenBSD: hme.c,v 1.45 2006/12/21 21:48:11 jason Exp $	*/
 /*	$NetBSD: hme.c,v 1.21 2001/07/07 15:59:37 thorpej Exp $	*/
 
 /*-
@@ -151,11 +151,9 @@ hme_config(sc)
 	 *	sc_burst
 	 *
 	 * the local Ethernet address:
-	 *	sc_enaddr
+	 *	sc_arpcom.ac_enaddr
 	 *
 	 */
-
-	bcopy(sc->sc_enaddr, sc->sc_arpcom.ac_enaddr, ETHER_ADDR_LEN);
 
 	/* Make sure the chip is stopped. */
 	hme_stop(sc);
@@ -228,7 +226,7 @@ hme_config(sc)
 	}
 	sc->sc_rb.rb_dmabase = sc->sc_dmamap->dm_segs[0].ds_addr;
 
-	printf(", address %s\n", ether_sprintf(sc->sc_enaddr));
+	printf(", address %s\n", ether_sprintf(sc->sc_arpcom.ac_enaddr));
 
 	/* Initialize ifnet structure. */
 	strlcpy(ifp->if_xname, sc->sc_dev.dv_xname, sizeof ifp->if_xname);
@@ -519,7 +517,7 @@ hme_init(sc)
 	bus_space_write_4(t, mac, HME_MACI_TXSIZE, ETHER_MAX_LEN + ETHER_VLAN_ENCAP_LEN);
 
 	/* Load station MAC address */
-	ea = sc->sc_enaddr;
+	ea = sc->sc_arpcom.ac_enaddr;
 	bus_space_write_4(t, mac, HME_MACI_MACADDR0, (ea[0] << 8) | ea[1]);
 	bus_space_write_4(t, mac, HME_MACI_MACADDR1, (ea[2] << 8) | ea[3]);
 	bus_space_write_4(t, mac, HME_MACI_MACADDR2, (ea[4] << 8) | ea[5]);

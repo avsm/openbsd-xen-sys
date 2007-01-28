@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bnxreg.h,v 1.15 2006/10/14 21:19:09 brad Exp $	*/
+/*	$OpenBSD: if_bnxreg.h,v 1.17 2006/11/20 21:26:27 brad Exp $	*/
 
 /*-
  * Copyright (c) 2006 Broadcom Corporation
@@ -692,7 +692,8 @@ struct tx_bd {
 	u_int32_t tx_bd_haddr_hi;
 	u_int32_t tx_bd_haddr_lo;
 	u_int32_t tx_bd_mss_nbytes;
-	u_int32_t tx_bd_vlan_tag_flags;
+	u_int16_t tx_bd_flags;
+	u_int16_t tx_bd_vlan_tag;
 		#define TX_BD_FLAGS_CONN_FAULT		(1<<0)
 		#define TX_BD_FLAGS_TCP_UDP_CKSUM	(1<<1)
 		#define TX_BD_FLAGS_IP_CKSUM		(1<<2)
@@ -4586,7 +4587,9 @@ struct bnx_softc
 {
 	struct device			bnx_dev;			/* Parent device handle */
 	struct arpcom			arpcom;
+
 	struct pci_attach_args		bnx_pa;
+	pci_intr_handle_t		bnx_ih;
 
 	struct ifmedia		bnx_ifmedia;		/* TBI media info */
 

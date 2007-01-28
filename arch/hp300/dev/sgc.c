@@ -1,4 +1,4 @@
-/*	$OpenBSD: sgc.c,v 1.2 2005/01/23 00:03:10 miod Exp $	*/
+/*	$OpenBSD: sgc.c,v 1.4 2007/01/06 20:09:12 miod Exp $	*/
 
 /*
  * Copyright (c) 2005, Miodrag Vallat
@@ -36,6 +36,7 @@
 #include <sys/kernel.h>
 
 #include <machine/autoconf.h>
+#include <machine/bus.h>
 #include <machine/cpu.h>
 #include <machine/hp300spu.h>
 
@@ -84,6 +85,7 @@ sgcattach(parent, self, aux)
 	struct sgc_attach_args saa;
 	caddr_t pa, va;
 	int slot, rv;
+	extern struct hp300_bus_space_tag hp300_mem_tag;
 
 	printf("\n");
 
@@ -104,6 +106,7 @@ sgcattach(parent, self, aux)
 
 		bzero(&saa, sizeof(saa));
 		saa.saa_slot = slot;
+		saa.saa_iot = &hp300_mem_tag;
 
 		/* Attach matching device. */
 		config_found(self, &saa, sgcprint);

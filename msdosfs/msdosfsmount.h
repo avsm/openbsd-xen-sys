@@ -1,4 +1,4 @@
-/*	$OpenBSD: msdosfsmount.h,v 1.14 2003/04/18 22:12:25 tedu Exp $	*/
+/*	$OpenBSD: msdosfsmount.h,v 1.17 2006/12/15 03:04:24 krw Exp $	*/
 /*	$NetBSD: msdosfsmount.h,v 1.16 1997/10/17 11:24:24 ws Exp $	*/
 
 /*-
@@ -59,6 +59,7 @@ struct msdosfsmount {
 	mode_t pm_mask;		/* mask to and with file protection bits */
 	struct vnode *pm_devvp;	/* vnode for block device mntd */
 	struct bpb50 pm_bpb;	/* BIOS parameter blk for this fs */
+	uint32_t pm_BlkPerSec;	/* # of DEV_BSIZE blocks in MSDOSFS sector */
 	uint32_t pm_FATsecs;	/* actual number of fat sectors */
 	uint32_t pm_fatblk;	/* block # of first FAT */
 	uint32_t pm_rootdirblk;	/* block # (cluster # for FAT32) of root directory number */
@@ -96,14 +97,13 @@ struct msdosfsmount {
 #define	MSDOSFSMNT_SHORTNAME	0x01
 #define	MSDOSFSMNT_LONGNAME	0x02
 #define	MSDOSFSMNT_NOWIN95	0x04
-#define	MSDOSFSMNT_GEMDOSFS	0x08
 #define MSDOSFSMNT_ALLOWDIRX	0x10
 #endif
 
 /* All flags above: */
 #define	MSDOSFSMNT_MNTOPT \
 	(MSDOSFSMNT_SHORTNAME|MSDOSFSMNT_LONGNAME|MSDOSFSMNT_NOWIN95 \
-	 |MSDOSFSMNT_GEMDOSFS|MSDOSFSMNT_ALLOWDIRX)
+	 |MSDOSFSMNT_ALLOWDIRX)
 #define	MSDOSFSMNT_RONLY	0x80000000	/* mounted read-only	*/
 #define	MSDOSFSMNT_WAITONFAT	0x40000000	/* mounted synchronous	*/
 #define	MSDOSFS_FATMIRROR	0x20000000	/* FAT is mirrored */
@@ -195,6 +195,10 @@ struct msdosfsmount {
 	((dirclu) == MSDOSFSROOT \
 	 ? roottobn((pmp), (dirofs)) \
 	 : cntobn((pmp), (dirclu)))
+
+/* Calculate size of fsinfo block */
+#define fsi_size(pmp) \
+	(1024 << ((pmp)->pm_BlkPerSec >> 2))
 
 /*
  * Prototypes for MSDOSFS virtual filesystem operations

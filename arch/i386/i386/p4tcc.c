@@ -1,4 +1,4 @@
-/*	$OpenBSD: p4tcc.c,v 1.10 2006/06/17 18:22:13 dim Exp $ */
+/*	$OpenBSD: p4tcc.c,v 1.12 2006/12/12 23:14:27 dim Exp $ */
 /*
  * Copyright (c) 2003 Ted Unangst
  * All rights reserved.
@@ -102,12 +102,12 @@ p4tcc_init(int family, int step)
 int
 p4tcc_cpuspeed(int *speed)
 {
-	*speed = pentium_mhz / 100 * (p4tcc_level + 12);
+	*speed = cpuspeed / 100 * (p4tcc_level + 12);
 
 	return 0;
 }
 
-int
+void
 p4tcc_setperf(int level)
 {
 	int i;
@@ -129,6 +129,4 @@ p4tcc_setperf(int level)
 		printf("p4_tcc: cpu did not honor request\n");
 	else
 		p4tcc_level = tcc[i].level;
-
-	return (0);
 }

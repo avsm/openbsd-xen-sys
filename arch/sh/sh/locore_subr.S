@@ -1,4 +1,4 @@
-/*	$OpenBSD: locore_subr.S,v 1.2 2006/10/06 21:16:57 mickey Exp $	*/
+/*	$OpenBSD: locore_subr.S,v 1.4 2006/11/10 07:02:55 miod Exp $	*/
 /*	$NetBSD: locore_subr.S,v 1.28 2006/01/23 22:52:09 uwe Exp $	*/
 
 /*-
@@ -132,15 +132,6 @@ ENTRY(cpu_switch)
 FUNC_SYMBOL(switch_resume)
 
 
-
-/*
- * LINTSTUB: Func: void cpu_exit(struct proc *p)
- *	Just fall-through to the switch_exit below.
- */
-ENTRY(cpu_exit)
-	mov.l	.L_switch_exit_proc_exit2, r5	/* exit_func to call */
-	/* FALLTHROUGH */
-
 /*
  * LINTSTUB: Func: void switch_exit(struct proc *p, void (*exit_func)(struct proc *))
  *	Called only from cpu_exit(p).  Before we call exit_func to
@@ -174,8 +165,6 @@ ALTENTRY(switch_exit)
 	 mov	#0, r4		/* no "previous" proc */
 
 	.align 2
-.L_switch_exit_proc_exit2:
-	.long	_C_LABEL(exit2)
 .L_switch_exit_proc0_pcb:
 	.long	_C_LABEL(proc0) + P_MD_PCB
 .L_switch_exit_curpcb:
@@ -582,6 +571,8 @@ ENTRY(copyoutstr)
 	mov.l	.L_copyoutstr_onfault, r1
 	mov.l	r1,	@(PCB_ONFAULT,r2)
 	mov.l	.L_copyoutstr_VM_MAXUSER_ADDRESS, r1
+	cmp/hi	r1,	r5		/* bomb if udst isn't in user space */
+	bt	4f
 	mov	r1,	r0
 	sub	r5,	r0
 	cmp/hi	r6,	r0		/* don't beyond user space */
@@ -656,8 +647,10 @@ ENTRY(copyinstr)
 	mov.l	r1,	@(PCB_ONFAULT,r2)
 
 	mov.l	.L_copyinstr_VM_MAXUSER_ADDRESS, r1
+	cmp/hi	r1,	r4		/* bomb if src isn't in user space */
+	bt	4f
 	mov	r1,	r0
-	sub	r5,	r0
+	sub	r4,	r0
 	cmp/hi	r6,	r0		/* don't beyond user space */
 	bf	2f
 	bra	2f

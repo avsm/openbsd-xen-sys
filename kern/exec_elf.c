@@ -1,4 +1,4 @@
-/*	$OpenBSD: exec_elf.c,v 1.53 2006/01/19 17:54:47 mickey Exp $	*/
+/*	$OpenBSD: exec_elf.c,v 1.55 2006/11/14 18:00:27 jmc Exp $	*/
 
 /*
  * Copyright (c) 1996 Per Fogelstrom
@@ -159,7 +159,7 @@ ELFNAME(copyargs)(struct exec_package *pack, struct ps_strings *arginfo,
 	 */
 	if (pack->ep_interp != NULL) {
 		pack->ep_emul_argp = stack;
-		stack += ELF_AUX_ENTRIES * sizeof (AuxInfo);
+		(char *)stack += ELF_AUX_ENTRIES * sizeof (AuxInfo);
 	}
 	return (stack);
 }
@@ -639,7 +639,7 @@ native:
 		switch (ph[i].p_type) {
 		case PT_LOAD:
 			/*
-			 * Calcuates size of text and data segments
+			 * Calculates size of text and data segments
 			 * by starting at first and going to end of last.
 			 * 'rwx' sections are treated as data.
 			 * this is correct for BSS_PLT, but may not be

@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_fork.c,v 1.82 2006/02/20 19:39:11 miod Exp $	*/
+/*	$OpenBSD: kern_fork.c,v 1.83 2006/03/27 19:08:58 mickey Exp $	*/
 /*	$NetBSD: kern_fork.c,v 1.29 1996/02/09 18:59:34 christos Exp $	*/
 
 /*
@@ -191,10 +191,7 @@ fork1(struct proc *p1, int exitsig, int flags, void *stack, size_t stacksize,
 		return (EAGAIN);
 	}
 
-	/*
-	 * Allocate a pcb and kernel stack for the process
-	 */
-	uaddr = uvm_km_valloc_align(kernel_map, USPACE, USPACE_ALIGN);
+	uaddr = uvm_km_alloc1(kernel_map, USPACE, USPACE_ALIGN, 1);
 	if (uaddr == 0) {
 		chgproccnt(uid, -1);
 		nprocs--;
@@ -237,7 +234,7 @@ fork1(struct proc *p1, int exitsig, int flags, void *stack, size_t stacksize,
 	 * Increase reference counts on shared objects.
 	 * The p_stats and p_sigacts substructs are set in vm_fork.
 	 */
-	p2->p_flag = P_INMEM;
+	p2->p_flag = 0;
 	p2->p_emul = p1->p_emul;
 	if (p1->p_flag & P_PROFIL)
 		startprofclock(p2);
@@ -278,18 +275,15 @@ fork1(struct proc *p1, int exitsig, int flags, void *stack, size_t stacksize,
 		p2->p_flag |= P_CONTROLT;
 	if (flags & FORK_PPWAIT)
 		p2->p_flag |= P_PPWAIT;
-	LIST_INSERT_AFTER(p1, p2, p_pglist);
 	p2->p_pptr = p1;
 	if (flags & FORK_NOZOMBIE)
 		p2->p_flag |= P_NOZOMBIE;
-	LIST_INSERT_HEAD(&p1->p_children, p2, p_sibling);
 	LIST_INIT(&p2->p_children);
 
 #ifdef RTHREADS
 	if (flags & FORK_THREAD) {
 		p2->p_flag |= P_THREAD;
 		p2->p_thrparent = p1->p_thrparent;
-		LIST_INSERT_HEAD(&p1->p_thrparent->p_thrchildren, p2, p_thrsib);
 	} else {
 		p2->p_thrparent = p2;
 	}
@@ -331,11 +325,6 @@ fork1(struct proc *p1, int exitsig, int flags, void *stack, size_t stacksize,
 	 */
 	if (p2->p_emul->e_proc_fork)
 		(*p2->p_emul->e_proc_fork)(p2, p1);
-	/*
-	 * This begins the section where we must prevent the parent
-	 * from being swapped.
-	 */
-	PHOLD(p1);
 
 	p2->p_addr = (struct user *)uaddr;
 
@@ -345,6 +334,9 @@ fork1(struct proc *p1, int exitsig, int flags, void *stack, size_t stacksize,
 	 */
 	uvm_fork(p1, p2, ((flags & FORK_SHAREVM) ? TRUE : FALSE), stack,
 	    stacksize, func ? func : child_return, arg ? arg : p2);
+
+	timeout_set(&p2->p_stats->p_virt_to, virttimer_trampoline, p2);
+	timeout_set(&p2->p_stats->p_prof_to, proftimer_trampoline, p2);
 
 	vm = p2->p_vmspace;
 
@@ -367,6 +359,15 @@ fork1(struct proc *p1, int exitsig, int flags, void *stack, size_t stacksize,
 		lastpid = 1 + (randompid ? arc4random() : lastpid) % PID_MAX;
 	} while (pidtaken(lastpid));
 	p2->p_pid = lastpid;
+
+	LIST_INSERT_HEAD(&allproc, p2, p_list);
+	LIST_INSERT_HEAD(PIDHASH(p2->p_pid), p2, p_hash);
+	LIST_INSERT_HEAD(&p1->p_children, p2, p_sibling);
+	LIST_INSERT_AFTER(p1, p2, p_pglist);
+#ifdef RTHREADS
+	if (flags & FORK_THREAD)
+		LIST_INSERT_HEAD(&p1->p_thrparent->p_thrchildren, p2, p_thrsib);
+#endif
 	if (p2->p_flag & P_TRACED) {
 		p2->p_oppid = p1->p_pid;
 		if (p2->p_pptr != p1->p_pptr)
@@ -385,16 +386,10 @@ fork1(struct proc *p1, int exitsig, int flags, void *stack, size_t stacksize,
 		}
 	}
 
-	LIST_INSERT_HEAD(&allproc, p2, p_list);
-	LIST_INSERT_HEAD(PIDHASH(p2->p_pid), p2, p_hash);
-
 #if NSYSTRACE > 0
 	if (ISSET(p1->p_flag, P_SYSTRACE))
 		systrace_fork(p1, p2);
 #endif
-
-	timeout_set(&p2->p_stats->p_virt_to, virttimer_trampoline, p2);
-	timeout_set(&p2->p_stats->p_prof_to, proftimer_trampoline, p2);
 
 	/*
 	 * Make child runnable, set start time, and add to run queue.
@@ -405,11 +400,6 @@ fork1(struct proc *p1, int exitsig, int flags, void *stack, size_t stacksize,
 	p2->p_stat = SRUN;
 	setrunqueue(p2);
 	SCHED_UNLOCK(s);
-
-	/*
-	 * Now can be swapped.
-	 */
-	PRELE(p1);
 
 	/*
 	 * Notify any interested parties about the new process.

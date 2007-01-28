@@ -1,4 +1,4 @@
-/*	$OpenBSD: msdosfs_vfsops.c,v 1.39 2006/08/07 15:50:42 pedro Exp $	*/
+/*	$OpenBSD: msdosfs_vfsops.c,v 1.45 2006/12/15 03:04:24 krw Exp $	*/
 /*	$NetBSD: msdosfs_vfsops.c,v 1.48 1997/10/18 02:54:57 briggs Exp $	*/
 
 /*-
@@ -214,12 +214,6 @@ msdosfs_mount(mp, path, data, ndp, p)
 	pmp->pm_mask = args.mask;
 	pmp->pm_flags |= args.flags & MSDOSFSMNT_MNTOPT;
 
-	/*
-	 * GEMDOS knows nothing (yet) about win95
-	 */
-	if (pmp->pm_flags & MSDOSFSMNT_GEMDOSFS)
-		pmp->pm_flags |= MSDOSFSMNT_NOWIN95;
-	
 	if (pmp->pm_flags & MSDOSFSMNT_NOWIN95)
 		pmp->pm_flags |= MSDOSFSMNT_SHORTNAME;
 	else if (!(pmp->pm_flags & (MSDOSFSMNT_SHORTNAME | MSDOSFSMNT_LONGNAME))) {
@@ -263,16 +257,14 @@ msdosfs_mountfs(devvp, mp, p, argp)
 	struct msdosfsmount *pmp;
 	struct buf *bp;
 	dev_t dev = devvp->v_rdev;
-	struct partinfo dpart;
 	union bootsector *bsp;
 	struct byte_bpb33 *b33;
 	struct byte_bpb50 *b50;
 	struct byte_bpb710 *b710;
 	extern struct vnode *rootvp;
 	u_int8_t SecPerClust;
-	int	ronly, error;
-	int	bsize = 0, dtype = 0, tmp;
-	uint32_t dirsperblk;
+	int	ronly, error, bmapsiz;
+	uint32_t fat_max_clusters;
 
 	/*
 	 * Disallow multiple mounts of the same device.
@@ -298,35 +290,11 @@ msdosfs_mountfs(devvp, mp, p, argp)
 	bp  = NULL; /* both used in error_exit */
 	pmp = NULL;
 
-	if (argp->flags & MSDOSFSMNT_GEMDOSFS) {
-		/*
-	 	 * We need the disklabel to calculate the size of a FAT entry
-		 * later on. Also make sure the partition contains a filesystem
-		 * of type FS_MSDOS. This doesn't work for floppies, so we have
-		 * to check for them too.
-	 	 *
-	 	 * At least some parts of the msdos fs driver seem to assume
-		 * that the size of a disk block will always be 512 bytes.
-		 * Let's check it...
-		 */
-		error = VOP_IOCTL(devvp, DIOCGPART, (caddr_t)&dpart,
-				  FREAD, NOCRED, p);
-		if (error)
-			goto error_exit;
-		tmp   = dpart.part->p_fstype;
-		dtype = dpart.disklab->d_type;
-		bsize = dpart.disklab->d_secsize;
-		if (bsize != 512 || (dtype!=DTYPE_FLOPPY && tmp!=FS_MSDOS)) {
-			error = EFTYPE;
-			goto error_exit;
-		}
-	}
-
 	/*
 	 * Read the boot sector of the filesystem, and then check the
 	 * boot signature.  If not a dos boot sector then error out.
 	 */
-	if ((error = bread(devvp, 0, 512, NOCRED, &bp)) != 0)
+	if ((error = bread(devvp, 0, 2048, NOCRED, &bp)) != 0)
 		goto error_exit;
 	bp->b_flags |= B_AGE;
 	bsp = (union bootsector *)bp->b_data;
@@ -354,12 +322,12 @@ msdosfs_mountfs(devvp, mp, p, argp)
 	pmp->pm_Heads = getushort(b50->bpbHeads);
 	pmp->pm_Media = b50->bpbMedia;
 
-	if (!(argp->flags & MSDOSFSMNT_GEMDOSFS)) {
-    		if (!pmp->pm_BytesPerSec || !SecPerClust
-	    	    || pmp->pm_SecPerTrack > 63) {
-			error = EFTYPE;
-			goto error_exit;
-		}
+	/* Determine the number of DEV_BSIZE blocks in a MSDOSFS sector */
+	pmp->pm_BlkPerSec = pmp->pm_BytesPerSec / DEV_BSIZE;
+
+    	if (!pmp->pm_BytesPerSec || !SecPerClust || pmp->pm_SecPerTrack > 63) {
+		error = EFTYPE;
+		goto error_exit;
 	}
 
 	if (pmp->pm_Sectors == 0) {
@@ -369,8 +337,6 @@ msdosfs_mountfs(devvp, mp, p, argp)
 		pmp->pm_HiddenSects = getushort(b33->bpbHiddenSecs);
 		pmp->pm_HugeSectors = pmp->pm_Sectors;
 	}
-
-	dirsperblk = pmp->pm_BytesPerSec / sizeof(struct direntry);
 
 	if (pmp->pm_RootDirEnts == 0) {
 		if (pmp->pm_Sectors || pmp->pm_FATsecs ||
@@ -389,81 +355,46 @@ msdosfs_mountfs(devvp, mp, p, argp)
 	} else
 	        pmp->pm_flags |= MSDOSFS_FATMIRROR;
 
-	if (argp->flags & MSDOSFSMNT_GEMDOSFS) {
-	        if (FAT32(pmp)) {
-		        /*
-			 * GEMDOS doesn't know fat32.
-			 */
-		        error = EINVAL;
-			goto error_exit;
-		}
+	/*
+	 * More sanity checks:
+	 *	MSDOSFS sectors per cluster: >0 && power of 2
+	 *	MSDOSFS sector size: >= DEV_BSIZE && power of 2
+	 *	HUGE sector count: >0
+	 * 	FAT sectors: >0
+	 */
+	if ((SecPerClust == 0) || (SecPerClust & (SecPerClust - 1)) ||
+	    (pmp->pm_BytesPerSec < DEV_BSIZE) ||
+	    (pmp->pm_BytesPerSec & (pmp->pm_BytesPerSec - 1)) ||
+	    (pmp->pm_HugeSectors == 0) || (pmp->pm_FATsecs == 0)) {
+		error = EINVAL;
+		goto error_exit;
+	}		
+	
+	pmp->pm_HugeSectors *= pmp->pm_BlkPerSec;
+	pmp->pm_HiddenSects *= pmp->pm_BlkPerSec;
+	pmp->pm_FATsecs *= pmp->pm_BlkPerSec;
+	pmp->pm_fatblk = pmp->pm_ResSectors * pmp->pm_BlkPerSec;
+	SecPerClust *= pmp->pm_BlkPerSec;
 
-		/*
-		 * Check a few values (could do some more):
-		 * - logical sector size: power of 2, >= block size
-		 * - sectors per cluster: power of 2, >= 1
-		 * - number of sectors:   >= 1, <= size of partition
-		 */
-		if ( (SecPerClust == 0)
-		  || (SecPerClust & (SecPerClust - 1))
-		  || (pmp->pm_BytesPerSec < bsize)
-		  || (pmp->pm_BytesPerSec & (pmp->pm_BytesPerSec - 1))
-		  || (pmp->pm_HugeSectors == 0)
-		  || (pmp->pm_HugeSectors * (pmp->pm_BytesPerSec / bsize)
-							> dpart.part->p_size)
-		   ) {
-			error = EFTYPE;
-			goto error_exit;
-		}
-		/*
-		 * XXX - Many parts of the msdos fs driver seem to assume that
-		 * the number of bytes per logical sector (BytesPerSec) will
-		 * always be the same as the number of bytes per disk block
-		 * Let's pretend it is.
-		 */
-		tmp = pmp->pm_BytesPerSec / bsize;
-		pmp->pm_BytesPerSec  = bsize;
-		pmp->pm_HugeSectors *= tmp;
-		pmp->pm_HiddenSects *= tmp;
-		pmp->pm_ResSectors  *= tmp;
-		pmp->pm_Sectors     *= tmp;
-		pmp->pm_FATsecs     *= tmp;
-		SecPerClust         *= tmp;
-	}
-	pmp->pm_fatblk = pmp->pm_ResSectors;
 	if (FAT32(pmp)) {
 	        pmp->pm_rootdirblk = getulong(b710->bpbRootClust);
 		pmp->pm_firstcluster = pmp->pm_fatblk
 		        + (pmp->pm_FATs * pmp->pm_FATsecs);
-		pmp->pm_fsinfo = getushort(b710->bpbFSInfo);
+		pmp->pm_fsinfo = getushort(b710->bpbFSInfo) * pmp->pm_BlkPerSec;
 	} else {
 	        pmp->pm_rootdirblk = pmp->pm_fatblk +
 		        (pmp->pm_FATs * pmp->pm_FATsecs);
 		pmp->pm_rootdirsize = (pmp->pm_RootDirEnts * sizeof(struct direntry)
-				       + pmp->pm_BytesPerSec - 1)
-		        / pmp->pm_BytesPerSec;/* in sectors */
+				       + DEV_BSIZE - 1) / DEV_BSIZE;
 		pmp->pm_firstcluster = pmp->pm_rootdirblk + pmp->pm_rootdirsize;
 	}
 
 	pmp->pm_nmbrofclusters = (pmp->pm_HugeSectors - pmp->pm_firstcluster) /
 	    SecPerClust;
 	pmp->pm_maxcluster = pmp->pm_nmbrofclusters + 1;
-	pmp->pm_fatsize = pmp->pm_FATsecs * pmp->pm_BytesPerSec;
+	pmp->pm_fatsize = pmp->pm_FATsecs * DEV_BSIZE;
 
-	if (argp->flags & MSDOSFSMNT_GEMDOSFS) {
-		if ((pmp->pm_nmbrofclusters <= (0xff0 - 2))
-		      && ((dtype == DTYPE_FLOPPY) || ((dtype == DTYPE_VNODE)
-		      && ((pmp->pm_Heads == 1) || (pmp->pm_Heads == 2))))
-		     ) {
-		        pmp->pm_fatmask = FAT12_MASK;
-			pmp->pm_fatmult = 3;
-			pmp->pm_fatdiv = 2;
-		} else {
-		        pmp->pm_fatmask = FAT16_MASK;
-			pmp->pm_fatmult = 2;
-			pmp->pm_fatdiv = 1;
-		}
-	} else if (pmp->pm_fatmask == 0) {
+	if (pmp->pm_fatmask == 0) {
 		if (pmp->pm_maxcluster
 		    <= ((CLUST_RSRVD - CLUST_FIRST) & FAT12_MASK)) {
 			/*
@@ -485,14 +416,37 @@ msdosfs_mountfs(devvp, mp, p, argp)
 	else
 		pmp->pm_fatblocksize = MAXBSIZE;
 
-	pmp->pm_fatblocksec = pmp->pm_fatblocksize / pmp->pm_BytesPerSec;
-	pmp->pm_bnshift = ffs(pmp->pm_BytesPerSec) - 1;
+	/*
+	 * We now have the number of sectors in each FAT, so can work
+	 * out how many clusters can be represented in a FAT.  Let's
+	 * make sure the file system doesn't claim to have more clusters
+	 * than this.
+	 *
+	 * We perform the calculation like we do to avoid integer overflow.
+	 *
+	 * This will give us a count of clusters.  They are numbered
+	 * from 0, so the max cluster value is one less than the value
+	 * we end up with.
+	 */
+	fat_max_clusters = pmp->pm_fatsize / pmp->pm_fatmult;
+	fat_max_clusters *= pmp->pm_fatdiv;
+	if (pmp->pm_maxcluster >= fat_max_clusters) {
+#ifndef SMALL_KERNEL
+		printf("msdosfs: reducing max cluster to %d from %d "
+		    "due to FAT size\n", fat_max_clusters - 1,
+		    pmp->pm_maxcluster);
+#endif
+		pmp->pm_maxcluster = fat_max_clusters - 1;
+	}
+
+	pmp->pm_fatblocksec = pmp->pm_fatblocksize / DEV_BSIZE;
+	pmp->pm_bnshift = ffs(DEV_BSIZE) - 1;
 
 	/*
 	 * Compute mask and shift value for isolating cluster relative byte
 	 * offsets and cluster numbers from a file offset.
 	 */
-	pmp->pm_bpcluster = SecPerClust * pmp->pm_BytesPerSec;
+	pmp->pm_bpcluster = SecPerClust * DEV_BSIZE;
 	pmp->pm_crbomask = pmp->pm_bpcluster - 1;
 	pmp->pm_cnshift = ffs(pmp->pm_bpcluster) - 1;
 
@@ -517,7 +471,8 @@ msdosfs_mountfs(devvp, mp, p, argp)
 	if (pmp->pm_fsinfo) {
 	        struct fsinfo *fp;
 
-		if ((error = bread(devvp, pmp->pm_fsinfo, 1024, NOCRED, &bp)) != 0)
+		if ((error = bread(devvp, pmp->pm_fsinfo, fsi_size(pmp),
+		    NOCRED, &bp)) != 0)
 		        goto error_exit;
 		fp = (struct fsinfo *)bp->b_data;
 		if (!bcmp(fp->fsisig1, "RRaA", 4)
@@ -539,10 +494,18 @@ msdosfs_mountfs(devvp, mp, p, argp)
 	 * Allocate memory for the bitmap of allocated clusters, and then
 	 * fill it in.
 	 */
-	pmp->pm_inusemap = malloc(((pmp->pm_maxcluster + N_INUSEBITS - 1)
-				   / N_INUSEBITS)
-				  * sizeof(*pmp->pm_inusemap),
-				  M_MSDOSFSFAT, M_WAITOK);
+	bmapsiz = (pmp->pm_maxcluster + N_INUSEBITS - 1) / N_INUSEBITS;
+	if (bmapsiz == 0 || SIZE_MAX / bmapsiz < sizeof(*pmp->pm_inusemap)) {
+		/* detect multiplicative integer overflow */
+		error = EINVAL;
+		goto error_exit;
+	}
+	pmp->pm_inusemap = malloc(bmapsiz * sizeof(*pmp->pm_inusemap),
+	    M_MSDOSFSFAT, M_WAITOK | M_CANFAIL);
+	if (pmp->pm_inusemap == NULL) {
+		error = EINVAL;
+		goto error_exit;
+	}
 
 	/*
 	 * fillinusemap() needs pm_devvp.

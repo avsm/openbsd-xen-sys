@@ -1,4 +1,4 @@
-/*	$OpenBSD: lapic.c,v 1.5 2006/03/10 21:09:22 mickey Exp $	*/
+/*	$OpenBSD: lapic.c,v 1.7 2007/01/15 23:19:05 jsg Exp $	*/
 /* $NetBSD: lapic.c,v 1.2 2003/05/08 01:04:35 fvdl Exp $ */
 
 /*-
@@ -63,6 +63,12 @@
 #include <machine/i82489reg.h>
 #include <machine/i82489var.h>
 
+#include "ioapic.h"
+
+#if NIOAPIC > 0
+#include <machine/i82093var.h>
+#endif
+
 struct evcount clk_count;
 struct evcount ipi_count;
 
@@ -91,8 +97,7 @@ struct pic local_pic = {
 };
 
 void
-lapic_map(lapic_base)
-	paddr_t lapic_base;
+lapic_map(paddr_t lapic_base)
 {
 	int s;
 	pt_entry_t *pte;
@@ -126,13 +131,13 @@ lapic_map(lapic_base)
  * enable local apic
  */
 void
-lapic_enable()
+lapic_enable(void)
 {
 	i82489_writereg(LAPIC_SVR, LAPIC_SVR_ENABLE | LAPIC_SPURIOUS_VECTOR);
 }
 
 void
-lapic_set_lvt()
+lapic_set_lvt(void)
 {
 	struct cpu_info *ci = curcpu();
 	int i;
@@ -148,15 +153,16 @@ lapic_set_lvt()
 	}
 #endif
 
+#if NIOAPIC > 0
 	/*
 	 * Disable ExtINT by default when using I/O APICs.
-	 * XXX mp_nintr > 0 isn't quite the right test for this.
 	 */
-	if (mp_nintr > 0) {
+	if (nioapics > 0) {
 		lint0 = i82489_readreg(LAPIC_LVINT0);
 		lint0 |= LAPIC_LVT_MASKED;
 		i82489_writereg(LAPIC_LVINT0, lint0);
 	}
+#endif
 
 	for (i = 0; i < mp_nintr; i++) {
 		mpi = &mp_intrs[i];
@@ -173,7 +179,7 @@ lapic_set_lvt()
 				i82489_writereg(LAPIC_LVINT1, mpi->redir);
 		}
 	}
-			
+
 #ifdef MULTIPROCESSOR
 	if (mp_verbose) {
 		apic_format_redir (ci->ci_dev->dv_xname, "timer", 0, 0,
@@ -194,8 +200,7 @@ lapic_set_lvt()
  * Initialize fixed idt vectors for use by local apic.
  */
 void
-lapic_boot_init(lapic_base)
-	paddr_t lapic_base;
+lapic_boot_init(paddr_t lapic_base)
 {
 	static u_int64_t clk_irq = 0;
 	static u_int64_t ipi_irq = 0;
@@ -216,7 +221,8 @@ lapic_boot_init(lapic_base)
 	evcount_attach(&ipi_count, "ipi", (void *)&ipi_irq, &evcount_intr);
 }
 
-static inline u_int32_t lapic_gettick()
+static inline u_int32_t
+lapic_gettick(void)
 {
 	return i82489_readreg(LAPIC_CCR_TIMER);
 }
@@ -244,7 +250,7 @@ lapic_clockintr(void *arg, struct intrframe frame)
 }
 
 void
-lapic_initclocks()
+lapic_initclocks(void)
 {
 	/*
 	 * Start local apic countdown timer running, in repeated mode.
@@ -275,8 +281,7 @@ extern void (*initclock_func)(void); /* XXX put in header file */
  * We're actually using the IRQ0 timer.  Hmm.
  */
 void
-lapic_calibrate_timer(ci)
-	struct cpu_info *ci;
+lapic_calibrate_timer(struct cpu_info *ci)
 {
 	unsigned int starttick, tick1, tick2, endtick;
 	unsigned int startapic, apic1, apic2, endapic;
@@ -374,8 +379,7 @@ lapic_calibrate_timer(ci)
  */
 
 void
-lapic_delay(usec)
-	int usec;
+lapic_delay(int usec)
 {
 	int32_t tick, otick;
 	int64_t deltat;		/* XXX may want to be 64bit */
@@ -408,7 +412,7 @@ lapic_delay(usec)
 static __inline void i82489_icr_wait(void);
 
 static __inline void
-i82489_icr_wait()
+i82489_icr_wait(void)
 {
 #ifdef DIAGNOSTIC
 	unsigned j = 100000;
@@ -425,8 +429,7 @@ i82489_icr_wait()
 }
 
 int
-x86_ipi_init(target)
-	int target;
+x86_ipi_init(int target)
 {
 
 	if ((target&LAPIC_DEST_MASK)==0) {
@@ -449,8 +452,7 @@ x86_ipi_init(target)
 }
 
 int
-x86_ipi(vec,target,dl)
-	int vec,target,dl;
+x86_ipi(int vec, int target, int dl)
 {
 	int result, s;
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: machdep.c,v 1.366 2006/10/05 01:36:41 mickey Exp $	*/
+/*	$OpenBSD: machdep.c,v 1.372 2006/12/20 17:50:40 gwk Exp $	*/
 /*	$NetBSD: machdep.c,v 1.214 1996/11/10 03:16:17 thorpej Exp $	*/
 
 /*-
@@ -255,6 +255,7 @@ int kbd_reset;
 int p4_model;
 int p3_early;
 int bus_clock;
+void (*setperf_setup)(struct cpu_info *);
 int setperf_prio = 0;		/* for concurrent handlers */
 
 void (*delay_func)(int) = i8254_delay;
@@ -334,12 +335,16 @@ int cpu_pae = 0;
 #endif
 
 void	winchip_cpu_setup(struct cpu_info *);
+void	amd_family5_setperf_setup(struct cpu_info *);
 void	amd_family5_setup(struct cpu_info *);
+void	amd_family6_setperf_setup(struct cpu_info *);
 void	amd_family6_setup(struct cpu_info *);
+void	cyrix3_setperf_setup(struct cpu_info *);
 void	cyrix3_cpu_setup(struct cpu_info *);
 void	cyrix6x86_cpu_setup(struct cpu_info *);
 void	natsem6x86_cpu_setup(struct cpu_info *);
 void	intel586_cpu_setup(struct cpu_info *);
+void	intel686_setperf_setup(struct cpu_info *);
 void	intel686_common_cpu_setup(struct cpu_info *);
 void	intel686_cpu_setup(struct cpu_info *);
 void	intel686_p4_cpu_setup(struct cpu_info *);
@@ -399,7 +404,6 @@ cpu_startup()
 	int sz;
 	vaddr_t minaddr, maxaddr, va;
 	paddr_t pa;
-	extern int cpu_id;
 
 	/*
 	 * Initialize error message buffer (at end of core).
@@ -419,9 +423,8 @@ cpu_startup()
 	startrtclock();
 
 	/*
-	 * XXX SMP XXX identifycpu shouldn't need to be called here, but
-	 * mpbios is broken otherwise.  Also, curcpu is not quite fully
-	 * initialized this early either, so some extra work is needed.
+	 * We need to call identifycpu here early, so users have at least some
+	 * basic information, if booting hangs later on.
 	 */
 	strlcpy(curcpu()->ci_dev.dv_xname, "cpu0",
 	    sizeof(curcpu()->ci_dev.dv_xname));
@@ -1165,6 +1168,20 @@ winchip_cpu_setup(struct cpu_info *ci)
 #endif
 }
 
+#if defined(I686_CPU) && !defined(SMALL_KERNEL)
+void
+cyrix3_setperf_setup(struct cpu_info *ci)
+{
+	if (cpu_ecxfeature & CPUIDECX_EST) {
+		if (rdmsr(MSR_MISC_ENABLE) & (1 << 16))
+			est_init(ci->ci_dev.dv_xname, CPUVENDOR_VIA);
+		else
+			printf("%s: Enhanced SpeedStep disabled by BIOS\n",
+			    ci->ci_dev.dv_xname);
+	}
+}
+#endif
+
 void
 cyrix3_cpu_setup(struct cpu_info *ci)
 {
@@ -1183,13 +1200,7 @@ cyrix3_cpu_setup(struct cpu_info *ci)
 
 	cyrix3_get_bus_clock(ci);
 
-	if (cpu_ecxfeature & CPUIDECX_EST) {
-		if (rdmsr(MSR_MISC_ENABLE) & (1 << 16))
-			est_init(ci->ci_dev.dv_xname, CPUVENDOR_VIA);
-		else
-			printf("%s: Enhanced SpeedStep disabled by BIOS\n",
-			    ci->ci_dev.dv_xname);
-	}
+	setperf_setup = cyrix3_setperf_setup;
 #endif
 
 	switch (model) {
@@ -1369,6 +1380,14 @@ intel586_cpu_setup(struct cpu_info *ci)
 #endif
 }
 
+#if !defined(SMALL_KERNEL) && defined(I586_CPU)
+void
+amd_family5_setperf_setup(struct cpu_info *ci)
+{
+	k6_powernow_init();
+}
+#endif
+
 void
 amd_family5_setup(struct cpu_info *ci)
 {
@@ -1392,29 +1411,18 @@ amd_family5_setup(struct cpu_info *ci)
 	case 12:
 	case 13:
 #if !defined(SMALL_KERNEL) && defined(I586_CPU)
-		k6_powernow_init();
+		setperf_setup = amd_family5_setperf_setup;
 #endif
 		break;
 	}
 }
 
+#if !defined(SMALL_KERNEL) && defined(I686_CPU) && !defined(MULTIPROCESSOR)
 void
-amd_family6_setup(struct cpu_info *ci)
+amd_family6_setperf_setup(struct cpu_info *ci)
 {
-#if !defined(SMALL_KERNEL) && defined(I686_CPU)
-	extern void (*pagezero)(void *, size_t);
-	extern void sse2_pagezero(void *, size_t);
-	extern void i686_pagezero(void *, size_t);
-#if !defined(MULTIPROCESSOR)
 	int family = (ci->ci_signature >> 8) & 15;
-#endif
 
-	if (cpu_feature & CPUID_SSE2)
-		pagezero = sse2_pagezero;
-	else
-		pagezero = i686_pagezero;
-
-#if !defined(MULTIPROCESSOR)
 	switch (family) {
 	case 6:
 		k7_powernow_init();
@@ -1423,16 +1431,32 @@ amd_family6_setup(struct cpu_info *ci)
 		k8_powernow_init();
 		break;
 	}
+}
+#endif /* !SMALL_KERNEL && I686_CPU && !MULTIPROCESSOR */
+
+void
+amd_family6_setup(struct cpu_info *ci)
+{
+#if !defined(SMALL_KERNEL) && defined(I686_CPU)
+	extern void (*pagezero)(void *, size_t);
+	extern void sse2_pagezero(void *, size_t);
+	extern void i686_pagezero(void *, size_t);
+
+	if (cpu_feature & CPUID_SSE2)
+		pagezero = sse2_pagezero;
+	else
+		pagezero = i686_pagezero;
+
+#if !defined(MULTIPROCESSOR)
+	setperf_setup = amd_family6_setperf_setup;
 #endif
 #endif
 }
 
+#if !defined(SMALL_KERNEL) && defined(I686_CPU) && !defined(MULTIPROCESSOR)
 void
-intel686_common_cpu_setup(struct cpu_info *ci)
+intel686_setperf_setup(struct cpu_info *ci)
 {
-
-#if !defined(SMALL_KERNEL) && defined(I686_CPU)
-#if !defined(MULTIPROCESSOR)
 	int family = (ci->ci_signature >> 8) & 15;
 	int step = ci->ci_signature & 15;
 
@@ -1445,6 +1469,16 @@ intel686_common_cpu_setup(struct cpu_info *ci)
 	} else if ((cpu_feature & (CPUID_ACPI | CPUID_TM)) ==
 	    (CPUID_ACPI | CPUID_TM))
 		p4tcc_init(family, step);
+}
+#endif
+
+void
+intel686_common_cpu_setup(struct cpu_info *ci)
+{
+
+#if !defined(SMALL_KERNEL) && defined(I686_CPU)
+#if !defined(MULTIPROCESSOR)
+	setperf_setup = intel686_setperf_setup;
 #endif
 	{
 	extern void (*pagezero)(void *, size_t);
@@ -1530,7 +1564,6 @@ tm86_cpu_setup(struct cpu_info *ci)
 char *
 intel686_cpu_name(int model)
 {
-	extern int cpu_cache_edx;
 	char *ret = NULL;
 
 	switch (model) {
@@ -1601,13 +1634,6 @@ cyrix3_cpu_name(int model, int step)
 void
 identifycpu(struct cpu_info *ci)
 {
-	extern char cpu_vendor[];
-	extern char cpu_brandstr[];
-#ifdef CPUDEBUG
-	extern int cpu_cache_eax, cpu_cache_ebx, cpu_cache_ecx, cpu_cache_edx;
-#else
-	extern int cpu_cache_edx;
-#endif
 	const char *name, *modifier, *vendorname, *token;
 	int class = CPUCLASS_386, vendor, i, max;
 	int family, model, step, modif, cachesize;
@@ -1752,7 +1778,7 @@ identifycpu(struct cpu_info *ci)
 		    "%s %s%s", vendorname, modifier, name);
 	}
 
-	if ((ci->ci_flags & CPUF_BSP) == 0) {
+	if ((ci->ci_flags & CPUF_PRIMARY) == 0) {
 		if (cachesize > -1) {
 			snprintf(cpu_model, sizeof(cpu_model),
 			    "%s (%s%s%s%s-class, %dKB L2 cache)",
@@ -1774,25 +1800,25 @@ identifycpu(struct cpu_info *ci)
 	if (ci->ci_feature_flags && (ci->ci_feature_flags & CPUID_TSC)) {
 		/* Has TSC */
 		calibrate_cyclecounter();
-		if (pentium_mhz > 994) {
+		if (cpuspeed > 994) {
 			int ghz, fr;
 
-			ghz = (pentium_mhz + 9) / 1000;
-			fr = ((pentium_mhz + 9) / 10 ) % 100;
-			if ((ci->ci_flags & CPUF_BSP) == 0) {
+			ghz = (cpuspeed + 9) / 1000;
+			fr = ((cpuspeed + 9) / 10 ) % 100;
+			if ((ci->ci_flags & CPUF_PRIMARY) == 0) {
 				if (fr)
 					printf(" %d.%02d GHz", ghz, fr);
 				else
 					printf(" %d GHz", ghz);
 			}
 		} else {
-			if ((ci->ci_flags & CPUF_BSP) == 0) {
-				printf(" %d MHz", pentium_mhz);
+			if ((ci->ci_flags & CPUF_PRIMARY) == 0) {
+				printf(" %d MHz", cpuspeed);
 			}
 		}
 	}
 #endif
-	if ((ci->ci_flags & CPUF_BSP) == 0) {
+	if ((ci->ci_flags & CPUF_PRIMARY) == 0) {
 		printf("\n");
 
 		if (ci->ci_feature_flags) {
@@ -1831,7 +1857,7 @@ identifycpu(struct cpu_info *ci)
 
 #ifndef SMALL_KERNEL
 #if defined(I586_CPU) || defined(I686_CPU)
-	if (pentium_mhz != 0 && cpu_cpuspeed == NULL)
+	if (cpuspeed != 0 && cpu_cpuspeed == NULL)
 		cpu_cpuspeed = pentium_cpuspeed;
 #endif
 #endif
@@ -2061,6 +2087,9 @@ p3_get_bus_clock(struct cpu_info *ci)
 		case 3:
 			bus_clock = 16666;
 			break;
+		case 0:
+			bus_clock = 26666;
+			break;
 		case 4:
 			bus_clock = 33333;
 			break;
@@ -2113,66 +2142,39 @@ void
 p4_update_cpuspeed(void)
 {
 	u_int64_t msr;
-	int bus, mult;
+	int mult;
+
+	if (bus_clock == 0) {
+		printf("p4_update_cpuspeed: unknown bus clock\n");
+		return;
+	}
 
 	msr = rdmsr(MSR_EBC_FREQUENCY_ID);
-	if (p4_model < 2) {
-		bus = (msr >> 21) & 0x7;
-		switch (bus) {
-		case 0:
-			bus = 10000;
-			break;
-		case 1:
-			bus = 13333;
-			break;
-		}
-	} else {
-		bus = (msr >> 16) & 0x7;
-		switch (bus) {
-		case 0:
-			bus = 10000;
-			break;
-		case 1:
-			bus = 13333;
-			break;
-		case 2:
-			bus = 20000;
-			break;
-		}
-	}
 	mult = ((msr >> 24) & 0xff);
 
-	pentium_mhz = bus * mult / 100;
+	cpuspeed = (bus_clock * mult) / 100;
 }
 
 void
 p3_update_cpuspeed(void)
 {
 	u_int64_t msr;
-	int bus, mult;
+	int mult;
 	const u_int8_t mult_code[] = {
 	    50, 30, 40, 0, 55, 35, 45, 0, 0, 70, 80, 60, 0, 75, 0, 65 };
 
-	msr = rdmsr(MSR_EBL_CR_POWERON);
-	bus = (msr >> 18) & 0x3;
-	switch (bus) {
-	case 0:
-		bus = 6666;
-		break;
-	case 1:
-		bus = 13333;
-		break;
-	case 2:
-		bus = 10000;
-		break;
+	if (bus_clock == 0) {
+		printf("p3_update_cpuspeed: unknown bus clock\n");
+		return;
 	}
 
+	msr = rdmsr(MSR_EBL_CR_POWERON);
 	mult = (msr >> 22) & 0xf;
 	mult = mult_code[mult];
 	if (!p3_early)
 		mult += ((msr >> 27) & 0x1) * 40;
 
-	pentium_mhz = (bus * mult) / 1000;
+	cpuspeed = (bus_clock * mult) / 1000;
 }
 #endif	/* I686_CPU */
 
@@ -2180,7 +2182,7 @@ p3_update_cpuspeed(void)
 int
 pentium_cpuspeed(int *freq)
 {
-	*freq = pentium_mhz;
+	*freq = cpuspeed;
 	return (0);
 }
 #endif
@@ -2455,7 +2457,7 @@ haltsys:
 
 		if (acpi_enabled) {
 			delay(500000);
-			if (howto & RB_POWERDOWN || acpi_s5)
+			if ((howto & RB_POWERDOWN) || acpi_s5)
 				acpi_powerdown();
 		}
 #endif
@@ -3330,11 +3332,6 @@ int
 cpu_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
     size_t newlen, struct proc *p)
 {
-	extern char cpu_vendor[];
-	extern int cpu_id;
-#if NAPM > 0
-	extern int cpu_apmwarn;
-#endif
 	dev_t dev;
 
 	switch (name[0]) {

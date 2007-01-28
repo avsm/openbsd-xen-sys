@@ -1,4 +1,4 @@
-/*	$OpenBSD: ffs_alloc.c,v 1.65 2006/04/02 17:16:12 pedro Exp $	*/
+/*	$OpenBSD: ffs_alloc.c,v 1.69 2007/01/07 15:39:22 sturm Exp $	*/
 /*	$NetBSD: ffs_alloc.c,v 1.11 1996/05/11 18:27:09 mycroft Exp $	*/
 
 /*
@@ -68,8 +68,6 @@
 	    (fs)->fs_fsmnt, (cp));				\
 } while (0)
 
-extern u_long nextgennumber;
-
 static daddr_t	ffs_alloccg(struct inode *, int, daddr_t, int);
 static daddr_t	ffs_alloccgblk(struct inode *, struct buf *, daddr_t);
 static daddr_t	ffs_clusteralloc(struct inode *, int, daddr_t, int);
@@ -136,23 +134,29 @@ ffs_alloc(struct inode *ip, daddr_t lbn, daddr_t bpref, int size,
 	if ((error = ufs_quota_alloc_blocks(ip, btodb(size), cred)) != 0)
 		return (error);
 
+	/*
+	 * Start allocation in the preferred block's cylinder group or
+	 * the file's inode's cylinder group if no preferred block was
+	 * specified.
+	 */
 	if (bpref >= fs->fs_size)
 		bpref = 0;
 	if (bpref == 0)
 		cg = ino_to_cg(fs, ip->i_number);
 	else
 		cg = dtog(fs, bpref);
+
+	/* Try allocating a block. */
 	bno = (daddr_t)ffs_hashalloc(ip, cg, (long)bpref, size, ffs_alloccg);
 	if (bno > 0) {
+		/* allocation successful, update inode data */
 		DIP_ADD(ip, blocks, btodb(size));
 		ip->i_flag |= IN_CHANGE | IN_UPDATE;
 		*bnp = bno;
 		return (0);
 	}
 
-	/*
-	 * Restore user's disk quota because allocation failed.
-	 */
+	/* Restore user's disk quota because allocation failed. */
 	(void) ufs_quota_free_blocks(ip, btodb(size), cred);
 
 nospace:
@@ -242,7 +246,7 @@ ffs_realloccg(struct inode *ip, daddr_t lbprev, daddr_t bpref, int osize,
 	 */
 	if (bpref >= fs->fs_size)
 		bpref = 0;
-	switch ((int)fs->fs_optim) {
+	switch (fs->fs_optim) {
 	case FS_OPTSPACE:
 		/*
 		 * Allocate an exact sized fragment. Although this makes
@@ -256,8 +260,6 @@ ffs_realloccg(struct inode *ip, daddr_t lbprev, daddr_t bpref, int osize,
 		    fs->fs_cstotal.cs_nffree >
 		    fs->fs_dsize * fs->fs_minfree / (2 * 100))
 			break;
-		log(LOG_NOTICE, "%s: optimization changed from SPACE to TIME\n",
-			fs->fs_fsmnt);
 		fs->fs_optim = FS_OPTTIME;
 		break;
 	case FS_OPTTIME:
@@ -275,8 +277,6 @@ ffs_realloccg(struct inode *ip, daddr_t lbprev, daddr_t bpref, int osize,
 		if (fs->fs_cstotal.cs_nffree <
 		    fs->fs_dsize * (fs->fs_minfree - 2) / 100)
 			break;
-		log(LOG_NOTICE, "%s: optimization changed from TIME to SPACE\n",
-			fs->fs_fsmnt);
 		fs->fs_optim = FS_OPTSPACE;
 		break;
 	default:
@@ -1029,21 +1029,12 @@ end:
  * indirect block, the information on the previous allocation is unavailable;
  * here a best guess is made based upon the logical block number being
  * allocated.
- *
- * If a section is already partially allocated, the policy is to
- * contiguously allocate fs_maxcontig blocks.  The end of one of these
- * contiguous blocks and the beginning of the next is physically separated
- * so that the disk head will be in transit between them for at least
- * fs_rotdelay milliseconds.  This is to allow time for the processor to
- * schedule another I/O transfer.
  */
 ufs1_daddr_t
 ffs1_blkpref(struct inode *ip, daddr_t lbn, int indx, ufs1_daddr_t *bap)
 {
 	struct fs *fs;
-	int cg;
-	int avgbfree, startcg;
-	ufs1_daddr_t nextblk;
+	int cg, avgbfree, startcg;
 
 	fs = ip->i_fs;
 	if (indx % fs->fs_maxbpg == 0 || bap[indx - 1] == 0) {
@@ -1074,26 +1065,8 @@ ffs1_blkpref(struct inode *ip, daddr_t lbn, int indx, ufs1_daddr_t *bap)
 			}
 		return (0);
 	}
-	/*
-	 * One or more previous blocks have been laid out. If less
-	 * than fs_maxcontig previous blocks are contiguous, the
-	 * next block is requested contiguously, otherwise it is
-	 * requested rotationally delayed by fs_rotdelay milliseconds.
-	 */
-	nextblk = bap[indx - 1] + fs->fs_frag;
-	if (indx < fs->fs_maxcontig || bap[indx - fs->fs_maxcontig] +
-	    blkstofrags(fs, fs->fs_maxcontig) != nextblk)
-		return (nextblk);
-	if (fs->fs_rotdelay != 0)
-		/*
-		 * Here we convert ms of delay to frags as:
-		 * (frags) = (ms) * (rev/sec) * (sect/rev) /
-		 *	((sect/frag) * (ms/sec))
-		 * then round up to the next block.
-		 */
-		nextblk += roundup(fs->fs_rotdelay * fs->fs_rps * fs->fs_nsect /
-		    (NSPF(fs) * 1000), fs->fs_frag);
-	return (nextblk);
+
+	return (bap[indx - 1] + fs->fs_frag);
 }
 
 /*
@@ -1286,6 +1259,7 @@ ffs_alloccg(struct inode *ip, int cg, daddr_t bpref, int size)
 	fs = ip->i_fs;
 	if (fs->fs_cs(fs, cg).cs_nbfree == 0 && size == fs->fs_bsize)
 		return (0);
+	/* read cylinder group block */
 	error = bread(ip->i_devvp, fsbtodb(fs, cgtod(fs, cg)),
 		(int)fs->fs_cgsize, NOCRED, &bp);
 	if (error) {
@@ -1302,6 +1276,7 @@ ffs_alloccg(struct inode *ip, int cg, daddr_t bpref, int size)
 	cgp->cg_ffs2_time = cgp->cg_time = time_second;
 
 	if (size == fs->fs_bsize) {
+		/* allocate and return a complete data block */
 		bno = ffs_alloccgblk(ip, bp, bpref);
 		bdwrite(bp);
 		return (bno);

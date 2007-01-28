@@ -1,4 +1,4 @@
-/*	$OpenBSD: ch.c,v 1.28 2006/06/15 15:02:31 beck Exp $	*/
+/*	$OpenBSD: ch.c,v 1.31 2006/11/27 23:14:22 beck Exp $	*/
 /*	$NetBSD: ch.c,v 1.26 1997/02/21 22:06:52 thorpej Exp $	*/
 
 /*
@@ -147,7 +147,7 @@ chmatch(parent, match, aux)
 	struct device *parent;
 	void *match, *aux;
 {
-	struct scsibus_attach_args *sa = aux;
+	struct scsi_attach_args *sa = aux;
 	int priority;
 
 	(void)scsi_inqmatch(sa->sa_inqbuf,
@@ -163,7 +163,7 @@ chattach(parent, self, aux)
 	void *aux;
 {
 	struct ch_softc *sc = (struct ch_softc *)self;
-	struct scsibus_attach_args *sa = aux;
+	struct scsi_attach_args *sa = aux;
 	struct scsi_link *link = sa->sa_sc_link;
 
 	/* Glue into the SCSI bus */
@@ -769,7 +769,7 @@ ch_interpret_sense(xs)
 	u_int8_t skey = sense->flags & SSD_KEY;
 
 	if (((sc_link->flags & SDEV_OPEN) == 0) ||
-	    (serr != 0x70 && serr != 0x71))
+	    (serr != SSD_ERRCODE_CURRENT && serr != SSD_ERRCODE_DEFERRED))
 		return (EJUSTRETURN); /* let the generic code handle it */
 
 	switch (skey) {
@@ -789,20 +789,13 @@ ch_interpret_sense(xs)
 	case SKEY_NOT_READY:
 		if ((xs->flags & SCSI_IGNORE_NOT_READY) != 0)
 			return (0);
-		switch (sense->add_sense_code) {
-		case 0x04:	/* LUN not ready */
-			switch (sense->add_sense_code_qual) {
-				case 0x01: /* Becoming Ready */
-					SC_DEBUG(sc_link, SDEV_DB1,
-		    			    ("not ready: busy (%#x)\n",
-					    sense->add_sense_code_qual));
-					/* don't count this as a retry */
-					xs->retries++;
-					return (scsi_delay(xs, 1));
-				default:
-					return (EJUSTRETURN);
-			}
-			break;
+		switch (ASC_ASCQ(sense)) {
+		case SENSE_NOT_READY_BECOMING_READY:
+			SC_DEBUG(sc_link, SDEV_DB1, ("not ready: busy (%#x)\n",
+			    sense->add_sense_code_qual));
+			/* don't count this as a retry */
+			xs->retries++;
+			return (scsi_delay(xs, 1));
 		default:
 			return (EJUSTRETURN);
 	}

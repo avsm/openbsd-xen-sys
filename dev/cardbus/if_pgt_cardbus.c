@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_pgt_cardbus.c,v 1.4 2006/10/09 20:45:27 mglocker Exp $ */
+/*	$OpenBSD: if_pgt_cardbus.c,v 1.6 2006/11/10 20:20:04 damien Exp $ */
 
 /*
  * Copyright (c) 2006 Marcus Glocker <mglocker@openbsd.org>
@@ -43,8 +43,6 @@
 #include <netinet/if_ether.h>
 
 #include <net80211/ieee80211_var.h>
-#include <net80211/ieee80211_amrr.h>
-#include <net80211/ieee80211_rssadapt.h>
 #include <net80211/ieee80211_radiotap.h>
 
 #include <dev/ic/pgtreg.h>
@@ -82,7 +80,8 @@ struct cfattach pgt_cardbus_ca = {
 
 const struct cardbus_matchid pgt_cardbus_devices[] = {
 	{ PCI_VENDOR_INTERSIL, PCI_PRODUCT_INTERSIL_ISL3877 },
-	{ PCI_VENDOR_INTERSIL, PCI_PRODUCT_INTERSIL_ISL3890 }
+	{ PCI_VENDOR_INTERSIL, PCI_PRODUCT_INTERSIL_ISL3890 },
+	{ PCI_VENDOR_3COM, PCI_PRODUCT_3COM_3CRWE154G72 }
 };
 
 int

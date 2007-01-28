@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_gif.c,v 1.35 2006/03/11 03:58:37 brad Exp $	*/
+/*	$OpenBSD: if_gif.c,v 1.38 2006/12/28 20:06:11 deraadt Exp $	*/
 /*	$KAME: if_gif.c,v 1.43 2001/02/20 08:51:07 itojun Exp $	*/
 
 /*
@@ -165,17 +165,20 @@ gif_start(ifp)
 	dst.sa_family = AF_LINK;
 #endif /* NBRIDGE */
 
-	for (;;) {
+	while (ifp->if_snd.ifq_head) {
 	        s = splnet();
 		IF_DEQUEUE(&ifp->if_snd, m);
 		splx(s);
 
-		if (m == NULL) return;
+		if (m == NULL)
+			return;
 
 #if NBRIDGE > 0
 		/* Sanity check -- interface should be member of a bridge */
-		if (ifp->if_bridge == NULL) m_freem(m);
-		else gif_output(ifp, m, &dst, NULL);
+		if (ifp->if_bridge == NULL)
+			m_freem(m);
+		else
+			gif_output(ifp, m, &dst, NULL);
 #else
 		m_freem(m);
 #endif /* NBRIDGE */
@@ -255,7 +258,7 @@ gif_output(ifp, m, dst, rt)
   end:
 	if (error)
 		ifp->if_oerrors++;
-	return error;
+	return (error);
 }
 
 int
@@ -325,45 +328,45 @@ gif_ioctl(ifp, cmd, data)
 				&(((struct if_laddrreq *)data)->dstaddr);
 			break;
 		default:
-			return EINVAL;
+			return (EINVAL);
 		}
 
 		/* sa_family must be equal */
 		if (src->sa_family != dst->sa_family)
-			return EINVAL;
+			return (EINVAL);
 
 		/* validate sa_len */
 		switch (src->sa_family) {
 #ifdef INET
 		case AF_INET:
 			if (src->sa_len != sizeof(struct sockaddr_in))
-				return EINVAL;
+				return (EINVAL);
 			break;
 #endif
 #ifdef INET6
 		case AF_INET6:
 			if (src->sa_len != sizeof(struct sockaddr_in6))
-				return EINVAL;
+				return (EINVAL);
 			break;
 #endif
 		default:
-			return EAFNOSUPPORT;
+			return (EAFNOSUPPORT);
 		}
 		switch (dst->sa_family) {
 #ifdef INET
 		case AF_INET:
 			if (dst->sa_len != sizeof(struct sockaddr_in))
-				return EINVAL;
+				return (EINVAL);
 			break;
 #endif
 #ifdef INET6
 		case AF_INET6:
 			if (dst->sa_len != sizeof(struct sockaddr_in6))
-				return EINVAL;
+				return (EINVAL);
 			break;
 #endif
 		default:
-			return EAFNOSUPPORT;
+			return (EAFNOSUPPORT);
 		}
 
 		/* check sa_family looks sane for the cmd */
@@ -371,12 +374,12 @@ gif_ioctl(ifp, cmd, data)
 		case SIOCSIFPHYADDR:
 			if (src->sa_family == AF_INET)
 				break;
-			return EAFNOSUPPORT;
+			return (EAFNOSUPPORT);
 #ifdef INET6
 		case SIOCSIFPHYADDR_IN6:
 			if (src->sa_family == AF_INET6)
 				break;
-			return EAFNOSUPPORT;
+			return (EAFNOSUPPORT);
 #endif /* INET6 */
 		case SIOCSLIFPHYADDR:
 			/* checks done in the above */
@@ -483,7 +486,7 @@ gif_ioctl(ifp, cmd, data)
 			goto bad;
 		}
 		if (src->sa_len > size)
-			return EINVAL;
+			return (EINVAL);
 		bcopy((caddr_t)src, (caddr_t)dst, src->sa_len);
 		break;
 			
@@ -515,7 +518,7 @@ gif_ioctl(ifp, cmd, data)
 			goto bad;
 		}
 		if (src->sa_len > size)
-			return EINVAL;
+			return (EINVAL);
 		bcopy((caddr_t)src, (caddr_t)dst, src->sa_len);
 		break;
 
@@ -531,7 +534,7 @@ gif_ioctl(ifp, cmd, data)
 			&(((struct if_laddrreq *)data)->addr);
 		size = sizeof(((struct if_laddrreq *)data)->addr);
 		if (src->sa_len > size)
-			return EINVAL;
+			return (EINVAL);
 		bcopy((caddr_t)src, (caddr_t)dst, src->sa_len);
 
 		/* copy dst */
@@ -540,7 +543,7 @@ gif_ioctl(ifp, cmd, data)
 			&(((struct if_laddrreq *)data)->dstaddr);
 		size = sizeof(((struct if_laddrreq *)data)->dstaddr);
 		if (src->sa_len > size)
-			return EINVAL;
+			return (EINVAL);
 		bcopy((caddr_t)src, (caddr_t)dst, src->sa_len);
 		break;
 
@@ -560,5 +563,5 @@ gif_ioctl(ifp, cmd, data)
 		break;
 	}
  bad:
-	return error;
+	return (error);
 }

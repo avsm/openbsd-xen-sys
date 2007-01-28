@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.c,v 1.13 2003/05/11 22:09:31 jason Exp $	*/
+/*	$OpenBSD: cpu.c,v 1.17 2007/01/07 16:54:46 kettenis Exp $	*/
 /*	$NetBSD: cpu.c,v 1.13 2001/05/26 21:27:15 chs Exp $ */
 
 /*
@@ -67,7 +67,9 @@
 #include <sparc64/sparc64/cache.h>
 
 /* This is declared here so that you must include a CPU for the cache code. */
-struct cacheinfo cacheinfo;
+struct cacheinfo cacheinfo = {
+	us_dcache_flush_page
+};
 
 /* Our exported CPU info; we have only one for now. */  
 struct cpu_info cpu_info_store;
@@ -172,9 +174,9 @@ cpu_attach(parent, dev, aux)
 		cpu_clockrate[0] = clk; /* Tell OS what frequency we run on */
 		cpu_clockrate[1] = clk/1000000;
 	}
-	snprintf(cpu_model, sizeof cpu_model, "%s @ %s MHz, %s FPU",
-		getpropstring(node, "name"),
-		clockfreq(clk), fpuname);
+	snprintf(cpu_model, sizeof cpu_model,
+		"%s (rev %d.%d) @ %s MHz, %s FPU", getpropstring(node, "name"),
+		vers >> 4, vers & 0xf, clockfreq(clk), fpuname);
 	printf(": %s\n", cpu_model);
 
 	cacheinfo.c_physical = 1; /* Dunno... */
@@ -185,9 +187,7 @@ cpu_attach(parent, dev, aux)
 	if ((1 << i) != l && l)
 		panic("bad icache line size %d", l);
 	cacheinfo.ic_l2linesize = i;
-	cacheinfo.ic_totalsize =
-	    getpropint(node, "icache-size", 0) *
-	    getpropint(node, "icache-associativity", 1);
+	cacheinfo.ic_totalsize = getpropint(node, "icache-size", 0);
 	if (cacheinfo.ic_totalsize == 0)
 		cacheinfo.ic_totalsize = l *
 		    getpropint(node, "icache-nlines", 64) *
@@ -200,9 +200,7 @@ cpu_attach(parent, dev, aux)
 	if ((1 << i) != l && l)
 		panic("bad dcache line size %d", l);
 	cacheinfo.dc_l2linesize = i;
-	cacheinfo.dc_totalsize =
-	    getpropint(node, "dcache-size", 0) *
-	    getpropint(node, "dcache-associativity", 1);
+	cacheinfo.dc_totalsize = getpropint(node, "dcache-size", 0);
 	if (cacheinfo.dc_totalsize == 0)
 		cacheinfo.dc_totalsize = l *
 		    getpropint(node, "dcache-nlines", 128) *
@@ -215,9 +213,7 @@ cpu_attach(parent, dev, aux)
 	if ((1 << i) != l && l)
 		panic("bad ecache line size %d", l);
 	cacheinfo.ec_l2linesize = i;
-	cacheinfo.ec_totalsize =
-		getpropint(node, "ecache-size", 0) *
-		getpropint(node, "ecache-associativity", 1);
+	cacheinfo.ec_totalsize = getpropint(node, "ecache-size", 0);
 	if (cacheinfo.ec_totalsize == 0)
 		cacheinfo.ec_totalsize = l *
 		    getpropint(node, "ecache-nlines", 32768) *
@@ -261,6 +257,25 @@ cpu_attach(parent, dev, aux)
 	}
 	printf("\n");
 	cache_enable();
+
+	if (impl >= IMPL_CHEETAH) {
+		extern vaddr_t ktext, dlflush_start;
+		extern paddr_t ktextp;
+		vaddr_t *pva;
+		paddr_t pa;
+		u_int32_t inst;
+
+		for (pva = &dlflush_start; *pva; pva++) {
+			inst = *(u_int32_t *)(*pva);
+			inst &= ~(ASI_DCACHE_TAG << 5);
+			inst |= (ASI_DCACHE_INVALIDATE << 5);
+			pa = (paddr_t) (ktextp - ktext + *pva);
+			stwa(pa, ASI_PHYS_CACHED, inst);
+			flush((void *)KERNBASE);
+		}
+
+		cacheinfo.c_dcache_flush_page = us3_dcache_flush_page;
+	}
 }
 
 /*

@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.h,v 1.1.1.1 2006/10/06 21:02:55 miod Exp $	*/
+/*	$OpenBSD: cpu.h,v 1.3 2006/11/29 12:26:14 miod Exp $	*/
 /*	$NetBSD: cpu.h,v 1.41 2006/01/21 04:24:12 uwe Exp $	*/
 
 /*-
@@ -49,13 +49,6 @@
 #include <sh/frame.h>
 
 #ifdef _KERNEL
-
-/*
- * Can't swapout u-area, (__SWAP_BROKEN)
- * since we use P1 converted address for trapframe.
- */
-#define	cpu_swapin(p)			/* nothing */
-#define	cpu_swapout(p)			/* nothing */
 
 /*
  * Arguments to hardclock and gatherstats encapsulate the previous
@@ -194,11 +187,13 @@ extern int want_resched;		/* need_resched() was called */
  * CTL_MACHDEP definitions.
  */
 #define	CPU_CONSDEV		1	/* dev_t: console terminal device */
-#define	CPU_MAXID		2	/* number of valid machdep ids */
+#define	CPU_KBDRESET		2	/* keyboard reset */
+#define	CPU_MAXID		3	/* number of valid machdep ids */
 
 #define	CTL_MACHDEP_NAMES {						\
 	{ 0, 0 },							\
 	{ "console_device",	CTLTYPE_STRUCT },			\
+	{ "kbdreset",		CTLTYPE_INT },				\
 }
 
 #ifdef _KERNEL

@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_sk.c,v 1.128 2006/09/27 02:27:04 brad Exp $	*/
+/*	$OpenBSD: if_sk.c,v 1.135 2007/01/05 21:32:25 kettenis Exp $	*/
 
 /*
  * Copyright (c) 1997, 1998, 1999, 2000
@@ -383,7 +383,7 @@ sk_marv_miibus_writereg(struct device *dev, int phy, int reg, int val)
 
 	for (i = 0; i < SK_TIMEOUT; i++) {
 		DELAY(1);
-		if (SK_YU_READ_2(sc_if, YUKON_SMICR) & YU_SMICR_BUSY)
+		if (!(SK_YU_READ_2(sc_if, YUKON_SMICR) & YU_SMICR_BUSY))
 			break;
 	}
 
@@ -423,9 +423,9 @@ sk_setfilt(struct sk_if_softc *sc_if, caddr_t addr, int slot)
 {
 	int base = XM_RXFILT_ENTRY(slot);
 
-	SK_XM_WRITE_2(sc_if, base, *(u_int16_t *)(&addr[0]));
-	SK_XM_WRITE_2(sc_if, base + 2, *(u_int16_t *)(&addr[2]));
-	SK_XM_WRITE_2(sc_if, base + 4, *(u_int16_t *)(&addr[4]));
+	SK_XM_WRITE_2(sc_if, base, letoh16(*(u_int16_t *)(&addr[0])));
+	SK_XM_WRITE_2(sc_if, base + 2, letoh16(*(u_int16_t *)(&addr[2])));
+	SK_XM_WRITE_2(sc_if, base + 4, letoh16(*(u_int16_t *)(&addr[4])));
 }
 
 void
@@ -452,10 +452,6 @@ sk_setmulti(struct sk_if_softc *sc_if)
 	case SK_YUKON:
 	case SK_YUKON_LITE:
 	case SK_YUKON_LP:
-	case SK_YUKON_XL:
-	case SK_YUKON_EC_U:
-	case SK_YUKON_EC:
-	case SK_YUKON_FE:
 		SK_YU_WRITE_2(sc_if, YUKON_MCAH1, 0);
 		SK_YU_WRITE_2(sc_if, YUKON_MCAH2, 0);
 		SK_YU_WRITE_2(sc_if, YUKON_MCAH3, 0);
@@ -496,10 +492,6 @@ allmulti:
 				case SK_YUKON:
 				case SK_YUKON_LITE:
 				case SK_YUKON_LP:
-				case SK_YUKON_XL:
-				case SK_YUKON_EC_U:
-				case SK_YUKON_EC:
-				case SK_YUKON_FE:
 					h = sk_yukon_hash(enm->enm_addrlo);
 					break;
 				}
@@ -523,10 +515,6 @@ allmulti:
 	case SK_YUKON:
 	case SK_YUKON_LITE:
 	case SK_YUKON_LP:
-	case SK_YUKON_XL:
-	case SK_YUKON_EC_U:
-	case SK_YUKON_EC:
-	case SK_YUKON_FE:
 		SK_YU_WRITE_2(sc_if, YUKON_MCAH1, hashes[0] & 0xffff);
 		SK_YU_WRITE_2(sc_if, YUKON_MCAH2, (hashes[0] >> 16) & 0xffff);
 		SK_YU_WRITE_2(sc_if, YUKON_MCAH3, hashes[1] & 0xffff);
@@ -551,10 +539,6 @@ sk_setpromisc(struct sk_if_softc *sc_if)
 	case SK_YUKON:
 	case SK_YUKON_LITE:
 	case SK_YUKON_LP:
-	case SK_YUKON_XL:
-	case SK_YUKON_EC_U:
-	case SK_YUKON_EC:
-	case SK_YUKON_FE:
 		if (ifp->if_flags & IFF_PROMISC) {
 			SK_YU_CLRBIT_2(sc_if, YUKON_RCR,
 			    YU_RCR_UFLEN | YU_RCR_MUFLEN);
@@ -854,7 +838,6 @@ sk_ifmedia_upd(struct ifnet *ifp)
 {
 	struct sk_if_softc *sc_if = ifp->if_softc;
 
-	sk_init(sc_if);
 	mii_mediachg(&sc_if->sk_mii);
 	return (0);
 }
@@ -1024,11 +1007,6 @@ void sk_reset(struct sk_softc *sc)
 	case SK_GENESIS:
 		imtimer_ticks = SK_IMTIMER_TICKS_GENESIS;
 		break;
-	case SK_YUKON_EC:
-	case SK_YUKON_XL:
-	case SK_YUKON_FE:
-		imtimer_ticks = SK_IMTIMER_TICKS_YUKON_EC;
-		break;
 	default:
 		imtimer_ticks = SK_IMTIMER_TICKS_YUKON;
 	}
@@ -1051,12 +1029,6 @@ sk_probe(struct device *parent, void *match, void *aux)
 	case SK_YUKON:
 	case SK_YUKON_LITE:
 	case SK_YUKON_LP:
-#ifdef not_quite_yet
-	case SK_YUKON_XL:
-	case SK_YUKON_EC_U:
-	case SK_YUKON_EC:
-	case SK_YUKON_FE:
-#endif
 		return (1);
 	}
 
@@ -1112,12 +1084,8 @@ sk_attach(struct device *parent, struct device *self, void *aux)
  	 * receiver and b) between the two XMACs, if this is a
 	 * dual port NIC. Our algorithm is to divide up the memory
 	 * evenly so that everyone gets a fair share.
-	 *
-	 * Just to be contrary, Yukon2 appears to have separate memory
-	 * for each MAC.
 	 */
-	if (SK_IS_YUKON2(sc) ||
-	    sk_win_read_1(sc, SK_CONFIG) & SK_CONFIG_SINGLEMAC) {
+	if (sk_win_read_1(sc, SK_CONFIG) & SK_CONFIG_SINGLEMAC) {
 		u_int32_t		chunk, val;
 
 		chunk = sc->sk_ramsize / 2;
@@ -1237,10 +1205,6 @@ sk_attach(struct device *parent, struct device *self, void *aux)
 	case SK_YUKON:
 	case SK_YUKON_LITE:
 	case SK_YUKON_LP:
-	case SK_YUKON_XL:
-	case SK_YUKON_EC_U:
-	case SK_YUKON_EC:
-	case SK_YUKON_FE:
 		sk_init_yukon(sc_if);
 		break;
 	default:
@@ -1265,8 +1229,13 @@ sk_attach(struct device *parent, struct device *self, void *aux)
 
 	ifmedia_init(&sc_if->sk_mii.mii_media, 0,
 	    sk_ifmedia_upd, sk_ifmedia_sts);
-	mii_attach(self, &sc_if->sk_mii, 0xffffffff, MII_PHY_ANY,
-	    MII_OFFSET_ANY, 0);
+	if (SK_IS_GENESIS(sc)) {
+		mii_attach(self, &sc_if->sk_mii, 0xffffffff, MII_PHY_ANY,
+		    MII_OFFSET_ANY, 0);
+	} else {
+		mii_attach(self, &sc_if->sk_mii, 0xffffffff, MII_PHY_ANY,
+		    MII_OFFSET_ANY, MIIF_DOPAUSE);
+	}
 	if (LIST_FIRST(&sc_if->sk_mii.mii_phys) == NULL) {
 		printf("%s: no PHY found!\n", sc_if->sk_dev.dv_xname);
 		ifmedia_add(&sc_if->sk_mii.mii_media, IFM_ETHER|IFM_MANUAL,
@@ -1454,40 +1423,26 @@ skc_attach(struct device *parent, struct device *self, void *aux)
 	/* Read and save physical media type */
 	sc->sk_pmd = sk_win_read_1(sc, SK_PMDTYPE);
 
-	if (sc->sk_pmd == 'T' || sc->sk_pmd == '1' ||
-	    (SK_IS_YUKON2(sc) && !(sc->sk_pmd == 'L' ||
-	    sc->sk_pmd == 'S')))
+	if (sc->sk_pmd == 'T' || sc->sk_pmd == '1')
 		sc->sk_coppertype = 1;
 	else
 		sc->sk_coppertype = 0;
 
 	switch (sc->sk_type) {
 	case SK_GENESIS:
-		sc->sk_name = "SysKonnect GEnesis";
+		sc->sk_name = "GEnesis";
 		break;
 	case SK_YUKON:
-		sc->sk_name = "Marvell Yukon";
+		sc->sk_name = "Yukon";
 		break;
 	case SK_YUKON_LITE:
-		sc->sk_name = "Marvell Yukon Lite";
+		sc->sk_name = "Yukon Lite";
 		break;
 	case SK_YUKON_LP:
-		sc->sk_name = "Marvell Yukon LP";
-		break;
-	case SK_YUKON_XL:
-		sc->sk_name = "Marvell Yukon-2 XL";
-		break;
-	case SK_YUKON_EC_U:
-		sc->sk_name = "Marvell Yukon-2 EC Ultra";
-		break;
-	case SK_YUKON_EC:
-		sc->sk_name = "Marvell Yukon-2 EC";
-		break;
-	case SK_YUKON_FE:
-		sc->sk_name = "Marvell Yukon-2 FE";
+		sc->sk_name = "Yukon LP";
 		break;
 	default:
-		sc->sk_name = "Marvell Yukon (Unknown)";
+		sc->sk_name = "Yukon (Unknown)";
 	}
 
 	/* Yukon Lite Rev A0 needs special test, from sk98lin driver */
@@ -1526,54 +1481,6 @@ skc_attach(struct device *parent, struct device *self, void *aux)
 		}
 	}
 
-	if (sc->sk_type == SK_YUKON_XL) {
-		switch (sc->sk_rev) {
-		case SK_YUKON_XL_REV_A0:
-			revstr = "A0";
-			break;
-		case SK_YUKON_XL_REV_A1:
-			revstr = "A1";
-			break;
-		case SK_YUKON_XL_REV_A2:
-			revstr = "A2";
-			break;
-		case SK_YUKON_XL_REV_A3:
-			revstr = "A3";
-			break;
-		default:
-			;
-		}
-	}
-
-	if (sc->sk_type == SK_YUKON_EC) {
-		switch (sc->sk_rev) {
-		case SK_YUKON_EC_REV_A1:
-			revstr = "A1";
-			break;
-		case SK_YUKON_EC_REV_A2:
-			revstr = "A2";
-			break;
-		case SK_YUKON_EC_REV_A3:
-			revstr = "A3";
-			break;
-		default:
-			;
-		}
-	}
-
-	if (sc->sk_type == SK_YUKON_EC_U) {
-		switch (sc->sk_rev) {
-		case SK_YUKON_EC_U_REV_A0:
-			revstr = "A0";
-			break;
-		case SK_YUKON_EC_U_REV_A1:
-			revstr = "A1";
-			break;
-		default:
-			;
-		}
-	}
-
 	/* Announce the product name. */
 	printf(", %s", sc->sk_name);
 	if (revstr != NULL)
@@ -1582,19 +1489,8 @@ skc_attach(struct device *parent, struct device *self, void *aux)
 
 	sc->sk_macs = 1;
 
-	if (SK_IS_YUKON2(sc)) {
-		u_int8_t hw;
-
-		hw = sk_win_read_1(sc, SK_Y2_HWRES);
-		if ((hw & SK_Y2_HWRES_LINK_MASK) == SK_Y2_HWRES_LINK_DUAL) {
-			if ((sk_win_read_1(sc, SK_Y2_CLKGATE) &
-			    SK_Y2_CLKGATE_LINK2_INACTIVE) == 0)
-				sc->sk_macs++;
-		}
-	} else {
-		if (!(sk_win_read_1(sc, SK_CONFIG) & SK_CONFIG_SINGLEMAC))
-			sc->sk_macs++;
-	}
+	if (!(sk_win_read_1(sc, SK_CONFIG) & SK_CONFIG_SINGLEMAC))
+		sc->sk_macs++;
 
 	skca.skc_port = SK_PORT_A;
 	skca.skc_type = sc->sk_type;
@@ -1624,7 +1520,7 @@ sk_encap(struct sk_if_softc *sc_if, struct mbuf *m_head, u_int32_t *txidx)
 {
 	struct sk_softc		*sc = sc_if->sk_softc;
 	struct sk_tx_desc	*f = NULL;
-	u_int32_t		frag, cur, cnt = 0, sk_ctl;
+	u_int32_t		frag, cur, sk_ctl;
 	int			i;
 	struct sk_txmap_entry	*entry;
 	bus_dmamap_t		txmap;
@@ -1656,6 +1552,12 @@ sk_encap(struct sk_if_softc *sc_if, struct mbuf *m_head, u_int32_t *txidx)
 		return (ENOBUFS);
 	}
 
+	if (txmap->dm_nsegs > (SK_TX_RING_CNT - sc_if->sk_cdata.sk_tx_cnt - 2)) {
+		DPRINTFN(2, ("sk_encap: too few descriptors free\n"));
+		bus_dmamap_unload(sc->sc_dmatag, txmap);
+		return (ENOBUFS);
+	}
+
 	DPRINTFN(2, ("sk_encap: dm_nsegs=%d\n", txmap->dm_nsegs));
 
 	/* Sync the DMA map. */
@@ -1663,21 +1565,16 @@ sk_encap(struct sk_if_softc *sc_if, struct mbuf *m_head, u_int32_t *txidx)
 	    BUS_DMASYNC_PREWRITE);
 
 	for (i = 0; i < txmap->dm_nsegs; i++) {
-		if ((SK_TX_RING_CNT - (sc_if->sk_cdata.sk_tx_cnt + cnt)) < 2) {
-			DPRINTFN(2, ("sk_encap: too few descriptors free\n"));
-			return (ENOBUFS);
-		}
 		f = &sc_if->sk_rdata->sk_tx_ring[frag];
 		f->sk_data_lo = htole32(txmap->dm_segs[i].ds_addr);
 		sk_ctl = txmap->dm_segs[i].ds_len | SK_OPCODE_DEFAULT;
-		if (cnt == 0)
+		if (i == 0)
 			sk_ctl |= SK_TXCTL_FIRSTFRAG;
 		else
 			sk_ctl |= SK_TXCTL_OWN;
 		f->sk_ctl = htole32(sk_ctl);
 		cur = frag;
 		SK_INC(frag, SK_TX_RING_CNT);
-		cnt++;
 	}
 
 	sc_if->sk_cdata.sk_tx_chain[cur].sk_mbuf = m_head;
@@ -1697,7 +1594,7 @@ sk_encap(struct sk_if_softc *sc_if, struct mbuf *m_head, u_int32_t *txidx)
 	/* Sync first descriptor to hand it off */
 	SK_CDTXSYNC(sc_if, *txidx, 1, BUS_DMASYNC_PREREAD|BUS_DMASYNC_PREWRITE);
 
-	sc_if->sk_cdata.sk_tx_cnt += cnt;
+	sc_if->sk_cdata.sk_tx_cnt += txmap->dm_nsegs;
 
 #ifdef SK_DEBUG
 	if (skdebug >= 2) {
@@ -2370,11 +2267,11 @@ sk_init_xmac(struct sk_if_softc	*sc_if)
 
 	/* Set station address */
 	SK_XM_WRITE_2(sc_if, XM_PAR0,
-	    *(u_int16_t *)(&sc_if->arpcom.ac_enaddr[0]));
+	    letoh16(*(u_int16_t *)(&sc_if->arpcom.ac_enaddr[0])));
 	SK_XM_WRITE_2(sc_if, XM_PAR1,
-	    *(u_int16_t *)(&sc_if->arpcom.ac_enaddr[2]));
+	    letoh16(*(u_int16_t *)(&sc_if->arpcom.ac_enaddr[2])));
 	SK_XM_WRITE_2(sc_if, XM_PAR2,
-	    *(u_int16_t *)(&sc_if->arpcom.ac_enaddr[4]));
+	    letoh16(*(u_int16_t *)(&sc_if->arpcom.ac_enaddr[4])));
 	SK_XM_SETBIT_4(sc_if, XM_MODE, XM_MODE_RX_USE_STATION);
 
 	if (ifp->if_flags & IFF_BROADCAST)
@@ -2677,10 +2574,6 @@ sk_init(void *xsc_if)
 	case SK_YUKON:
 	case SK_YUKON_LITE:
 	case SK_YUKON_LP:
-	case SK_YUKON_XL:
-	case SK_YUKON_EC_U:
-	case SK_YUKON_EC:
-	case SK_YUKON_FE:
 		sk_init_yukon(sc_if);
 		break;
 	}
@@ -2856,10 +2749,6 @@ sk_stop(struct sk_if_softc *sc_if)
 	case SK_YUKON:
 	case SK_YUKON_LITE:
 	case SK_YUKON_LP:
-	case SK_YUKON_XL:
-	case SK_YUKON_EC_U:
-	case SK_YUKON_EC:
-	case SK_YUKON_FE:
 		SK_IF_WRITE_1(sc_if,0, SK_RXMF1_CTRL_TEST, SK_RFCTL_RESET_SET);
 		SK_IF_WRITE_1(sc_if,0, SK_TXMF1_CTRL_TEST, SK_TFCTL_RESET_SET);
 		break;

@@ -1,4 +1,4 @@
-/*	$OpenBSD: locore.s,v 1.102 2006/05/07 11:30:51 kettenis Exp $	*/
+/*	$OpenBSD: locore.s,v 1.104 2006/11/26 15:13:21 dim Exp $	*/
 /*	$NetBSD: locore.s,v 1.145 1996/05/03 19:41:19 christos Exp $	*/
 
 /*-
@@ -195,6 +195,7 @@
 	.globl	_C_LABEL(cpu), _C_LABEL(cpu_id), _C_LABEL(cpu_vendor)
 	.globl	_C_LABEL(cpu_brandstr)
 	.globl	_C_LABEL(cpuid_level)
+	.globl	_C_LABEL(cpu_miscinfo)
 	.globl	_C_LABEL(cpu_feature), _C_LABEL(cpu_ecxfeature)
 	.globl	_C_LABEL(cpu_cache_eax), _C_LABEL(cpu_cache_ebx)
 	.globl	_C_LABEL(cpu_cache_ecx), _C_LABEL(cpu_cache_edx)
@@ -232,6 +233,7 @@ _C_LABEL(lapic_tpr):
 
 _C_LABEL(cpu):		.long	0	# are we 386, 386sx, 486, 586 or 686
 _C_LABEL(cpu_id):	.long	0	# saved from 'cpuid' instruction
+_C_LABEL(cpu_miscinfo):	.long	0	# misc info (apic/brand id) from 'cpuid'
 _C_LABEL(cpu_feature):	.long	0	# feature flags from 'cpuid' instruction
 _C_LABEL(cpu_ecxfeature):.long	0	# extended feature flags from 'cpuid'
 _C_LABEL(cpuid_level):	.long	-1	# max. lvl accepted by 'cpuid' insn
@@ -245,7 +247,6 @@ _C_LABEL(cold):		.long	1	# cold till we are not
 _C_LABEL(esym):		.long	0	# ptr to end of syms
 _C_LABEL(cnvmem):	.long	0	# conventional memory size
 _C_LABEL(extmem):	.long	0	# extended memory size
-_C_LABEL(boothowto):	.long	0	# boot flags
 _C_LABEL(atdevbase):	.long	0	# location of start of iomem in virtual
 _C_LABEL(bootapiver):	.long	0	# /boot API version
 _C_LABEL(bootargc):	.long	0	# /boot argc
@@ -466,6 +467,7 @@ try586:	/* Use the `cpuid' instruction. */
 	movl	$1,%eax
 	cpuid
 	movl	%eax,RELOC(_C_LABEL(cpu_id))	# store cpu_id and features
+	movl	%ebx,RELOC(_C_LABEL(cpu_miscinfo))
 	movl	%edx,RELOC(_C_LABEL(cpu_feature))
 	movl	%ecx,RELOC(_C_LABEL(cpu_ecxfeature))
 
@@ -536,17 +538,6 @@ try586:	/* Use the `cpuid' instruction. */
 #define	PROC0STACK	((4)		* NBPG)
 #define	SYSMAP		((4+UPAGES)	* NBPG)
 #define	TABLESIZE	((4+UPAGES) * NBPG) /* + _C_LABEL(nkpde) * NBPG */
-
-	/* Clear the BSS. */
-	movl	$RELOC(_C_LABEL(edata)),%edi
-	movl	$_C_LABEL(end),%ecx
-	subl	$_C_LABEL(edata),%ecx
-	addl	$3,%ecx
-	shrl	$2,%ecx
-	xorl	%eax,%eax
-	cld
-	rep
-	stosl
 
 	/* Find end of kernel image. */
 	movl	$RELOC(_C_LABEL(end)),%edi

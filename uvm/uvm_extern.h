@@ -1,4 +1,4 @@
-/*	$OpenBSD: uvm_extern.h,v 1.58 2005/09/28 00:24:03 pedro Exp $	*/
+/*	$OpenBSD: uvm_extern.h,v 1.62 2006/11/29 12:26:14 miod Exp $	*/
 /*	$NetBSD: uvm_extern.h,v 1.57 2001/03/09 01:02:12 chs Exp $	*/
 
 /*
@@ -412,7 +412,6 @@ struct vmspace {
 extern struct vm_map *exec_map;
 extern struct vm_map *kernel_map;
 extern struct vm_map *kmem_map;
-extern struct vm_map *mb_map;
 extern struct vm_map *phys_map;
 
 
@@ -421,8 +420,8 @@ extern struct vm_map *phys_map;
  */
 
 /* zalloc zeros memory, alloc does not */
-#define uvm_km_zalloc(MAP,SIZE) uvm_km_alloc1(MAP,SIZE,TRUE)
-#define uvm_km_alloc(MAP,SIZE)  uvm_km_alloc1(MAP,SIZE,FALSE)
+#define uvm_km_zalloc(MAP,SIZE) uvm_km_alloc1(MAP,SIZE,0,TRUE)
+#define uvm_km_alloc(MAP,SIZE)  uvm_km_alloc1(MAP,SIZE,0,FALSE)
 
 #endif /* _KERNEL */
 
@@ -449,12 +448,6 @@ struct core;
 void		vmapbuf(struct buf *, vsize_t);
 void		vunmapbuf(struct buf *, vsize_t);
 void		pagemove(caddr_t, caddr_t, size_t);
-#ifndef	cpu_swapin
-void		cpu_swapin(struct proc *);
-#endif
-#ifndef	cpu_swapout
-void		cpu_swapout(struct proc *);
-#endif
 void		cpu_fork(struct proc *, struct proc *, void *, size_t,
 		    void (*)(void *), void *);
 
@@ -480,7 +473,7 @@ void			uvm_exit(struct proc *);
 void			uvm_init_limits(struct proc *);
 boolean_t		uvm_kernacc(caddr_t, size_t, int);
 __dead void		uvm_scheduler(void);
-void			uvm_swapin(struct proc *);
+
 int			uvm_vslock(struct proc *, caddr_t, size_t,
 			    vm_prot_t);
 void			uvm_vsunlock(struct proc *, caddr_t, size_t);
@@ -496,7 +489,7 @@ int			uvm_io(vm_map_t, struct uio *, int);
 #define	UVM_IO_FIXPROT	0x01
 
 /* uvm_km.c */
-vaddr_t			uvm_km_alloc1(vm_map_t, vsize_t, boolean_t);
+vaddr_t			uvm_km_alloc1(vm_map_t, vsize_t, vsize_t, boolean_t);
 void			uvm_km_free(vm_map_t, vaddr_t, vsize_t);
 void			uvm_km_free_wakeup(vm_map_t, vaddr_t,
 						vsize_t);

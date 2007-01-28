@@ -1,4 +1,4 @@
-/*	$OpenBSD: uipc_usrreq.c,v 1.31 2006/02/27 23:38:11 miod Exp $	*/
+/*	$OpenBSD: uipc_usrreq.c,v 1.33 2006/11/17 08:33:20 claudio Exp $	*/
 /*	$NetBSD: uipc_usrreq.c,v 1.18 1996/02/09 19:00:50 christos Exp $	*/
 
 /*
@@ -426,7 +426,6 @@ unp_bind(struct unpcb *unp, struct mbuf *nam, struct proc *p)
 	VATTR_NULL(&vattr);
 	vattr.va_type = VSOCK;
 	vattr.va_mode = ACCESSPERMS &~ p->p_fd->fd_cmask;
-	VOP_LEASE(nd.ni_dvp, p, p->p_ucred, LEASE_WRITE);
 	error = VOP_CREATE(nd.ni_dvp, &nd.ni_vp, &nd.ni_cnd, &vattr);
 	if (error)
 		return (error);
@@ -434,6 +433,9 @@ unp_bind(struct unpcb *unp, struct mbuf *nam, struct proc *p)
 	vp->v_socket = unp->unp_socket;
 	unp->unp_vnode = vp;
 	unp->unp_addr = m_copy(nam, 0, (int)M_COPYALL);
+	unp->unp_connid.unp_euid = p->p_ucred->cr_uid;
+	unp->unp_connid.unp_egid = p->p_ucred->cr_gid;
+	unp->unp_flags |= UNP_FEIDSBIND;
 	VOP_UNLOCK(vp, 0, p);
 	return (0);
 }
@@ -444,7 +446,7 @@ unp_connect(struct socket *so, struct mbuf *nam, struct proc *p)
 	struct sockaddr_un *soun = mtod(nam, struct sockaddr_un *);
 	struct vnode *vp;
 	struct socket *so2, *so3;
-	struct unpcb *unp2, *unp3;
+	struct unpcb *unp, *unp2, *unp3;
 	int error;
 	struct nameidata nd;
 
@@ -478,6 +480,7 @@ unp_connect(struct socket *so, struct mbuf *nam, struct proc *p)
 			error = ECONNREFUSED;
 			goto bad;
 		}
+		unp = sotounpcb(so);
 		unp2 = sotounpcb(so2);
 		unp3 = sotounpcb(so3);
 		if (unp2->unp_addr)
@@ -487,6 +490,11 @@ unp_connect(struct socket *so, struct mbuf *nam, struct proc *p)
 		unp3->unp_connid.unp_egid = p->p_ucred->cr_gid;
 		unp3->unp_flags |= UNP_FEIDS;
 		so2 = so3;
+		if (unp2->unp_flags & UNP_FEIDSBIND) {
+			unp->unp_connid.unp_euid = unp2->unp_connid.unp_euid;
+			unp->unp_connid.unp_egid = unp2->unp_connid.unp_egid;
+			unp->unp_flags |= UNP_FEIDS;
+		}
 	}
 	error = unp_connect2(so, so2);
 bad:

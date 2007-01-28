@@ -1,4 +1,4 @@
-/*	$OpenBSD: pucdata.c,v 1.42 2005/11/02 17:08:22 deraadt Exp $	*/
+/*	$OpenBSD: pucdata.c,v 1.45 2006/12/21 18:53:26 deraadt Exp $	*/
 /*	$NetBSD: pucdata.c,v 1.6 1999/07/03 05:55:23 cgd Exp $	*/
 
 /*
@@ -92,6 +92,47 @@ const struct puc_device_description puc_devices[] = {
 	 * XXX Dolphin Peripherals 4078 (dual serial and single parallel)
 	 */
 
+	/*
+	 * Decision PCCOM PCI series. PLX 9052 with 1 or 2 16554 UARTS
+	 */
+
+	/* Decision Computer Inc PCCOM 2 Port RS232/422/485: 2S */
+	{   /* "Decision Computer Inc PCCOM 2 Port RS232/422/485", */ 
+	    {	PCI_VENDOR_DCI,	PCI_PRODUCT_DCI_APCI2,		0, 0	},
+	    {	0xffff,	0xffff,					0, 0	},
+	    {
+		{ PUC_PORT_TYPE_COM, 0x1c, 0x00, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x1c, 0x08, COM_FREQ },
+	    },
+	},
+
+	/* Decision Computer Inc PCCOM 4 Port RS232/422/485: 4S */
+	{   /* "Decision Computer Inc PCCOM 4 Port RS232/422/485", */ 
+	    {	PCI_VENDOR_DCI,	PCI_PRODUCT_DCI_APCI4,		0, 0	},
+	    {	0xffff,	0xffff,					0, 0	},
+	    {
+		{ PUC_PORT_TYPE_COM, 0x1c, 0x00, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x1c, 0x08, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x1c, 0x10, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x1c, 0x18, COM_FREQ },
+	    },
+	},
+
+	/* Decision Computer Inc PCCOM 8 Port RS232/422/485: 8S */
+	{   /* "Decision Computer Inc PCCOM 8 Port RS232/422/485", */ 
+	    {	PCI_VENDOR_DCI, PCI_PRODUCT_DCI_APCI8,		0, 0	},
+	    {	0xffff,	0xffff,					0, 0	},
+	    {
+		{ PUC_PORT_TYPE_COM, 0x1c, 0x00, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x1c, 0x08, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x1c, 0x10, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x1c, 0x18, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x1c, 0x20, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x1c, 0x28, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x1c, 0x30, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x1c, 0x38, COM_FREQ },
+	    },
+	},
 
 	/*
 	 * SIIG Boards.
@@ -1222,6 +1263,22 @@ const struct puc_device_description puc_devices[] = {
 	    },
 	},
 
+	/* Cronyx Engineering Ltd. Omega-PCI (8 serial port) card. */
+	{    /* "Cronyx Omega-PCI" */
+	    {	PCI_VENDOR_PLX,	PCI_PRODUCT_PLX_CRONYX_OMEGA,	0, 0 },
+	    {	0xffff,	0xffff,					0, 0 },
+	    {
+		{ PUC_PORT_TYPE_COM, 0x18, 0x00, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x18, 0x08, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x18, 0x10, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x18, 0x18, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x18, 0x20, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x18, 0x28, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x18, 0x30, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x18, 0x38, COM_FREQ },
+	    },
+	},
+
 	/* Avlab Technology, Inc. Low Profile PCI 4 Serial: 4S */
 	{   /* "Avlab Low Profile PCI 4 Serial" */
 	    {	PCI_VENDOR_AVLAB, PCI_PRODUCT_AVLAB_LPPCI4S,	0, 0  },
@@ -1231,6 +1288,16 @@ const struct puc_device_description puc_devices[] = {
 		{ PUC_PORT_TYPE_COM, 0x14, 0x00, COM_FREQ },
 		{ PUC_PORT_TYPE_COM, 0x18, 0x00, COM_FREQ },
 		{ PUC_PORT_TYPE_COM, 0x1c, 0x00, COM_FREQ },
+	    },
+	},
+
+	/* Avlab Technology, Inc. PCI 2 Serial: 2S */
+	{   /* "Avlab PCI 2 Serial" */
+	    {	PCI_VENDOR_AVLAB, PCI_PRODUCT_AVLAB_PCI2S,	0, 0  },
+	    {	0xffff,	0xffff,					0, 0  },
+	    {
+		{ PUC_PORT_TYPE_COM, 0x10, 0x00, COM_FREQ },
+		{ PUC_PORT_TYPE_COM, 0x14, 0x00, COM_FREQ },
 	    },
 	},
 

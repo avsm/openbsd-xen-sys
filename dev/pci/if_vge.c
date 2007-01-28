@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_vge.c,v 1.28 2006/10/03 19:46:08 damien Exp $	*/
+/*	$OpenBSD: if_vge.c,v 1.31 2006/11/23 02:00:54 brad Exp $	*/
 /*	$FreeBSD: if_vge.c,v 1.3 2004/09/11 22:13:25 wpaul Exp $	*/
 /*
  * Copyright (c) 2004
@@ -1198,7 +1198,12 @@ vge_tick(void *xsc)
 		if (mii->mii_media_status & IFM_ACTIVE &&
 		    IFM_SUBTYPE(mii->mii_media_active) != IFM_NONE) {
 			sc->vge_link = 1;
-			ifp->if_link_state = LINK_STATE_UP;
+			if (mii->mii_media_status & IFM_FDX)
+				ifp->if_link_state = LINK_STATE_FULL_DUPLEX;
+			else if (mii->mii_media_status & IFM_HDX)
+				ifp->if_link_state = LINK_STATE_HALF_DUPLEX;
+			else
+				ifp->if_link_state = LINK_STATE_UP;
 			if_link_state_change(ifp);
 			if (!IFQ_IS_EMPTY(&ifp->if_snd))
 				vge_start(ifp);
@@ -1281,11 +1286,20 @@ vge_intr(void *arg)
 int
 vge_encap(struct vge_softc *sc, struct mbuf *m_head, int idx)
 {
+	struct ifnet		*ifp = &sc->arpcom.ac_if;
 	bus_dmamap_t		txmap;
 	struct vge_tx_desc	*d = NULL;
 	struct vge_tx_frag	*f;
+	struct mbuf		*mnew = NULL;
 	int			error, frag;
 	u_int32_t		vge_flags;
+#if NVLAN > 0
+	struct ifvlan		*ifv = NULL;
+
+	if ((m_head->m_flags & (M_PROTO1|M_PKTHDR)) == (M_PROTO1|M_PKTHDR) &&
+	    m_head->m_pkthdr.rcvif != NULL)
+		ifv = m_head->m_pkthdr.rcvif->if_softc;
+#endif
 
 	vge_flags = 0;
 
@@ -1326,26 +1340,23 @@ repack:
 	 * copy the data into a mbuf cluster and map that.
 	 */
 	if (frag == VGE_TX_FRAGS) {
-		struct mbuf *m = NULL;
-
-		MGETHDR(m, M_DONTWAIT, MT_DATA);
-		if (m == NULL) {
-			m_freem(m_head);
+		MGETHDR(mnew, M_DONTWAIT, MT_DATA);
+		if (mnew == NULL)
 			return (ENOBUFS);
-		}
+
 		if (m_head->m_pkthdr.len > MHLEN) {
-			MCLGET(m, M_DONTWAIT);
-			if (!(m->m_flags & M_EXT)) {
-				m_freem(m);
-				m_freem(m_head);
+			MCLGET(mnew, M_DONTWAIT);
+			if (!(mnew->m_flags & M_EXT)) {
+				m_freem(mnew);
 				return (ENOBUFS);
 			}
 		}
 		m_copydata(m_head, 0, m_head->m_pkthdr.len,
-		    mtod(m, caddr_t));
-		m->m_pkthdr.len = m->m_len = m_head->m_pkthdr.len;
+		    mtod(mnew, caddr_t));
+		mnew->m_pkthdr.len = mnew->m_len = m_head->m_pkthdr.len;
+		IFQ_DEQUEUE(&ifp->if_snd, m_head);
 		m_freem(m_head);
-		m_head = m;
+		m_head = mnew;
 		goto repack;
 	}
 
@@ -1380,15 +1391,18 @@ repack:
 	/*
 	 * Set up hardware VLAN tagging.
 	 */
-#ifdef VGE_VLAN
-	mtag = VLAN_OUTPUT_TAG(&sc->arpcom.ac_if, m_head);
-	if (mtag != NULL)
+#if NVLAN > 0
+	if (ifv != NULL) {
 		sc->vge_ldata.vge_tx_list[idx].vge_ctl |=
-		    htole32(htons(VLAN_TAG_VALUE(mtag)) | VGE_TDCTL_VTAG);
+		    htole32(htons(ifv->ifv_tag) | VGE_TDCTL_VTAG);
+	}
 #endif
 
 	idx++;
-
+	if (mnew == NULL) {
+		/* if mbuf is coalesced, it is already dequeued */
+		IFQ_DEQUEUE(&ifp->if_snd, m_head);
+	}
 	return (0);
 }
 
@@ -1434,7 +1448,6 @@ vge_start(struct ifnet *ifp)
 			ifp->if_flags |= IFF_OACTIVE;
 			break;
 		}
-		IFQ_DEQUEUE(&ifp->if_snd, m_head);
 
 		sc->vge_ldata.vge_tx_list[pidx].vge_frag[0].vge_buflen |=
 		    htole16(VGE_TXDESC_Q);

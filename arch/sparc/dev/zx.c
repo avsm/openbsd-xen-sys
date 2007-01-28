@@ -1,4 +1,4 @@
-/*	$OpenBSD: zx.c,v 1.14 2006/03/04 10:26:53 miod Exp $	*/
+/*	$OpenBSD: zx.c,v 1.17 2006/12/02 11:24:02 miod Exp $	*/
 /*	$NetBSD: zx.c,v 1.5 2002/10/02 16:52:46 thorpej Exp $	*/
 
 /*
@@ -254,18 +254,27 @@ zx_attach(struct device *parent, struct device *self, void *args)
 	    ZX_OFF_SS0, round_page(sc->sc_sunfb.sf_fbsize));
 	ri->ri_hw = sc;
 
-	/*
-	 * Watch out! rasops_init() invoked via fbwscons_init() would
-	 * not compute ri_bits correctly when centering the display, if
-	 * it had been tricked with the low depth value. So masquerade as
-	 * 32 bits for the call. This will invoke rasops32_init() instead
-	 * of rasops8_init(), but this doesn't matter as we will override
-	 * all the rasops functions below.
-	 */
-	sc->sc_sunfb.sf_depth = 32;
 	fbwscons_init(&sc->sc_sunfb, isconsole ? 0 : RI_CLEAR);
-	sc->sc_sunfb.sf_depth = ri->ri_depth = 8;
-	    
+
+	/*
+	 * Watch out! rasops_init() invoked via fbwscons_init() did not
+	 * compute ri_bits correctly when centering the display, because
+	 * it has been tricked with the low depth value.
+	 * Recompute now.
+	 */
+	ri->ri_emustride = ri->ri_emuwidth * 4;
+	ri->ri_delta = ri->ri_stride - ri->ri_emustride;
+	ri->ri_pelbytes = 4;
+	ri->ri_xscale = ri->ri_font->fontwidth * 4;
+	ri->ri_bits = ri->ri_origbits;
+	ri->ri_bits += (((ri->ri_width * 4) - ri->ri_emustride) >> 1) & ~3;
+	ri->ri_bits += ((ri->ri_height - ri->ri_emuheight) >> 1) *
+	    ri->ri_stride;
+	ri->ri_yorigin = (int)(ri->ri_bits - ri->ri_origbits)
+	    / ri->ri_stride;
+	ri->ri_xorigin = (((int)(ri->ri_bits - ri->ri_origbits)
+	    % ri->ri_stride) / 4);
+
 	ri->ri_ops.copyrows = zx_copyrows;
 	ri->ri_ops.copycols = zx_copycols;
 	ri->ri_ops.eraserows = zx_eraserows;
@@ -556,7 +565,7 @@ zx_fillrect(struct rasops_info *ri, int x, int y, int w, int h, long attr,
 	zc = sc->sc_zc;
 	zd = sc->sc_zd_ss0;
 
-	rasops_unpack_attr(attr, &fg, &bg, NULL);
+	ri->ri_ops.unpack_attr(ri, attr, &fg, &bg, NULL);
 	x = x * ri->ri_font->fontwidth + ri->ri_xorigin;
 	y = y * ri->ri_font->fontheight + ri->ri_yorigin;
 	w = ri->ri_font->fontwidth * w - 1;
@@ -566,7 +575,7 @@ zx_fillrect(struct rasops_info *ri, int x, int y, int w, int h, long attr,
 		;
 
 	SETREG(zd->zd_rop, rop);
-	SETREG(zd->zd_fg, bg << 24);
+	SETREG(zd->zd_fg, ri->ri_devcmap[bg] << 24);
 	SETREG(zc->zc_extent, ZX_COORDS(w, h));
 	SETREG(zc->zc_fill, ZX_COORDS(x, y) | ZX_EXTENT_DIR_BACKWARDS);
 }
@@ -644,13 +653,13 @@ zx_eraserows(void *cookie, int row, int num, long attr)
 		zc = sc->sc_zc;
 		zd = sc->sc_zd_ss0;
 
-		rasops_unpack_attr(attr, &fg, &bg, NULL);
+		ri->ri_ops.unpack_attr(cookie, attr, &fg, &bg, NULL);
 
 		while ((zc->zc_csr & ZX_CSR_BLT_BUSY) != 0)
 			;
 
 		SETREG(zd->zd_rop, ZX_STD_ROP);
-		SETREG(zd->zd_fg, bg << 24);
+		SETREG(zd->zd_fg, ri->ri_devcmap[bg] << 24);
 		SETREG(zc->zc_extent,
 		    ZX_COORDS(ri->ri_width - 1, ri->ri_height - 1));
 		SETREG(zc->zc_fill, ZX_COORDS(0, 0) | ZX_EXTENT_DIR_BACKWARDS);
@@ -692,7 +701,9 @@ zx_putchar(void *cookie, int row, int col, u_int uc, long attr)
 
 	ri = (struct rasops_info *)cookie;
 	font = ri->ri_font;
-	rasops_unpack_attr(attr, &fg, &bg, &ul);
+	ri->ri_ops.unpack_attr(cookie, attr, &fg, &bg, &ul);
+	fg = ri->ri_devcmap[fg];
+	bg = ri->ri_devcmap[bg];
 
 	dp = (volatile u_int32_t *)ri->ri_bits +
 	    ZX_COORDS(col * font->fontwidth, row * font->fontheight);

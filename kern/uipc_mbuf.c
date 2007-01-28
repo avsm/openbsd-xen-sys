@@ -1,4 +1,4 @@
-/*	$OpenBSD: uipc_mbuf.c,v 1.76 2006/07/14 01:58:58 pedro Exp $	*/
+/*	$OpenBSD: uipc_mbuf.c,v 1.78 2006/11/29 12:39:48 miod Exp $	*/
 /*	$NetBSD: uipc_mbuf.c,v 1.15.4.1 1996/06/13 17:11:44 cgd Exp $	*/
 
 /*
@@ -91,8 +91,6 @@
 struct	mbstat mbstat;		/* mbuf stats */
 struct	pool mbpool;		/* mbuf pool */
 struct	pool mclpool;		/* mbuf cluster pool */
-
-struct vm_map *mb_map;
 
 int max_linkhdr;		/* largest link-level header */
 int max_protohdr;		/* largest protocol header */
@@ -382,11 +380,12 @@ m_copydata(struct mbuf *m, int off, int len, caddr_t cp)
  * including the setting of m_len.
  */
 void
-m_copyback(struct mbuf *m0, int off, int len, const void *cp)
+m_copyback(struct mbuf *m0, int off, int len, const void *_cp)
 {
 	int mlen;
 	struct mbuf *m = m0, *n;
 	int totlen = 0;
+	caddr_t cp = (caddr_t)_cp;
 
 	if (m0 == NULL)
 		return;

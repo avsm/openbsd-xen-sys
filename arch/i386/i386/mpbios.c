@@ -1,4 +1,4 @@
-/*	$OpenBSD: mpbios.c,v 1.16 2006/09/19 11:06:33 jsg Exp $	*/
+/*	$OpenBSD: mpbios.c,v 1.19 2006/11/29 20:03:19 dim Exp $	*/
 /*	$NetBSD: mpbios.c,v 1.2 2002/10/01 12:56:57 fvdl Exp $	*/
 
 /*-
@@ -277,6 +277,13 @@ mpbios_probe(struct device *self)
 
 	struct		mp_map t;
 
+	/*
+	 * Skip probe if someone else (e.g. acpi) already provided the
+	 * necessary details.
+	 */
+	if (mp_busses)
+		return (0);
+
 	/* see if EBDA exists */
 
 	mpbios_page = mpbios_map(0, NBPG, &t);
@@ -447,9 +454,8 @@ int mp_nbus;
 struct mp_intr_map *mp_intrs;
 int mp_nintrs;
 
-struct mp_intr_map *lapic_ints[2]; /* XXX */
-int mp_isa_bus = -1;		/* XXX */
-int mp_eisa_bus = -1;		/* XXX */
+struct mp_bus *mp_isa_bus;
+struct mp_bus *mp_eisa_bus;
 
 static struct mp_bus extint_bus = {
 	"ExtINT",
@@ -739,7 +745,6 @@ mpbios_cpu(const u_int8_t *ent, struct device *self)
 	 * we're running on
 	 */
 	if ((caa.cpu_signature & 0x00000fff) == 0) {
-		extern int cpu_id, cpu_feature;
 		caa.cpu_signature = cpu_id;
 		caa.feature_flags = cpu_feature;
 	}
@@ -984,21 +989,21 @@ mpbios_bus(const u_int8_t *ent, struct device *self)
 
 		mp_busses[bus_id].mb_data = inb(ELCR0) | (inb(ELCR1) << 8);
 
-		if (mp_eisa_bus != -1)
+		if (mp_eisa_bus)
 			printf("%s: multiple eisa busses?\n",
 			    self->dv_xname);
 		else
-			mp_eisa_bus = bus_id;
+			mp_eisa_bus = &mp_busses[bus_id];
 	} else if (memcmp(entry->bus_type, "ISA   ", 6) == 0) {
 		mp_busses[bus_id].mb_name = "isa";
-		mp_busses[bus_id].mb_idx = 0; /* XXX */
+		mp_busses[bus_id].mb_idx = bus_id;
 		mp_busses[bus_id].mb_intr_print = mp_print_isa_intr;
 		mp_busses[bus_id].mb_intr_cfg = mp_cfg_isa_intr;
-		if (mp_isa_bus != -1)
+		if (mp_isa_bus)
 			printf("%s: multiple isa busses?\n",
 			    self->dv_xname);
 		else
-			mp_isa_bus = bus_id;
+			mp_isa_bus = &mp_busses[bus_id];
 	} else {
 		printf("%s: unsupported bus type %6.6s\n", self->dv_xname,
 		    entry->bus_type);
@@ -1116,14 +1121,12 @@ mpbios_int(const u_int8_t *ent, struct mp_intr_map *mpi)
 			sc->sc_pins[pin].ip_map = mpi;
 		}
 	} else {
-		if (id != MPS_ALL_APICS)
-			panic("can't deal with not-all-lapics interrupt yet!");
 		if (pin >= 2)
 			printf("pin %d of local apic doesn't exist!\n", pin);
 		else {
 			mpi->ioapic = NULL;
 			mpi->ioapic_pin = pin;
-			lapic_ints[pin] = mpi;
+			mpi->cpu_id = id;
 		}
 	}
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211.c,v 1.16 2006/01/04 06:04:42 canacar Exp $	*/
+/*	$OpenBSD: ieee80211.c,v 1.19 2006/12/20 08:13:56 grange Exp $	*/
 /*	$NetBSD: ieee80211.c,v 1.19 2004/06/06 05:45:29 dyoung Exp $	*/
 
 /*-
@@ -78,17 +78,6 @@ struct ieee80211com_head ieee80211com_head =
 
 static void ieee80211_setbasicrates(struct ieee80211com *);
 
-#if 0
-static const char *ieee80211_phymode_name[] = {
-	"auto",		/* IEEE80211_MODE_AUTO */
-	"11a",		/* IEEE80211_MODE_11A */
-	"11b",		/* IEEE80211_MODE_11B */
-	"11g",		/* IEEE80211_MODE_11G */
-	"FH",		/* IEEE80211_MODE_FH */
-	"turbo",	/* IEEE80211_MODE_TURBO */
-};
-#endif
-
 void
 ieee80211_ifattach(struct ifnet *ifp)
 {
@@ -164,6 +153,8 @@ ieee80211_ifattach(struct ifnet *ifp)
 	LIST_INSERT_HEAD(&ieee80211com_head, ic, ic_list);
 	ieee80211_node_attach(ifp);
 	ieee80211_proto_attach(ifp);
+
+	if_addgroup(ifp, "wlan");
 }
 
 void
@@ -602,6 +593,15 @@ ieee80211_watchdog(struct ifnet *ifp)
 	if (ic->ic_mgt_timer != 0)
 		ifp->if_timer = 1;
 }
+
+struct ieee80211_rateset ieee80211_std_rateset_11a =
+	{ 8, { 12, 18, 24, 36, 48, 72, 96, 108 } };
+
+struct ieee80211_rateset ieee80211_std_rateset_11b =
+	{ 4, { 2, 4, 11, 22 } };
+
+struct ieee80211_rateset ieee80211_std_rateset_11g =
+	{ 12, { 2, 4, 11, 22, 12, 18, 24, 36, 48, 72, 96, 108 } };
 
 /*
  * Mark the basic rates for the 11g rate table based on the

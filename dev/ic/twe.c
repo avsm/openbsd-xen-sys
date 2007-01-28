@@ -1,4 +1,4 @@
-/*	$OpenBSD: twe.c,v 1.24 2005/09/15 05:33:39 krw Exp $	*/
+/*	$OpenBSD: twe.c,v 1.26 2006/11/28 23:59:45 dlg Exp $	*/
 
 /*
  * Copyright (c) 2000-2002 Michael Shalayeff.  All rights reserved.
@@ -129,6 +129,7 @@ int
 twe_attach(sc)
 	struct twe_softc *sc;
 {
+	struct scsibus_attach_args saa;
 	/* this includes a buffer for drive config req, and a capacity req */
 	u_int8_t	param_buf[2 * TWE_SECTOR_SIZE + TWE_ALIGN - 1];
 	struct twe_param *pb = (void *)
@@ -184,7 +185,7 @@ twe_attach(sc)
 
 	pa = sc->sc_cmdmap->dm_segs[0].ds_addr +
 	    sizeof(struct twe_cmd) * (TWE_MAXCMDS - 1);
-	for (cmd = sc->sc_cmds + sizeof(struct twe_cmd) * (TWE_MAXCMDS - 1);
+	for (cmd = (struct twe_cmd *)sc->sc_cmds + TWE_MAXCMDS - 1;
 	     cmd >= (struct twe_cmd *)sc->sc_cmds; cmd--, pa -= sizeof(*cmd)) {
 
 		cmd->cmd_index = cmd - (struct twe_cmd *)sc->sc_cmds;
@@ -388,7 +389,10 @@ twe_attach(sc)
 	sc->sc_link.openings = TWE_MAXCMDS / nunits;
 	sc->sc_link.adapter_buswidth = TWE_MAX_UNITS;
 
-	config_found(&sc->sc_dev, &sc->sc_link, scsiprint);
+	bzero(&saa, sizeof(saa));
+	saa.saa_sc_link = &sc->sc_link;
+
+	config_found(&sc->sc_dev, &saa, scsiprint);
 
 	kthread_create_deferred(twe_thread_create, sc);
 

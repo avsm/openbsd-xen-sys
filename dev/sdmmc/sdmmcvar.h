@@ -1,4 +1,4 @@
-/*	$OpenBSD: sdmmcvar.h,v 1.2 2006/06/01 21:53:41 uwe Exp $	*/
+/*	$OpenBSD: sdmmcvar.h,v 1.4 2006/11/29 00:46:52 uwe Exp $	*/
 
 /*
  * Copyright (c) 2006 Uwe Stuehler <uwe@openbsd.org>
@@ -191,11 +191,6 @@ void	sdmmc_go_idle_state(struct sdmmc_softc *);
 int	sdmmc_select_card(struct sdmmc_softc *, struct sdmmc_function *);
 int	sdmmc_set_relative_addr(struct sdmmc_softc *,
 	    struct sdmmc_function *);
-int	sdmmc_decode_csd(struct sdmmc_softc *, sdmmc_response,
-	    struct sdmmc_function *);
-int	sdmmc_decode_cid(struct sdmmc_softc *, sdmmc_response,
-	    struct sdmmc_function *);
-void	sdmmc_print_cid(struct sdmmc_cid *);
 
 int	sdmmc_io_enable(struct sdmmc_softc *);
 void	sdmmc_io_scan(struct sdmmc_softc *);
@@ -220,5 +215,23 @@ void	sdmmc_mem_scan(struct sdmmc_softc *);
 int	sdmmc_mem_init(struct sdmmc_softc *, struct sdmmc_function *);
 int	sdmmc_mem_read_block(struct sdmmc_function *, int, u_char *, size_t);
 int	sdmmc_mem_write_block(struct sdmmc_function *, int, u_char *, size_t);
+
+/* ioctls */
+
+#include <sys/ioccom.h>
+
+struct bio_sdmmc_command {
+	void *cookie;
+	struct sdmmc_command cmd;
+};
+
+struct bio_sdmmc_debug {
+	void *cookie;
+	int debug;
+};
+
+#define SDIOCEXECMMC	_IOWR('S',0, struct bio_sdmmc_command)
+#define SDIOCEXECAPP	_IOWR('S',1, struct bio_sdmmc_command)
+#define SDIOCSETDEBUG	_IOWR('S',2, struct bio_sdmmc_debug)
 
 #endif

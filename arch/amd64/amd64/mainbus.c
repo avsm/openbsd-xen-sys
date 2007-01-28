@@ -1,4 +1,4 @@
-/*	$OpenBSD: mainbus.c,v 1.7 2006/04/14 21:33:56 marco Exp $	*/
+/*	$OpenBSD: mainbus.c,v 1.10 2006/11/25 16:59:31 niklas Exp $	*/
 /*	$NetBSD: mainbus.c,v 1.1 2003/04/26 18:39:29 fvdl Exp $	*/
 
 /*
@@ -118,8 +118,8 @@ int mp_nbus;
 struct mp_intr_map *mp_intrs;
 int mp_nintr;
  
-int mp_isa_bus = -1;
-int mp_eisa_bus = -1;
+struct mp_bus *mp_isa_bus;
+struct mp_bus *mp_eisa_bus;
 
 #ifdef MPVERBOSE
 int mp_verbose = 1;
@@ -200,7 +200,8 @@ mainbus_attach(struct device *parent, struct device *self, void *aux)
 		mpbios_scan(self);
 	else
 #endif
-	{
+
+	if ((cpu_info_primary.ci_flags & CPUF_PRESENT) == 0) {
 		struct cpu_attach_args caa;
                         
 		memset(&caa, 0, sizeof(caa));
@@ -218,6 +219,7 @@ mainbus_attach(struct device *parent, struct device *self, void *aux)
 		mba.mba_pba.pba_iot = X86_BUS_SPACE_IO;
 		mba.mba_pba.pba_memt = X86_BUS_SPACE_MEM;
 		mba.mba_pba.pba_dmat = &pci_bus_dma_tag;
+		mba.mba_pba.pba_domain = pci_ndomains++;
 		mba.mba_pba.pba_bus = 0;
 		mba.mba_pba.pba_bridgetag = NULL;
 		mba.mba_pba.pba_pc = NULL;

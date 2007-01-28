@@ -1,4 +1,4 @@
-/*      $OpenBSD: ath.c,v 1.58 2006/10/19 10:55:56 tom Exp $  */
+/*      $OpenBSD: ath.c,v 1.60 2006/12/14 09:23:24 reyk Exp $  */
 /*	$NetBSD: ath.c,v 1.37 2004/08/18 21:59:39 dyoung Exp $	*/
 
 /*-
@@ -322,7 +322,7 @@ ath_attach(u_int16_t devid, struct ath_softc *sc)
 	 * allocate more tx queues for splitting management
 	 * frames and for QOS support.
 	 */
-	sc->sc_bhalq = ath_hal_setup_tx_queue(ah,HAL_TX_QUEUE_BEACON,NULL);
+	sc->sc_bhalq = ath_hal_setup_tx_queue(ah, HAL_TX_QUEUE_BEACON, NULL);
 	if (sc->sc_bhalq == (u_int) -1) {
 		printf(": unable to setup a beacon xmit queue!\n");
 		goto bad2;
@@ -330,6 +330,7 @@ ath_attach(u_int16_t devid, struct ath_softc *sc)
 
 	for (i = 0; i <= HAL_TX_QUEUE_ID_DATA_MAX; i++) {
 		bzero(&qinfo, sizeof(qinfo));
+		qinfo.tqi_type = HAL_TX_QUEUE_DATA;
 		qinfo.tqi_subtype = i; /* should be mapped to WME types */
 		sc->sc_txhalq[i] = ath_hal_setup_tx_queue(ah,
 		    HAL_TX_QUEUE_DATA, &qinfo);
@@ -2017,12 +2018,12 @@ ath_rx_proc(void *arg, int npending)
 			sc->sc_rxtap.wr_rssi = ds->ds_rxstat.rs_rssi;
 			sc->sc_rxtap.wr_max_rssi = ic->ic_max_rssi;
 
-			M_DUP_PKTHDR(&mb, m);
 			mb.m_data = (caddr_t)&sc->sc_rxtap;
 			mb.m_len = sc->sc_rxtap_len;
 			mb.m_next = m;
-			mb.m_pkthdr.len += mb.m_len;
-
+			mb.m_nextpkt = NULL;
+			mb.m_type = 0;
+			mb.m_flags = 0;
 			bpf_mtap(sc->sc_drvbpf, &mb, BPF_DIRECTION_IN);
 		}
 #endif
@@ -2409,11 +2410,12 @@ ath_tx_start(struct ath_softc *sc, struct ieee80211_node *ni,
 		sc->sc_txtap.wt_antenna = antenna;
 		sc->sc_txtap.wt_hwqueue = hwqueue;
 
-		M_DUP_PKTHDR(&mb, m0);
 		mb.m_data = (caddr_t)&sc->sc_txtap;
 		mb.m_len = sc->sc_txtap_len;
 		mb.m_next = m0;
-		mb.m_pkthdr.len += mb.m_len;
+		mb.m_nextpkt = NULL;
+		mb.m_type = 0;
+		mb.m_flags = 0;
 		bpf_mtap(sc->sc_drvbpf, &mb, BPF_DIRECTION_OUT);
 	}
 #endif

@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_gem_pci.c,v 1.23 2006/10/15 14:45:03 kettenis Exp $	*/
+/*	$OpenBSD: if_gem_pci.c,v 1.26 2006/11/25 17:47:40 brad Exp $	*/
 /*	$NetBSD: if_gem_pci.c,v 1.1 2001/09/16 00:11:42 eeh Exp $ */
 
 /*
@@ -106,10 +106,7 @@ const struct pci_matchid gem_pci_devices[] = {
 };
 
 int
-gem_match_pci(parent, cf, aux)
-	struct device *parent;
-	void *cf;
-	void *aux;
+gem_match_pci(struct device *parent, void *cf, void *aux)
 {
 	return (pci_matchbyid((struct pci_attach_args *)aux, gem_pci_devices,
 	    sizeof(gem_pci_devices)/sizeof(gem_pci_devices[0])));
@@ -189,7 +186,7 @@ gem_pci_enaddr(struct gem_softc *sc, struct pci_attach_args *pa)
 	if (vpd->vpd_key0 != 'N' || vpd->vpd_key1 != 'A')
 		goto fail;
 
-	bcopy(buf + 6, sc->sc_enaddr, ETHER_ADDR_LEN);
+	bcopy(buf + 6, sc->sc_arpcom.ac_enaddr, ETHER_ADDR_LEN);
 	rv = 0;
 
  fail:
@@ -204,9 +201,7 @@ gem_pci_enaddr(struct gem_softc *sc, struct pci_attach_args *pa)
 }
 
 void
-gem_attach_pci(parent, self, aux)
-	struct device *parent, *self;
-	void *aux;
+gem_attach_pci(struct device *parent, struct device *self, void *aux)
 {
 	struct pci_attach_args *pa = aux;
 	struct gem_pci_softc *gsc = (void *)self;
@@ -252,12 +247,19 @@ gem_attach_pci(parent, self, aux)
 #define PCI_GEM_BASEADDR	0x10
 	if (pci_mapreg_map(pa, PCI_GEM_BASEADDR, type, 0,
 	    &gsc->gsc_memt, &gsc->gsc_memh, NULL, &size, 0) != 0) {
-		printf(": could not map gem registers\n");
+		printf(": could not map registers\n");
 		return;
 	}
 
 	sc->sc_bustag = gsc->gsc_memt;
-	sc->sc_h = gsc->gsc_memh;
+	sc->sc_h1 = gsc->gsc_memh;
+
+	if (bus_space_subregion(sc->sc_bustag, sc->sc_h1,
+	    GEM_PCI_BANK2_OFFSET, GEM_PCI_BANK2_SIZE, &sc->sc_h2)) {
+		printf(": unable to create bank 2 subregion\n");
+		bus_space_unmap(gsc->gsc_memt, gsc->gsc_memh, size);
+		return;
+	}
 
 	if (gem_pci_enaddr(sc, pa) == 0)
 		gotenaddr = 1;
@@ -265,14 +267,14 @@ gem_attach_pci(parent, self, aux)
 #ifdef __sparc64__
 	if (!gotenaddr) {
 		if (OF_getprop(PCITAG_NODE(pa->pa_tag), "local-mac-address",
-		    sc->sc_enaddr, ETHER_ADDR_LEN) <= 0)
-			myetheraddr(sc->sc_enaddr);
+		    sc->sc_arpcom.ac_enaddr, ETHER_ADDR_LEN) <= 0)
+			myetheraddr(sc->sc_arpcom.ac_enaddr);
 		gotenaddr = 1;
 	}
 #endif
 #ifdef __powerpc__
 	if (!gotenaddr) {
-		pci_ether_hw_addr(pa->pa_pc, sc->sc_enaddr);
+		pci_ether_hw_addr(pa->pa_pc, sc->sc_arpcom.ac_enaddr);
 		gotenaddr = 1;
 	}
 #endif

@@ -1,4 +1,4 @@
-/*	$OpenBSD: pmap.c,v 1.31 2006/06/20 20:31:04 miod Exp $	*/
+/*	$OpenBSD: pmap.c,v 1.33 2007/01/06 21:08:07 kettenis Exp $	*/
 /*	$NetBSD: pmap.c,v 1.107 2001/08/31 16:47:41 eeh Exp $	*/
 #undef	NO_VCACHE /* Don't forget the locked TLB in dostart */
 /*
@@ -1536,6 +1536,9 @@ pmap_init()
 	vm_num_phys = avail_end - avail_start;
 }
 
+/* Start of non-cachable physical memory on UltraSPARC-III. */
+#define VM_MAXPHYS_ADDRESS	((vaddr_t)0x0000040000000000L)
+
 /*
  * How much virtual space is available to the kernel?
  */
@@ -1545,8 +1548,12 @@ pmap_virtual_space(start, end)
 	vaddr_t *start, *end;
 {
 	/*
-	 * Reserve one segment for kernel virtual memory
+	 * Make sure virtual memory and physical memory don't overlap
+	 * to avoid problems with ASI_PHYS_CACHED on UltraSPARC-III.
 	 */
+	if (vmmap < VM_MAXPHYS_ADDRESS)
+		vmmap = VM_MAXPHYS_ADDRESS;
+
 	/* Reserve two pages for pmap_copy_page && /dev/mem */
 	*start = kbreak = (vaddr_t)(vmmap + 2*NBPG);
 	*end = VM_MAX_KERNEL_ADDRESS;
@@ -1572,9 +1579,9 @@ pmap_growkernel(maxkvaddr)
 	paddr_t pg;
 	struct pmap *pm = pmap_kernel();
 	
-	if (maxkvaddr >= KERNEND) {
+	if (maxkvaddr >= VM_MAX_KERNEL_ADDRESS) {
 		printf("WARNING: cannot extend kernel pmap beyond %p to %p\n",
-		       (void *)KERNEND, (void *)maxkvaddr);
+		       (void *)VM_MAX_KERNEL_ADDRESS, (void *)maxkvaddr);
 		return (kbreak);
 	}
 	s = splvm();

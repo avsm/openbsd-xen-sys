@@ -1,4 +1,4 @@
-/*	$OpenBSD: smg.c,v 1.16 2006/08/05 10:00:30 miod Exp $	*/
+/*	$OpenBSD: smg.c,v 1.18 2006/11/29 12:13:54 miod Exp $	*/
 /*	$NetBSD: smg.c,v 1.21 2000/03/23 06:46:44 thorpej Exp $ */
 /*
  * Copyright (c) 2006, Miodrag Vallat
@@ -326,6 +326,7 @@ smg_attach(struct device *parent, struct device *self, void *aux)
 	aa.scrdata = &smg_screenlist;
 	aa.accessops = &smg_accessops;
 	aa.accesscookie = sc;
+	aa.defaultscreens = 0;
 
 	config_found(self, &aa, wsemuldisplaydevprint);
 }
@@ -795,7 +796,7 @@ smg_erasecols(void *cookie, int row, int col, int num, long attr)
 	struct rasops_info *ri = cookie;
 	int fg, bg;
 
-	rasops_unpack_attr(attr, &fg, &bg, NULL);
+	ri->ri_ops.unpack_attr(cookie, attr, &fg, &bg, NULL);
 
 	num *= ri->ri_font->fontwidth;
 	col *= ri->ri_font->fontwidth;

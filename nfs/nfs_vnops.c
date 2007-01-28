@@ -1,4 +1,4 @@
-/*	$OpenBSD: nfs_vnops.c,v 1.66 2006/04/20 14:43:32 pedro Exp $	*/
+/*	$OpenBSD: nfs_vnops.c,v 1.70 2007/01/16 17:52:18 thib Exp $	*/
 /*	$NetBSD: nfs_vnops.c,v 1.62.4.1 1996/07/08 20:26:52 jtc Exp $	*/
 
 /*
@@ -58,6 +58,7 @@
 #include <sys/dirent.h>
 #include <sys/fcntl.h>
 #include <sys/lockf.h>
+#include <sys/hash.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -97,7 +98,6 @@ struct vnodeopv_entry_desc nfsv2_vnodeop_entries[] = {
 	{ &vop_setattr_desc, nfs_setattr },	/* setattr */
 	{ &vop_read_desc, nfs_read },		/* read */
 	{ &vop_write_desc, nfs_write },		/* write */
-	{ &vop_lease_desc, nfs_lease_check },	/* lease */
 	{ &vop_ioctl_desc, nfs_ioctl },		/* ioctl */
 	{ &vop_poll_desc, nfs_poll },		/* poll */
 	{ &vop_kqfilter_desc, nfs_kqfilter },	/* kqfilter */
@@ -1085,7 +1085,7 @@ nfs_writerpc(vp, uiop, iomode, must_commit)
 					break;
 				} else if (rlen < len) {
 					backup = len - rlen;
-					uiop->uio_iov->iov_base -= backup;
+					(char *)uiop->uio_iov->iov_base -= backup;
 					uiop->uio_iov->iov_len += backup;
 					uiop->uio_offset -= backup;
 					uiop->uio_resid += backup;
@@ -1457,7 +1457,16 @@ nfs_removerpc(dvp, name, namelen, cred, proc)
 	caddr_t bpos, dpos, cp2;
 	int error = 0, wccflag = NFSV3_WCCRATTR;
 	struct mbuf *mreq, *mrep, *md, *mb, *mb2;
-	int v3 = NFS_ISV3(dvp);
+	int v3;
+
+	/*
+	 * It is possible for our directory vnode to have been flushed out
+	 * before us. If that's the case, we can't remove the file.
+	 */
+	if (dvp->v_type == VBAD)
+		return (EIO);
+
+	v3 = NFS_ISV3(dvp);
 
 	nfsstats.rpccnt[NFSPROC_REMOVE]++;
 	nfsm_reqhead(dvp, NFSPROC_REMOVE,
@@ -2182,7 +2191,7 @@ nfs_readdirrpc(struct vnode *vp,
 				if (blksiz == NFS_READDIRBLKSIZ)
 					blksiz = 0;
 				uiop->uio_resid -= NFS_DIRHDSIZ;
-				uiop->uio_iov->iov_base += NFS_DIRHDSIZ;
+				(char *)uiop->uio_iov->iov_base += NFS_DIRHDSIZ;
 				uiop->uio_iov->iov_len -= NFS_DIRHDSIZ;
 				nfsm_mtouio(uiop, len);
 				cp = uiop->uio_iov->iov_base;
@@ -2230,7 +2239,7 @@ nfs_readdirrpc(struct vnode *vp,
 	if (blksiz > 0) {
 		left = NFS_READDIRBLKSIZ - blksiz;
 		dp->d_reclen += left;
-		uiop->uio_iov->iov_base += left;
+		(char *)uiop->uio_iov->iov_base += left;
 		uiop->uio_iov->iov_len -= left;
 		uiop->uio_resid -= left;
 	}
@@ -2335,7 +2344,7 @@ nfs_readdirplusrpc(struct vnode *vp, struct uio *uiop, struct ucred *cred,
 			left = NFS_READDIRBLKSIZ - blksiz;
 			if ((tlen + NFS_DIRHDSIZ) > left) {
 				dp->d_reclen += left;
-				uiop->uio_iov->iov_base += left;
+				(char *)uiop->uio_iov->iov_base += left;
 				uiop->uio_iov->iov_len -= left;
 				uiop->uio_resid -= left;
 				blksiz = 0;
@@ -2354,7 +2363,7 @@ nfs_readdirplusrpc(struct vnode *vp, struct uio *uiop, struct ucred *cred,
 				if (blksiz == NFS_READDIRBLKSIZ)
 					blksiz = 0;
 				uiop->uio_resid -= NFS_DIRHDSIZ;
-				uiop->uio_iov->iov_base += NFS_DIRHDSIZ;
+				(char *)uiop->uio_iov->iov_base += NFS_DIRHDSIZ;
 				uiop->uio_iov->iov_len -= NFS_DIRHDSIZ;
 				cnp->cn_nameptr = uiop->uio_iov->iov_base;
 				cnp->cn_namelen = len;
@@ -2401,7 +2410,7 @@ nfs_readdirplusrpc(struct vnode *vp, struct uio *uiop, struct ucred *cred,
 					newvp = NFSTOV(np);
 				}
 			    }
-			    if (doit) {
+			    if (doit && bigenough) {
 				dpossav2 = dpos;
 				dpos = dpossav1;
 				mdsav2 = md;
@@ -2411,13 +2420,14 @@ nfs_readdirplusrpc(struct vnode *vp, struct uio *uiop, struct ucred *cred,
 				md = mdsav2;
 				dp->d_type =
 				    IFTODT(VTTOIF(np->n_vattr.va_type));
-				ndp->ni_vp = newvp;
-				cnp->cn_hash = 0;
-				for (cp = cnp->cn_nameptr, i = 1; i <= len;
-				    i++, cp++)
-				    cnp->cn_hash += (unsigned char)*cp * i;
-				if (cnp->cn_namelen <= NCHNAMLEN)
-				    cache_enter(ndp->ni_dvp, ndp->ni_vp, cnp);
+				if (cnp->cn_namelen <= NCHNAMLEN) {
+					ndp->ni_vp = newvp;
+					cnp->cn_hash =
+					    hash32_str(cnp->cn_nameptr,
+					        HASHINIT);
+					cache_enter(ndp->ni_dvp, ndp->ni_vp,
+					    cnp);
+				}
 			    }
 			} else {
 			    /* Just skip over the file handle */
@@ -2448,7 +2458,7 @@ nfs_readdirplusrpc(struct vnode *vp, struct uio *uiop, struct ucred *cred,
 	if (blksiz > 0) {
 		left = NFS_READDIRBLKSIZ - blksiz;
 		dp->d_reclen += left;
-		uiop->uio_iov->iov_base += left;
+		(char *)uiop->uio_iov->iov_base += left;
 		uiop->uio_iov->iov_len -= left;
 		uiop->uio_resid -= left;
 	}

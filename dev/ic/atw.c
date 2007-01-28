@@ -1,4 +1,4 @@
-/*	$OpenBSD: atw.c,v 1.47 2006/06/23 06:27:11 miod Exp $	*/
+/*	$OpenBSD: atw.c,v 1.49 2006/11/26 17:20:33 jsg Exp $	*/
 /*	$NetBSD: atw.c,v 1.69 2004/07/23 07:07:55 dyoung Exp $	*/
 
 /*-
@@ -568,7 +568,7 @@ atw_attach(struct atw_softc *sc)
 	};
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ifnet *ifp = &ic->ic_if;
-	int country_code, error, i, nrate, srom_major;
+	int country_code, error, i, srom_major;
 	u_int32_t reg;
 	static const char *type_strings[] = {"Intersil (not supported)",
 	    "RFMD", "Marvel (not supported)"};
@@ -823,12 +823,7 @@ atw_attach(struct atw_softc *sc)
 	ic->ic_caps = IEEE80211_C_PMGT | IEEE80211_C_IBSS |
 	    IEEE80211_C_HOSTAP | IEEE80211_C_MONITOR | IEEE80211_C_WEP;
 
-	nrate = 0;
-	ic->ic_sup_rates[IEEE80211_MODE_11B].rs_rates[nrate++] = 2;
-	ic->ic_sup_rates[IEEE80211_MODE_11B].rs_rates[nrate++] = 4;
-	ic->ic_sup_rates[IEEE80211_MODE_11B].rs_rates[nrate++] = 11;
-	ic->ic_sup_rates[IEEE80211_MODE_11B].rs_rates[nrate++] = 22;
-	ic->ic_sup_rates[IEEE80211_MODE_11B].rs_nrates = nrate;
+	ic->ic_sup_rates[IEEE80211_MODE_11B] = ieee80211_std_rateset_11b;	
 
 	/*
 	 * Call MI attach routines.
@@ -3215,11 +3210,12 @@ atw_rxintr(struct atw_softc *sc)
 			tap->ar_antsignal = (int)rssi;
 			/* TBD tap->ar_flags */
 
-			M_DUP_PKTHDR(&mb, m);
 			mb.m_data = (caddr_t)tap;
 			mb.m_len = tap->ar_ihdr.it_len;
 			mb.m_next = m;
-			mb.m_pkthdr.len += mb.m_len;
+			mb.m_nextpkt = NULL;
+			mb.m_type = 0;
+			mb.m_flags = 0;
 			bpf_mtap(sc->sc_radiobpf, &mb, BPF_DIRECTION_IN);
  		}
 #endif /* NPBFILTER > 0 */
@@ -3556,11 +3552,12 @@ atw_start(struct ifnet *ifp)
 
 			/* TBD tap->at_flags */
 
-			M_DUP_PKTHDR(&mb, m0);
 			mb.m_data = (caddr_t)tap;
 			mb.m_len = tap->at_ihdr.it_len;
 			mb.m_next = m0;
-			mb.m_pkthdr.len += mb.m_len;
+			mb.m_nextpkt = NULL;
+			mb.m_type = 0;
+			mb.m_flags = 0;
 			bpf_mtap(sc->sc_radiobpf, &mb, BPF_DIRECTION_OUT);
 		}
 #endif /* NBPFILTER > 0 */

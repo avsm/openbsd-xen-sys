@@ -1,4 +1,4 @@
-/*	$OpenBSD: acx.c,v 1.52 2006/10/03 17:37:31 claudio Exp $ */
+/*	$OpenBSD: acx.c,v 1.59 2006/12/30 22:43:01 claudio Exp $ */
 
 /*
  * Copyright (c) 2006 Jonathan Gray <jsg@openbsd.org>
@@ -139,7 +139,6 @@ int acxdebug = 0;
 
 int	 acx_attach(struct acx_softc *);
 int	 acx_detach(void *);
-void	 acx_shutdown(void *);
 
 int	 acx_init(struct ifnet *);
 int	 acx_stop(struct acx_softc *);
@@ -200,11 +199,6 @@ int	 acx_init_radio(struct acx_softc *, uint32_t, uint32_t);
 void	 acx_iter_func(void *, struct ieee80211_node *);
 void	 acx_amrr_timeout(void *);
 void	 acx_newassoc(struct ieee80211com *, struct ieee80211_node *, int);
-
-const struct ieee80211_rateset	acx_rates_11b =
-	{ 4, { 2, 4, 11, 22 } };
-const struct ieee80211_rateset	acx_rates_11g =
-	{ 12, { 2, 4, 11, 22, 12, 18, 24, 36, 48, 72, 96, 108 } };
 
 static int	acx_chanscan_rate = 5;	/* 5 channels per second */
 int		acx_beacon_intvl = 100;	/* 100 TU */
@@ -296,10 +290,6 @@ acx_attach(struct acx_softc *sc)
 	IFQ_SET_MAXLEN(&ifp->if_snd, IFQ_MAXLEN);
 	IFQ_SET_READY(&ifp->if_snd);
 
-	/* set supported .11b and .11g rates */
-	ic->ic_sup_rates[IEEE80211_MODE_11B] = acx_rates_11b;
-	ic->ic_sup_rates[IEEE80211_MODE_11G] = acx_rates_11g;
-
 	/* Set channels */
 	for (i = 1; i <= 14; ++i) {
 		ic->ic_channels[i].ic_freq =
@@ -382,14 +372,6 @@ acx_detach(void *xsc)
 	acx_dma_free(sc);
 
 	return (0);
-}
-
-void
-acx_shutdown(void *arg)
-{
-	struct acx_softc *sc = arg;
-
-	acx_stop(sc);
 }
 
 int
@@ -980,11 +962,12 @@ acx_start(struct ifnet *ifp)
 			tap->wt_chan_flags =
 			    htole16(ic->ic_bss->ni_chan->ic_flags);
 
-			M_DUP_PKTHDR(&mb, m);
 			mb.m_data = (caddr_t)tap;
 			mb.m_len = sc->sc_txtap_len;
 			mb.m_next = m;
-			mb.m_pkthdr.len = mb.m_len;
+			mb.m_nextpkt = NULL;
+			mb.m_type = 0;
+			mb.m_flags = 0;
 			bpf_mtap(sc->sc_drvbpf, &mb, BPF_DIRECTION_OUT);
 		}
 #endif
@@ -1337,11 +1320,12 @@ acx_rxeof(struct acx_softc *sc)
 				tap->wr_rssi = head->rbh_level;
 				tap->wr_max_rssi = ic->ic_max_rssi;
 
-				M_DUP_PKTHDR(&mb, m);
 				mb.m_data = (caddr_t)tap;
 				mb.m_len = sc->sc_rxtap_len;
 				mb.m_next = m;
-				mb.m_pkthdr.len += mb.m_len;
+				mb.m_nextpkt = NULL;
+				mb.m_type = 0;
+				mb.m_flags = 0;
 				bpf_mtap(sc->sc_drvbpf, &mb, BPF_DIRECTION_IN);
 			}
 #endif
@@ -1539,7 +1523,7 @@ acx_load_radio_firmware(struct acx_softc *sc, const char *name)
 	radio_fw_ofs = letoh32(mem_map.code_end);
 
 	/* Put ECPU into sleeping state, before loading radio firmware */
-	if (acx_sleep(sc) != 0)
+	if (acx_exec_command(sc, ACXCMD_SLEEP, NULL, 0, NULL, 0) != 0)
 		return (ENXIO);
 
 	/* Load radio firmware */
@@ -1551,7 +1535,7 @@ acx_load_radio_firmware(struct acx_softc *sc, const char *name)
 	DPRINTF(("%s: radio firmware loaded\n", sc->sc_dev.dv_xname));
 
 	/* Wake up sleeping ECPU, after radio firmware is loaded */
-	if (acx_wakeup(sc) != 0)
+	if (acx_exec_command(sc, ACXCMD_WAKEUP, NULL, 0, NULL, 0) != 0)
 		return (ENXIO);
 
 	/* Initialize radio */
@@ -1801,6 +1785,15 @@ back:
 int
 acx_init_tmplt_ordered(struct acx_softc *sc)
 {
+	union {
+		struct acx_tmplt_beacon		beacon;
+		struct acx_tmplt_null_data	null;
+		struct acx_tmplt_probe_req	preq;
+		struct acx_tmplt_probe_resp	presp;
+		struct acx_tmplt_tim		tim;
+	} data;
+
+	bzero(&data, sizeof(data));
 	/*
 	 * NOTE:
 	 * Order of templates initialization:
@@ -1811,22 +1804,35 @@ acx_init_tmplt_ordered(struct acx_softc *sc)
 	 * 5) Probe response
 	 * Above order is critical to get a correct memory map.
 	 */
-	if (acx_init_probe_req_tmplt(sc) != 0)
+	if (acx_set_tmplt(sc, ACXCMD_TMPLT_PROBE_REQ, &data.preq,
+	    sizeof(data.preq)) != 0)
 		return (1);
 
-	if (acx_init_null_data_tmplt(sc) != 0)
+	if (acx_set_tmplt(sc, ACXCMD_TMPLT_NULL_DATA, &data.null,
+	    sizeof(data.null)) != 0)
 		return (1);
 
-	if (acx_init_beacon_tmplt(sc) != 0)
+	if (acx_set_tmplt(sc, ACXCMD_TMPLT_BEACON, &data.beacon,
+	    sizeof(data.beacon)) != 0)
 		return (1);
 
-	if (acx_init_tim_tmplt(sc) != 0)
+	if (acx_set_tmplt(sc, ACXCMD_TMPLT_TIM, &data.tim,
+	    sizeof(data.tim)) != 0)
 		return (1);
 
-	if (acx_init_probe_resp_tmplt(sc) != 0)
+	if (acx_set_tmplt(sc, ACXCMD_TMPLT_PROBE_RESP, &data.presp,
+	    sizeof(data.presp)) != 0)
 		return (1);
 
-#undef CALL_SET_TMPLT
+	/* Setup TIM template */
+	data.tim.tim_eid = IEEE80211_ELEMID_TIM;
+	data.tim.tim_len = ACX_TIM_LEN(ACX_TIM_BITMAP_LEN);
+	if (acx_set_tmplt(sc, ACXCMD_TMPLT_TIM, &data.tim,
+	    ACX_TMPLT_TIM_SIZ(ACX_TIM_BITMAP_LEN)) != 0) {
+		printf("%s: can't set tim tmplt\n", sc->sc_dev.dv_xname);
+		return (1);
+	}
+
 	return (0);
 }
 
@@ -2285,7 +2291,7 @@ acx_set_null_tmplt(struct acx_softc *sc)
 	IEEE80211_ADDR_COPY(wh->i_addr2, ic->ic_myaddr);
 	IEEE80211_ADDR_COPY(wh->i_addr3, etherbroadcastaddr);
 
-	return (_acx_set_null_data_tmplt(sc, &n, sizeof(n)));
+	return (acx_set_tmplt(sc, ACXCMD_TMPLT_NULL_DATA, &n, sizeof(n)));
 }
 
 int
@@ -2313,7 +2319,7 @@ acx_set_probe_req_tmplt(struct acx_softc *sc, const char *ssid, int ssid_len)
 	frm = ieee80211_add_xrates(frm, &ic->ic_sup_rates[sc->chip_phymode]);
 	len = frm - req.data.u_data.var;
 
-	return (_acx_set_probe_req_tmplt(sc, &req,
+	return (acx_set_tmplt(sc, ACXCMD_TMPLT_PROBE_REQ, &req,
 	    ACX_TMPLT_PROBE_REQ_SIZ(len)));
 }
 
@@ -2332,7 +2338,7 @@ acx_set_probe_resp_tmplt(struct acx_softc *sc, struct ieee80211_node *ni)
 	len = m->m_pkthdr.len + sizeof(resp.size);
 	m_freem(m); 
 
-	return (_acx_set_probe_resp_tmplt(sc, &resp, len));
+	return (acx_set_tmplt(sc, ACXCMD_TMPLT_PROBE_RESP, &resp, len));
 }
 
 int
@@ -2343,14 +2349,15 @@ acx_set_beacon_tmplt(struct acx_softc *sc, struct ieee80211_node *ni)
 	struct mbuf *m;
 	int len;
 
-	bzero(&beacon, sizeof(beacon));
-
 	m = ieee80211_beacon_alloc(ic, ni);
+	if (m == NULL)
+		return (1);
+	bzero(&beacon, sizeof(beacon));
 	m_copydata(m, 0, m->m_pkthdr.len, (caddr_t)&beacon.data);
 	len = m->m_pkthdr.len + sizeof(beacon.size);
 	m_freem(m);
 
-	return (_acx_set_beacon_tmplt(sc, &beacon, len));
+	return (acx_set_tmplt(sc, ACXCMD_TMPLT_BEACON, &beacon, len));
 }
 
 void

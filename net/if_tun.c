@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_tun.c,v 1.79 2006/03/25 22:41:48 djm Exp $	*/
+/*	$OpenBSD: if_tun.c,v 1.81 2006/11/10 09:34:39 claudio Exp $	*/
 /*	$NetBSD: if_tun.c,v 1.24 1996/05/07 02:40:48 thorpej Exp $	*/
 
 /*
@@ -274,25 +274,21 @@ tun_switch(struct tun_softc *tp, int flags)
 
 	/* tp will be removed so store unit number */
 	unit = tp->tun_unit;
-	open = tp->tun_flags & TUN_OPEN;
+	open = tp->tun_flags & (TUN_OPEN|TUN_NBIO|TUN_ASYNC);
 	TUNDEBUG(("%s: switching to layer %d\n", ifp->if_xname,
 		    flags & TUN_LAYER2 ? 2 : 3));
 
-	/*
-	 * remove old device
-	 */
+	/* remove old device and ... */
 	tun_clone_destroy(ifp);
-
-	/*
-	 * attach new interface
-	 */
+	/* attach new interface */
 	r = tun_create(&tun_cloner, unit, flags);
+
 	if (open && r == 0) {
 		/* already opened before ifconfig tunX link0 */
 		if ((tp = tun_lookup(unit)) == NULL)
 			/* this should never fail */
 			return (ENXIO);
-		tp->tun_flags |= TUN_OPEN;
+		tp->tun_flags |= open;
 		TUNDEBUG(("%s: already open\n", tp->tun_if.if_xname));
 	}
 	return (r);
@@ -354,7 +350,8 @@ tunclose(dev_t dev, int flag, int mode, struct proc *p)
 		return (ENXIO);
 
 	ifp = &tp->tun_if;
-	tp->tun_flags &= ~TUN_OPEN;
+	tp->tun_flags &= ~(TUN_OPEN|TUN_NBIO|TUN_ASYNC);
+	ifp->if_flags &= ~IFF_RUNNING;
 
 	/*
 	 * junk all pending output
@@ -820,7 +817,7 @@ tunwrite(dev_t dev, struct uio *uio, int ioflag)
 	if (uio->uio_resid >= MINCLSIZE) {
 		MCLGET(m, M_DONTWAIT);
 		if (!(m->m_flags & M_EXT)) {
-			m_freem(m);
+			m_free(m);
 			return (ENOBUFS);
 		}
 		mlen = MCLBYTES;
@@ -852,6 +849,7 @@ tunwrite(dev_t dev, struct uio *uio, int ioflag)
 				MCLGET(m, M_DONTWAIT);
 				if (!(m->m_flags & M_EXT)) {
 					error = ENOBUFS;
+					m_free(m);
 					break;
 				}
 				mlen = MCLBYTES;

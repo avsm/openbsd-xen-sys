@@ -1,4 +1,4 @@
-#	$OpenBSD: GENERIC,v 1.150 2006/08/18 23:14:43 jason Exp $g
+#	$OpenBSD: GENERIC,v 1.156 2006/12/18 18:15:36 mbalmer Exp $g
 #
 # For further information on compiling OpenBSD kernels, see the config(8)
 # man page.
@@ -93,6 +93,7 @@ vr*		at pci?		# VIA Rhine ethernet
 musycc*		at pci?		# Conexant HDLC controller
 art*		at musycc?	# Accoom Artery E1/T1 cards
 xge*		at pci?		# Neterion Xframe-I/II 10Gb ethernet
+mbg*		at pci?		# Meinberg Funkuhren radio clocks
 
 iop*		at pci?		# I2O processor
 ioprbs*		at iop?		# I2O arrays
@@ -118,6 +119,7 @@ tqphy*		at mii?		# TDK Semiconductor PHYs
 brgphy*		at mii?		# Broadcom 10/100/1000 PHYs
 bmtphy*		at mii?		# Broadcom 10/100 PHYs
 eephy*		at mii?		# Marvell 88E1000 Gigabit PHYs
+xmphy*		at mii?		# XaQti XMAC-II PHYs
 urlphy*		at mii?		# Realtek RTL8150L internal PHY
 rgephy*		at mii?		# Realtek 8169S/8110S PHY
 rlphy*		at mii?		# Realtek 8139 internal PHYs
@@ -129,13 +131,14 @@ lofn*		at pci?		# Hifn6500
 hifn*		at pci?		# Hifn7751/7811/7951
 ubsec*		at pci?		# Broadcom 58xx
 safe*		at pci?		# SafeNet SafeXcel 1141/1741
+pwdog0		at pci?		# Quancom PWDOG1 watchdog timer
 
 macintr0	at macobio?	# old interrupt controller
 openpic*	at macobio?	# openpic interrupt controller
 bm*		at macobio?	# BMAC ethernet
-#mc*		at macobio?	# MACE ethernet
+mc*		at macobio?	# MACE ethernet
 #esp*		at macobio? flags 0x0000ffff # 53c9x SCSI
-#mesh*		at macobio? flags 0xffff # MESH SCSI
+mesh*		at macobio? flags 0xffff # MESH SCSI
 #nvram*		at macobio?	# nvram
 adb*		at macobio?	# Apple Desktop Bus
 apm0		at adb?		# APM emulation
@@ -144,7 +147,6 @@ wi*		at macobio?	# airport
 macgpio*	at macobio?	# GPIO, PMU interrupt router.
 macgpio*	at macgpio?	# GPIO, PMU interrupt router.
 akbd*		at adb?		# ADB keyboard
-
 wskbd*		at akbd? mux 1
 ams*		at adb?		# ADB mouse
 wsmouse*	at ams?	mux 0
@@ -176,14 +178,13 @@ scsibus*	at ahc?
 #scsibus*	at ami?
 #scsibus*	at bha?
 #scsibus*	at esp?
-#scsibus*	at mesh?
+scsibus*	at mesh?
 scsibus*	at ioprbs?
 scsibus*	at iopsp?
 scsibus*	at pcscp?
 scsibus*	at isp?
 scsibus*	at mpi?
 scsibus*	at siop?
-#scsibus*	at fwscsi?
 
 mediabay*	at macobio?
 wdc*		at mediabay?

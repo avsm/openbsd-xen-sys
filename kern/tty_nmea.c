@@ -1,4 +1,4 @@
-/*	$OpenBSD: tty_nmea.c,v 1.9 2006/06/20 14:06:21 deraadt Exp $ */
+/*	$OpenBSD: tty_nmea.c,v 1.16 2006/12/23 17:46:38 deraadt Exp $ */
 
 /*
  * Copyright (c) 2006 Marc Balmer <mbalmer@openbsd.org>
@@ -49,11 +49,16 @@ int nmea_count;
 struct nmea {
 	char		cbuf[NMEAMAX];
 	struct sensor	time;
+#ifdef NMEA_DEBUG
+	struct sensor	skew;		/* soft to tty timestamp skew */
+#endif
+	struct sensordev timedev;
 	struct timespec	ts;		/* soft timestamp */
 	struct timeval	tv;		/* tty timestamp */
 	int64_t		last;		/* last time rcvd */
 	int		sync;
 	int		pos;
+	char		mode;		/* GPS mode */
 };
 
 /* NMEA decoding */
@@ -77,26 +82,35 @@ nmeaopen(dev_t dev, struct tty *tp)
 	int error;
 
 	if (tp->t_line == NMEADISC)
-		return (ENODEV);
+		return ENODEV;
 	if ((error = suser(p, 0)) != 0)
-		return (error);
-	np = malloc(sizeof(struct nmea), M_WAITOK, M_DEVBUF);
+		return error;
+	np = malloc(sizeof(struct nmea), M_DEVBUF, M_WAITOK);
 	bzero(np, sizeof(*np));
-	snprintf(np->time.device, sizeof(np->time.device), "nmea%d",
+	snprintf(np->timedev.xname, sizeof(np->timedev.xname), "nmea%d",
 	    nmea_count++);
 	np->time.status = SENSOR_S_UNKNOWN;
 	np->time.type = SENSOR_TIMEDELTA;
-	np->sync = 1;
 	np->time.flags = SENSOR_FINVALID;
-	sensor_add(&np->time);
+	sensor_attach(&np->timedev, &np->time);
+#ifdef NMEA_DEBUG
+	snprintf(np->skew.desc, sizeof(np->skew.desc),
+	    "nmea%d timestamp skew", nmea_count - 1);
+	np->skew.status = SENSOR_S_UNKNOWN;
+	np->skew.type = SENSOR_TIMEDELTA;
+	np->skew.flags = SENSOR_FINVALID;
+	sensor_attach(&np->timedev, &np->skew);
+#endif
+	np->sync = 1;
 	tp->t_sc = (caddr_t)np;
 
 	error = linesw[TTYDISC].l_open(dev, tp);
 	if (error) {
 		free(np, M_DEVBUF);
 		tp->t_sc = NULL;
-	}
-	return (error);
+	} else
+		sensordev_install(&np->timedev);
+	return error;
 }
 
 int
@@ -105,7 +119,7 @@ nmeaclose(struct tty *tp, int flags)
 	struct nmea *np = (struct nmea *)tp->t_sc;
 
 	tp->t_line = TTYDISC;	/* switch back to termios */
-	sensor_del(&np->time);
+	sensordev_deinstall(&np->timedev);
 	free(np, M_DEVBUF);
 	tp->t_sc = NULL;
 	nmea_count--;
@@ -121,20 +135,18 @@ nmeainput(int c, struct tty *tp)
 	switch (c) {
 	case '$':
 		/*
-		 * capture the moment, take a soft timestamp in any case,
+		 * Capture the moment, take a soft timestamp in any case,
 		 * it is possible that tty timestamping has been requested
-		 * but device device does not privide a PPS signal.  In this
+		 * but device does not provide a PPS signal.  In this
 		 * case we use the soft timestamp later.
 		 */
 		nanotime(&np->ts);
-#ifdef NMEA_TSTAMP
 		/* if a tty timestamp is available, copy it now */
 		if (tp->t_flags & (TS_TSTAMPDCDSET | TS_TSTAMPDCDCLR |
 		    TS_TSTAMPCTSSET | TS_TSTAMPCTSCLR)) {
 			np->tv.tv_sec = tp->t_tv.tv_sec;
 			np->tv.tv_usec = tp->t_tv.tv_usec;
 		}
-#endif
 		np->pos = 0;
 		np->sync = 0;
 		break;
@@ -206,7 +218,7 @@ nmea_scan(struct nmea *np, struct tty *tp)
 			}
 		}
 		if (msgcksum != cksum) {
-			DPRINTF(("cksum mismatch"));
+			DPRINTF(("cksum mismatch\n"));
 			return;
 		}
 	}
@@ -221,13 +233,6 @@ void
 nmea_gprmc(struct nmea *np, struct tty *tp, char *fld[], int fldcnt)
 {
 	int64_t date_nano, time_nano, nmea_now;
-#ifdef NMEA_DEBUG
-	int n;
-
-	for (n = 0; n < fldcnt; n++)
-		DPRINTF(("%s ", fld[n]));
-	DPRINTF(("\n"));
-#endif
 
 	if (fldcnt != 12 && fldcnt != 13) {
 		DPRINTF(("gprmc: field count mismatch, %d\n", fldcnt));
@@ -248,7 +253,6 @@ nmea_gprmc(struct nmea *np, struct tty *tp, char *fld[], int fldcnt)
 	}
 	np->last = nmea_now;
 
-#ifdef NMEA_TSTAMP
 	/*
 	 * if tty timestamping on DCD or CTS is used, take the timestamp
 	 * from the tty, else use the timestamp taken on the initial '$'
@@ -256,47 +260,72 @@ nmea_gprmc(struct nmea *np, struct tty *tp, char *fld[], int fldcnt)
 	 */
 	if (tp->t_flags & (TS_TSTAMPDCDSET | TS_TSTAMPDCDCLR |
 	    TS_TSTAMPCTSSET | TS_TSTAMPCTSCLR)) {
-		np->time.value = np->tv.tv_sec + 1000000000LL +
+		np->time.value = np->tv.tv_sec * 1000000000LL +
 		    np->tv.tv_usec * 1000LL - nmea_now;
 		np->time.tv.tv_sec = np->tv.tv_sec;
 		np->time.tv.tv_usec = np->tv.tv_usec;
-	} else {
+#ifdef NMEA_DEBUG
+		/*
+		 * If we got a tty timestamp, provide the skew to the
+		 * soft timestamp (taken at the '$' character) in a
+		 * second timedelta sensor.
+		 */
+		np->skew.value = (np->ts.tv_sec * 1000000000LL +
+		    np->ts.tv_nsec - nmea_now) - np->time.value;
+		np->skew.tv.tv_sec = np->tv.tv_sec;
+		np->skew.tv.tv_usec = np->tv.tv_usec;
+		if (np->skew.status == SENSOR_S_UNKNOWN) {
+			np->skew.status = SENSOR_S_CRIT;
+			np->skew.flags &= ~SENSOR_FINVALID;
+		}
 #endif
+	} else {
 		np->time.value = np->ts.tv_sec * 1000000000LL +
 		    np->ts.tv_nsec - nmea_now;
 		np->time.tv.tv_sec = np->ts.tv_sec;
 		np->time.tv.tv_usec = np->ts.tv_nsec / 1000L;
-#ifdef NMEA_TSTAMP
-	}
-#endif
-	if (np->time.status == SENSOR_S_UNKNOWN) {
-		strlcpy(np->time.desc, "GPS", sizeof(np->time.desc));
-		if (fldcnt == 13) {
-			switch (*fld[12]) {
-			case 'S':
-				strlcat(np->time.desc, " simulated",
-				    sizeof(np->time.desc));
-				break;
-			case 'E':
-				strlcat(np->time.desc, " estimated",
-				    sizeof(np->time.desc));
-				break;
-			case 'A':
-				strlcat(np->time.desc, " autonomous",
-				    sizeof(np->time.desc));
-				break;
-			case 'D':
-				strlcat(np->time.desc, " differential",
-				    sizeof(np->time.desc));
-				break;
-			case 'N':
-				strlcat(np->time.desc, " not valid",
-				    sizeof(np->time.desc));
-				break;
-			}
+#ifdef NMEA_DEBUG
+		if (np->skew.status == SENSOR_S_CRIT) {
+			np->skew.value = 0LL;
+			np->skew.value = SENSOR_S_UNKNOWN;
+			np->skew.flags |= SENSOR_FINVALID;
 		}
+#endif
+	}
+	if (np->time.status == SENSOR_S_UNKNOWN) {
 		np->time.status = SENSOR_S_OK;
 		np->time.flags &= ~SENSOR_FINVALID;
+		if (fldcnt != 13)
+			strlcpy(np->time.desc, "GPS", sizeof(np->time.desc));
+	}
+	if (fldcnt == 13 && *fld[12] != np->mode) {
+		np->mode = *fld[12];
+		switch (np->mode) {
+		case 'S':
+			strlcpy(np->time.desc, "GPS simulated",
+			    sizeof(np->time.desc));
+			break;
+		case 'E':
+			strlcpy(np->time.desc, "GPS estimated",
+			    sizeof(np->time.desc));
+			break;
+		case 'A':
+			strlcpy(np->time.desc, "GPS autonomous",
+			    sizeof(np->time.desc));
+			break;
+		case 'D':
+			strlcpy(np->time.desc, "GPS differential",
+			    sizeof(np->time.desc));
+			break;
+		case 'N':
+			strlcpy(np->time.desc, "GPS not valid",
+			    sizeof(np->time.desc));
+			break;
+		default:
+			strlcpy(np->time.desc, "GPS unknown",
+			    sizeof(np->time.desc));
+			DPRINTF(("gprmc: unknown mode '%c'\n", np->mode));
+		}
 	}
 	switch (*fld[2]) {
 	case 'A':
@@ -313,7 +342,7 @@ nmea_gprmc(struct nmea *np, struct tty *tp, char *fld[], int fldcnt)
 /*
  * convert a NMEA 0183 formatted date string to seconds since the epoch
  * the string must be of the form DDMMYY
- * return (0) on success, (-1) if illegal characters are encountered
+ * return 0 on success, -1 if illegal characters are encountered
  */
 int
 nmea_date_to_nano(char *s, int64_t *nano)
@@ -327,7 +356,7 @@ nmea_date_to_nano(char *s, int64_t *nano)
 	for (n = 0, p = s; n < 6 && *p && *p >= '0' && *p <= '9'; n++, p++)
 		;
 	if (n != 6 || (*p != '\0'))
-		return (-1);
+		return -1;
 
 	ymd.dt_year = 2000 + (s[4] - '0') * 10 + (s[5] - '0');
 	ymd.dt_mon = (s[2] - '0') * 10 + (s[3] - '0');
@@ -336,14 +365,14 @@ nmea_date_to_nano(char *s, int64_t *nano)
 
 	secs = clock_ymdhms_to_secs(&ymd);
 	*nano = secs * 1000000000LL;
-	return (0);
+	return 0;
 }
 
 /*
  * convert NMEA 0183 formatted time string to nanoseconds since midnight
  * the string must be of the form HHMMSS[.[sss]]
  * (e.g. 143724 or 143723.615)
- * return (0) on success, (-1) if illegal characters are encountered
+ * return 0 on success, -1 if illegal characters are encountered
  */
 int
 nmea_time_to_nano(char *s, int64_t *nano)
@@ -374,7 +403,7 @@ nmea_time_to_nano(char *s, int64_t *nano)
 		}
 	}
 	if (fac)
-		return (-1);
+		return -1;
 
 	div = 1L;
 	frac = 0L;
@@ -388,8 +417,8 @@ nmea_time_to_nano(char *s, int64_t *nano)
 	}
 
 	if (*s != '\0')
-		return (-1);
+		return -1;
 
 	*nano = secs * 1000000000LL + (int64_t)frac * (1000000000 / div);
-	return (0);
+	return 0;
 }

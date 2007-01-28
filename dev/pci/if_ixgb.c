@@ -31,7 +31,7 @@ POSSIBILITY OF SUCH DAMAGE.
 
 ***************************************************************************/
 
-/* $OpenBSD: if_ixgb.c,v 1.29 2006/08/18 06:02:45 brad Exp $ */
+/* $OpenBSD: if_ixgb.c,v 1.35 2006/11/28 04:45:08 brad Exp $ */
 
 #include <dev/pci/if_ixgb.h>
 
@@ -104,7 +104,7 @@ void ixgb_set_multi(struct ixgb_softc *);
 void ixgb_print_hw_stats(struct ixgb_softc *);
 void ixgb_update_link_status(struct ixgb_softc *);
 int
-ixgb_get_buf(int i, struct ixgb_softc *,
+ixgb_get_buf(struct ixgb_softc *, int i,
 	     struct mbuf *);
 int  ixgb_encap(struct ixgb_softc *, struct mbuf *);
 int
@@ -435,8 +435,7 @@ ixgb_ioctl(struct ifnet *ifp, u_long command, caddr_t data)
 void
 ixgb_watchdog(struct ifnet * ifp)
 {
-	struct ixgb_softc *sc;
-	sc = ifp->if_softc;
+	struct ixgb_softc *sc = ifp->if_softc;
 
 	/*
 	 * If we are in this routine because of pause frames, then don't
@@ -446,9 +445,9 @@ ixgb_watchdog(struct ifnet * ifp)
 		ifp->if_timer = IXGB_TX_TIMEOUT;
 		return;
 	}
+
 	printf("%s: watchdog timeout -- resetting\n", sc->sc_dv.dv_xname);
 
-	ixgb_stop(sc);
 	ixgb_init(sc);
 
 	sc->watchdog_events++;
@@ -579,8 +578,7 @@ ixgb_intr(void *arg)
 		}
 	}
 
-	if (ifp->if_flags & IFF_RUNNING &&
-	    IFQ_IS_EMPTY(&ifp->if_snd) == 0)
+	if (ifp->if_flags & IFF_RUNNING && !IFQ_IS_EMPTY(&ifp->if_snd))
 		ixgb_start(ifp);
 
 	return (claimed);
@@ -656,10 +654,10 @@ int
 ixgb_encap(struct ixgb_softc *sc, struct mbuf *m_head)
 {
 	u_int8_t        txd_popts;
-	int             i, j, error;
+	int             i, j, error = 0;
+	bus_dmamap_t	map;
 
-	struct ixgb_q   q;
-	struct ixgb_buffer *tx_buffer = NULL;
+	struct ixgb_buffer *tx_buffer;
 	struct ixgb_tx_desc *current_tx_desc = NULL;
 
 	/*
@@ -668,34 +666,29 @@ ixgb_encap(struct ixgb_softc *sc, struct mbuf *m_head)
 	 */
 	if (sc->num_tx_desc_avail <= IXGB_TX_CLEANUP_THRESHOLD) {
 		ixgb_txeof(sc);
+		/* Now do we at least have a minimal? */
 		if (sc->num_tx_desc_avail <= IXGB_TX_CLEANUP_THRESHOLD) {
 			sc->no_tx_desc_avail1++;
 			return (ENOBUFS);
 		}
 	}
+
 	/*
 	 * Map the packet for DMA.
 	 */
-	if (bus_dmamap_create(sc->txtag, IXGB_MAX_JUMBO_FRAME_SIZE,
-	    IXGB_MAX_SCATTER, IXGB_MAX_JUMBO_FRAME_SIZE, 0,
-	    BUS_DMA_NOWAIT, &q.map)) {
-		sc->no_tx_map_avail++;
-		return (ENOMEM);
-	}
-	error = bus_dmamap_load_mbuf(sc->txtag, q.map,
+	tx_buffer = &sc->tx_buffer_area[sc->next_avail_tx_desc];
+	map = tx_buffer->map;
+
+	error = bus_dmamap_load_mbuf(sc->txtag, map,
 				     m_head, BUS_DMA_NOWAIT);
 	if (error != 0) {
 		sc->no_tx_dma_setup++;
-		bus_dmamap_destroy(sc->txtag, q.map);
 		return (error);
 	}
-	IXGB_KASSERT(q.map->dm_nsegs != 0, ("ixgb_encap: empty packet"));
+	IXGB_KASSERT(map->dm_nsegs != 0, ("ixgb_encap: empty packet"));
 
-	if (q.map->dm_nsegs > sc->num_tx_desc_avail) {
-		sc->no_tx_desc_avail2++;
-		bus_dmamap_destroy(sc->txtag, q.map);
-		return (ENOBUFS);
-	}
+	if (map->dm_nsegs > sc->num_tx_desc_avail)
+		goto fail;
 
 #ifdef IXGB_CSUM_OFFLOAD
 	ixgb_transmit_checksum_setup(sc, m_head, &txd_popts);
@@ -704,12 +697,12 @@ ixgb_encap(struct ixgb_softc *sc, struct mbuf *m_head)
 #endif
 
 	i = sc->next_avail_tx_desc;
-	for (j = 0; j < q.map->dm_nsegs; j++) {
+	for (j = 0; j < map->dm_nsegs; j++) {
 		tx_buffer = &sc->tx_buffer_area[i];
 		current_tx_desc = &sc->tx_desc_base[i];
 
-		current_tx_desc->buff_addr = htole64(q.map->dm_segs[j].ds_addr);
-		current_tx_desc->cmd_type_len = htole32((sc->txd_cmd | q.map->dm_segs[j].ds_len));
+		current_tx_desc->buff_addr = htole64(map->dm_segs[j].ds_addr);
+		current_tx_desc->cmd_type_len = htole32((sc->txd_cmd | map->dm_segs[j].ds_len));
 		current_tx_desc->popts = txd_popts;
 		if (++i == sc->num_tx_desc)
 			i = 0;
@@ -717,12 +710,11 @@ ixgb_encap(struct ixgb_softc *sc, struct mbuf *m_head)
 		tx_buffer->m_head = NULL;
 	}
 
-	sc->num_tx_desc_avail -= q.map->dm_nsegs;
+	sc->num_tx_desc_avail -= map->dm_nsegs;
 	sc->next_avail_tx_desc = i;
 
 	tx_buffer->m_head = m_head;
-	tx_buffer->map = q.map;
-	bus_dmamap_sync(sc->txtag, q.map, 0, q.map->dm_mapsize,
+	bus_dmamap_sync(sc->txtag, map, 0, map->dm_mapsize,
 	    BUS_DMASYNC_PREWRITE);
 
 	/*
@@ -740,6 +732,11 @@ ixgb_encap(struct ixgb_softc *sc, struct mbuf *m_head)
 	IXGB_WRITE_REG(&sc->hw, TDT, i);
 
 	return (0);
+
+fail:
+	sc->no_tx_desc_avail2++;
+	bus_dmamap_unload(sc->txtag, map);
+	return (ENOBUFS);
 }
 
 void
@@ -843,7 +840,7 @@ ixgb_update_link_status(struct ixgb_softc *sc)
 		if (!sc->link_active) {
 			ifp->if_baudrate = 1000000000;
 			sc->link_active = 1;
-			ifp->if_link_state = LINK_STATE_UP;
+			ifp->if_link_state = LINK_STATE_FULL_DUPLEX;
 			if_link_state_change(ifp);
 		}
 	} else {
@@ -1118,8 +1115,6 @@ ixgb_dma_malloc(struct ixgb_softc *sc, bus_size_t size,
 	dma->dma_size = size;
 	return (0);
 
-/* fail_4: */
-	bus_dmamap_unload(dma->dma_tag, dma->dma_map);
 fail_3: 
 	bus_dmamem_unmap(dma->dma_tag, dma->dma_vaddr, size);
 fail_2: 
@@ -1128,17 +1123,26 @@ fail_1:
 	bus_dmamap_destroy(dma->dma_tag, dma->dma_map);
 fail_0: 
 	dma->dma_map = NULL;
-	/* dma->dma_tag = NULL; */
+	dma->dma_tag = NULL;
+
 	return (r);
 }
 
 void
 ixgb_dma_free(struct ixgb_softc *sc, struct ixgb_dma_alloc *dma)
 {
-	bus_dmamap_unload(dma->dma_tag, dma->dma_map);
-	bus_dmamem_unmap(dma->dma_tag, dma->dma_vaddr, dma->dma_size);
-	bus_dmamem_free(dma->dma_tag, &dma->dma_seg, dma->dma_nseg);
-	bus_dmamap_destroy(dma->dma_tag, dma->dma_map);
+	if (dma->dma_tag == NULL)
+		return;
+
+	if (dma->dma_map != NULL) {
+		bus_dmamap_sync(dma->dma_tag, dma->dma_map, 0,
+		    dma->dma_map->dm_mapsize,
+		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+		bus_dmamap_unload(dma->dma_tag, dma->dma_map);
+		bus_dmamem_unmap(dma->dma_tag, dma->dma_vaddr, dma->dma_size);
+		bus_dmamem_free(dma->dma_tag, &dma->dma_seg, dma->dma_nseg);
+		bus_dmamap_destroy(dma->dma_tag, dma->dma_map);
+	}
 }
 
 /*********************************************************************
@@ -1172,13 +1176,29 @@ ixgb_allocate_transmit_structures(struct ixgb_softc *sc)
 int
 ixgb_setup_transmit_structures(struct ixgb_softc *sc)
 {
-	sc->txtag = sc->osdep.ixgb_pa.pa_dmat;
+	struct	ixgb_buffer *tx_buffer;
+	int error, i;
 
-	if (ixgb_allocate_transmit_structures(sc))
-		return (ENOMEM);
+	if ((error = ixgb_allocate_transmit_structures(sc)) != 0)
+		goto fail;
 
 	bzero((void *)sc->tx_desc_base,
 	      (sizeof(struct ixgb_tx_desc)) * sc->num_tx_desc);
+
+	sc->txtag = sc->osdep.ixgb_pa.pa_dmat;
+
+	tx_buffer = sc->tx_buffer_area;
+	for (i = 0; i < sc->num_tx_desc; i++) {
+		error = bus_dmamap_create(sc->txtag, IXGB_MAX_JUMBO_FRAME_SIZE,
+			    IXGB_MAX_SCATTER, IXGB_MAX_JUMBO_FRAME_SIZE, 0,
+			    BUS_DMA_NOWAIT, &tx_buffer->map);
+		if (error != 0) {
+			printf("%s: Unable to create TX DMA map\n",
+			    sc->sc_dv.dv_xname);
+			goto fail;
+		}
+		tx_buffer++;
+	}
 
 	sc->next_avail_tx_desc = 0;
 	sc->oldest_used_tx_desc = 0;
@@ -1188,8 +1208,14 @@ ixgb_setup_transmit_structures(struct ixgb_softc *sc)
 
 	/* Set checksum context */
 	sc->active_checksum_context = OFFLOAD_NONE;
+	bus_dmamap_sync(sc->txdma.dma_tag, sc->txdma.dma_map, 0,
+	   sc->txdma.dma_size, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 
 	return (0);
+
+fail:
+	ixgb_free_transmit_structures(sc);
+	return (error);
 }
 
 /*********************************************************************
@@ -1249,12 +1275,24 @@ ixgb_free_transmit_structures(struct ixgb_softc *sc)
 	if (sc->tx_buffer_area != NULL) {
 		tx_buffer = sc->tx_buffer_area;
 		for (i = 0; i < sc->num_tx_desc; i++, tx_buffer++) {
-			if (tx_buffer->m_head != NULL) {
-				bus_dmamap_unload(sc->txtag, tx_buffer->map);
-				bus_dmamap_destroy(sc->txtag, tx_buffer->map);
-				m_freem(tx_buffer->m_head);
+			if (tx_buffer->map != NULL &&
+			    tx_buffer->map->dm_nsegs > 0) {
+				bus_dmamap_sync(sc->txtag, tx_buffer->map,
+				    0, tx_buffer->map->dm_mapsize,
+				    BUS_DMASYNC_POSTWRITE);
+				bus_dmamap_unload(sc->txtag,
+				    tx_buffer->map);
 			}
-			tx_buffer->m_head = NULL;
+
+			if (tx_buffer->m_head != NULL) {
+				m_freem(tx_buffer->m_head);
+				tx_buffer->m_head = NULL;
+			}
+			if (tx_buffer->map != NULL) {
+				bus_dmamap_destroy(sc->txtag,
+				    tx_buffer->map);
+				tx_buffer->map = NULL;
+			}
 		}
 	}
 	if (sc->tx_buffer_area != NULL) {
@@ -1371,10 +1409,15 @@ ixgb_txeof(struct ixgb_softc *sc)
 		tx_desc->status = 0;
 		num_avail++;
 
-		if (tx_buffer->m_head) {
+		if (tx_buffer->m_head != NULL) {
 			ifp->if_opackets++;
-			bus_dmamap_unload(sc->txtag, tx_buffer->map);
-			bus_dmamap_destroy(sc->txtag, tx_buffer->map);
+
+			if (tx_buffer->map->dm_nsegs > 0) {
+				bus_dmamap_sync(sc->txtag, tx_buffer->map,
+				    0, tx_buffer->map->dm_mapsize,
+				    BUS_DMASYNC_POSTWRITE);
+				bus_dmamap_unload(sc->txtag, tx_buffer->map);
+			}
 
 			m_freem(tx_buffer->m_head);
 			tx_buffer->m_head = NULL;
@@ -1399,8 +1442,10 @@ ixgb_txeof(struct ixgb_softc *sc)
 	 */
 	if (num_avail > IXGB_TX_CLEANUP_THRESHOLD) {
 		ifp->if_flags &= ~IFF_OACTIVE;
+		/* All clean, turn off the timer */
 		if (num_avail == sc->num_tx_desc)
 			ifp->if_timer = 0;
+		/* Some cleaned, reset the timer */
 		else if (num_avail != sc->num_tx_desc_avail)
 			ifp->if_timer = IXGB_TX_TIMEOUT;
 	}
@@ -1414,7 +1459,7 @@ ixgb_txeof(struct ixgb_softc *sc)
  *
  **********************************************************************/
 int
-ixgb_get_buf(int i, struct ixgb_softc *sc,
+ixgb_get_buf(struct ixgb_softc *sc, int i,
 	     struct mbuf *nmp)
 {
 	struct mbuf *mp = nmp;
@@ -1452,8 +1497,8 @@ ixgb_get_buf(int i, struct ixgb_softc *sc,
 	 * Using memory from the mbuf cluster pool, invoke the bus_dma
 	 * machinery to arrange the memory mapping.
 	 */
-	error = bus_dmamap_load(sc->rxtag, rx_buffer->map,
-	    mtod(mp, void *), mp->m_len, NULL, 0);
+	error = bus_dmamap_load_mbuf(sc->rxtag, rx_buffer->map,
+	    mp, BUS_DMA_NOWAIT);
 	if (error) {
 		m_free(mp);
 		return (error);
@@ -1461,8 +1506,7 @@ ixgb_get_buf(int i, struct ixgb_softc *sc,
 	rx_buffer->m_head = mp;
 	sc->rx_desc_base[i].buff_addr = htole64(rx_buffer->map->dm_segs[0].ds_addr);
 	bus_dmamap_sync(sc->rxtag, rx_buffer->map, 0,
-	    rx_buffer->map->dm_mapsize,
-	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	    rx_buffer->map->dm_mapsize, BUS_DMASYNC_PREREAD);
 
 	return (0);
 }
@@ -1509,11 +1553,9 @@ ixgb_allocate_receive_structures(struct ixgb_softc *sc)
 	}
 
 	for (i = 0; i < sc->num_rx_desc; i++) {
-		if (ixgb_get_buf(i, sc, NULL) == ENOBUFS) {
-			sc->rx_buffer_area[i].m_head = NULL;
-			sc->rx_desc_base[i].buff_addr = 0;
-			return (ENOBUFS);
-		}
+		error = ixgb_get_buf(sc, i, NULL);
+		if (error != 0)
+			goto fail;
 	}
 	bus_dmamap_sync(sc->rxdma.dma_tag, sc->rxdma.dma_map, 0,
 	    sc->rxdma.dma_map->dm_mapsize,
@@ -1522,9 +1564,7 @@ ixgb_allocate_receive_structures(struct ixgb_softc *sc)
 	return (0);
 
 fail:
-	sc->rxtag = NULL;
-	free(sc->rx_buffer_area, M_DEVBUF);
-	sc->rx_buffer_area = NULL;
+	ixgb_free_receive_structures(sc);
 	return (error);
 }
 
@@ -1658,13 +1698,23 @@ ixgb_free_receive_structures(struct ixgb_softc *sc)
 	if (sc->rx_buffer_area != NULL) {
 		rx_buffer = sc->rx_buffer_area;
 		for (i = 0; i < sc->num_rx_desc; i++, rx_buffer++) {
-			if (rx_buffer->map != NULL) {
-				bus_dmamap_unload(sc->rxtag, rx_buffer->map);
-				bus_dmamap_destroy(sc->rxtag, rx_buffer->map);
+			if (rx_buffer->map != NULL &&
+			    rx_buffer->map->dm_nsegs > 0) {
+				bus_dmamap_sync(sc->rxtag, rx_buffer->map,
+				    0, rx_buffer->map->dm_mapsize,
+				    BUS_DMASYNC_POSTREAD);
+				bus_dmamap_unload(sc->rxtag,
+				    rx_buffer->map);
 			}
-			if (rx_buffer->m_head != NULL)
+			if (rx_buffer->m_head != NULL) {
 				m_freem(rx_buffer->m_head);
-			rx_buffer->m_head = NULL;
+				rx_buffer->m_head = NULL;
+			}
+			if (rx_buffer->map != NULL) {
+				bus_dmamap_destroy(sc->rxtag,
+				    rx_buffer->map);
+				rx_buffer->map = NULL;
+			}
 		}
 	}
 	if (sc->rx_buffer_area != NULL) {
@@ -1823,9 +1873,9 @@ ixgb_rxeof(struct ixgb_softc *sc, int count)
 			    IXGB_RX_DESC_ERRORS_SE | IXGB_RX_DESC_ERRORS_P |
 					     IXGB_RX_DESC_ERRORS_RXE))) {
 			mp = sc->rx_buffer_area[next_to_use].m_head;
-			ixgb_get_buf(next_to_use, sc, mp);
+			ixgb_get_buf(sc, next_to_use, mp);
 		} else {
-			if (ixgb_get_buf(next_to_use, sc, NULL) == ENOBUFS)
+			if (ixgb_get_buf(sc, next_to_use, NULL) == ENOBUFS)
 				break;
 		}
 		/* Advance our pointers to the next descriptor */

@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.h,v 1.17 2005/12/13 00:18:19 jsg Exp $	*/
+/*	$OpenBSD: cpu.h,v 1.22 2006/12/20 22:48:29 gwk Exp $	*/
 /*	$NetBSD: cpu.h,v 1.1 2003/04/26 18:39:39 fvdl Exp $	*/
 
 /*-
@@ -46,6 +46,11 @@
 #include <machine/tss.h>
 #include <machine/intrdefs.h>
 #include <machine/cacheinfo.h>
+
+#ifdef MULTIPROCESSOR
+#include <machine/i82489reg.h>
+#include <machine/i82489var.h>
+#endif
 
 #include <sys/device.h>
 #include <sys/lock.h>
@@ -213,6 +218,11 @@ extern u_int32_t cpus_attached;
 #define CLKF_INTR(frame)	(curcpu()->ci_idepth > 1)
 
 /*
+ * This is used during profiling to integrate system time.
+ */
+#define	PROC_PC(p)		((p)->p_md.md_regs->tf_rip)
+
+/*
  * Give a profiling tick to the current process when the user profiling
  * buffer pages are invalid.  On the i386, request an ast to send us
  * through trap(), marking the proc as needing a profiling tick.
@@ -230,11 +240,9 @@ extern u_int32_t cpus_attached;
  */
 extern void (*delay_func)(int);
 struct timeval;
-extern void (*microtime_func)(struct timeval *);
 
 #define DELAY(x)		(*delay_func)(x)
 #define delay(x)		(*delay_func)(x)
-#define microtime(tv)		(*microtime_func)(tv)
 
 
 /*
@@ -250,15 +258,9 @@ extern int cpu_ecxfeature;
 extern int cpu_id;
 extern char cpu_vendor[];
 extern int cpuid_level;
-
-/* kern_microtime.c */
-
-extern struct timeval cc_microset_time;
-void	cc_microtime(struct timeval *);
-void	cc_microset(struct cpu_info *);
+extern int cpuspeed;
 
 /* identcpu.c */
-
 void	identifycpu(struct cpu_info *);
 int	cpu_amd64speed(int *);
 void cpu_probe_features(struct cpu_info *);
@@ -286,8 +288,10 @@ void	child_trampoline(void);
 void	initrtclock(void);
 void	startrtclock(void);
 void	i8254_delay(int);
-void	i8254_microtime(struct timeval *);
 void	i8254_initclocks(void);
+void	i8254_inittimecounter(void);
+void	i8254_inittimecounter_simple(void);
+
 
 void cpu_init_msrs(struct cpu_info *);
 
@@ -307,7 +311,7 @@ void x86_bus_space_mallocok(void);
 
 /* powernow-k8.c */
 void k8_powernow_init(void);
-int  k8_powernow_setperf(int);
+void k8_powernow_setperf(int);
 
 #endif /* _KERNEL */
 

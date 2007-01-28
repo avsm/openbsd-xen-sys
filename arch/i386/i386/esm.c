@@ -1,4 +1,4 @@
-/*	$OpenBSD: esm.c,v 1.41 2006/04/21 09:33:10 dlg Exp $ */
+/*	$OpenBSD: esm.c,v 1.43 2006/11/26 11:21:55 mbalmer Exp $ */
 
 /*
  * Copyright (c) 2005 Jordan Hargrave <jordan@openbsd.org>
@@ -115,6 +115,7 @@ struct esm_softc {
 
 	TAILQ_HEAD(, esm_sensor) sc_sensors;
 	struct esm_sensor	*sc_nextsensor;
+	struct sensordev	sc_sensordev;
 	int			sc_retries;
 	volatile int		sc_step;
 	struct timeout		sc_timeout;
@@ -256,6 +257,8 @@ esm_attach(struct device *parent, struct device *self, void *aux)
 	wdog_register(sc, esm_watchdog);
 	printf("\n");
 
+	strlcpy(sc->sc_sensordev.xname, DEVNAME(sc),
+	    sizeof(sc->sc_sensordev.xname));
 	for (i = 0; i <= 0xff; i++) {
 		if (esm_get_devmap(sc, i, &devmap) != 0)
 			break; /* XXX not continue? */
@@ -263,6 +266,7 @@ esm_attach(struct device *parent, struct device *self, void *aux)
 	}
 
 	if (!TAILQ_EMPTY(&sc->sc_sensors)) {
+		sensordev_install(&sc->sc_sensordev);
 		DPRINTF("%s: starting refresh\n", DEVNAME(sc));
 		sc->sc_nextsensor = TAILQ_FIRST(&sc->sc_sensors);
 		sc->sc_retries = 0;
@@ -281,7 +285,7 @@ esm_watchdog(void *arg, int period)
 
 	if (sc->sc_wdog_period == period) {
 		if (period != 0) {
-			s = splsoftclock();
+			s = splclock();
 			if (sc->sc_step != 0) {
 				/* defer tickling to the sensor refresh */
 				sc->sc_wdog_tickle = 1;
@@ -302,7 +306,7 @@ esm_watchdog(void *arg, int period)
 	if (period < 10 && period > 0)
 		period = 10;
 
-	s = splsoftclock();
+	s = splclock();
 
 	prop.cmd = ESM2_CMD_HWDC;
 	prop.subcmd = ESM2_HWDC_WRITE_PROPERTY;
@@ -928,8 +932,7 @@ esm_make_sensors(struct esm_softc *sc, struct esm_devmap *devmap,
 
 		for (j = 0; j < nsensors; j++) {
 			s[j].type = esm_typemap[es->es_type];
-			strlcpy(s[j].device, DEVNAME(sc), sizeof(s[j].device));
-			sensor_add(&s[j]);
+			sensor_attach(&sc->sc_sensordev, &s[j]);
 		}
 
 		es->es_sensor = s;

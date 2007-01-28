@@ -1,4 +1,4 @@
-/*	$OpenBSD: cd.c,v 1.112 2006/10/07 23:40:07 beck Exp $	*/
+/*	$OpenBSD: cd.c,v 1.117 2006/12/12 02:44:36 krw Exp $	*/
 /*	$NetBSD: cd.c,v 1.100 1997/04/02 02:29:30 mycroft Exp $	*/
 
 /*
@@ -50,7 +50,7 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/kernel.h>
+#include <sys/timeout.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
@@ -102,6 +102,7 @@ int	cdactivate(struct device *, enum devact);
 int	cddetach(struct device *, int);
 
 void	cdstart(void *);
+void	cdrestart(void *);
 void	cdminphys(struct buf *);
 void	cdgetdisklabel(dev_t, struct cd_softc *, struct disklabel *,
 			    struct cpu_disklabel *, int);
@@ -176,7 +177,7 @@ cdmatch(parent, match, aux)
 	struct device *parent;
 	void *match, *aux;
 {
-	struct scsibus_attach_args *sa = aux;
+	struct scsi_attach_args *sa = aux;
 	int priority;
 
 	(void)scsi_inqmatch(sa->sa_inqbuf,
@@ -195,7 +196,7 @@ cdattach(parent, self, aux)
 	void *aux;
 {
 	struct cd_softc *cd = (void *)self;
-	struct scsibus_attach_args *sa = aux;
+	struct scsi_attach_args *sa = aux;
 	struct scsi_link *sc_link = sa->sa_sc_link;
 
 	SC_DEBUG(sc_link, SDEV_DB2, ("cdattach:\n"));
@@ -224,6 +225,8 @@ cdattach(parent, self, aux)
 		cd->flags |= CDF_ANCIENT;
 
 	printf("\n");
+
+	timeout_set(&cd->sc_timeout, cdrestart, cd);
 
 	if ((cd->sc_cdpwrhook = powerhook_establish(cd_powerhook, cd)) == NULL)
 		printf("%s: WARNING: unable to establish power hook\n",
@@ -462,6 +465,8 @@ cdclose(dev, flag, fmt, p)
 
 			cd->sc_link->flags &= ~SDEV_EJECTING;
 		}
+
+		timeout_del(&cd->sc_timeout);
 	}
 
 	cdunlock(cd);
@@ -565,7 +570,7 @@ done:
  * continues to be drained.
  *
  * must be called at the correct (highish) spl level
- * cdstart() is called at splbio from cdstrategy and scsi_done
+ * cdstart() is called at splbio from cdstrategy, cdrestart and scsi_done
  */
 void
 cdstart(v)
@@ -578,7 +583,7 @@ cdstart(v)
 	struct scsi_rw_big cmd_big;
 	struct scsi_rw cmd_small;
 	struct scsi_generic *cmdp;
-	int blkno, nblks, cmdlen;
+	int blkno, nblks, cmdlen, error;
 	struct partition *p;
 
 	splassert(IPL_BIO);
@@ -672,14 +677,40 @@ cdstart(v)
 		 * Call the routine that chats with the adapter.
 		 * Note: we cannot sleep as we may be an interrupt
 		 */
-		if (scsi_scsi_cmd(sc_link, cmdp, cmdlen,
-		    (u_char *) bp->b_data, bp->b_bcount,
-		    CDRETRIES, 30000, bp, SCSI_NOSLEEP |
-		    ((bp->b_flags & B_READ) ? SCSI_DATA_IN : SCSI_DATA_OUT))) {
+		error = scsi_scsi_cmd(sc_link, cmdp, cmdlen,
+		    (u_char *) bp->b_data, bp->b_bcount, CDRETRIES, 30000, bp,
+		    SCSI_NOSLEEP | ((bp->b_flags & B_READ) ? SCSI_DATA_IN :
+		    SCSI_DATA_OUT));
+		switch (error) {
+		case 0:
+			timeout_del(&cd->sc_timeout);
+			break;
+		case EAGAIN:
+			/*
+			 * The device can't start another i/o. Try again later.
+			 */
+			dp->b_actf = bp;
 			disk_unbusy(&cd->sc_dk, 0, 0);
-			printf("%s: not queued", cd->sc_dev.dv_xname);
+			timeout_add(&cd->sc_timeout, 1);
+			return;
+		default:
+			disk_unbusy(&cd->sc_dk, 0, 0);
+			printf("%s: not queued, error %d\n",
+			    cd->sc_dev.dv_xname, error);
+			break;
 		}
 	}
+}
+
+void
+cdrestart(v)
+	void *v;
+{
+	int s;
+
+	s = splbio();
+	cdstart(v);
+	splx(s);
 }
 
 void
@@ -1825,6 +1856,33 @@ dvd_auth(cd, a)
 			return (error);
 		return (0);
 
+	case DVD_LU_SEND_RPC_STATE:
+		cmd.opcode = GPCMD_REPORT_KEY;
+		cmd.bytes[8] = 8;
+		cmd.bytes[9] = 8 | (0 << 6);
+		error = scsi_scsi_cmd(cd->sc_link, &cmd, sizeof(cmd), buf, 8,
+		    CDRETRIES, 30000, NULL, SCSI_DATA_IN);
+		if (error)
+			return (error);
+		a->lrpcs.type = (buf[4] >> 6) & 3;
+		a->lrpcs.vra = (buf[4] >> 3) & 7;
+		a->lrpcs.ucca = (buf[4]) & 7;
+		a->lrpcs.region_mask = buf[5];
+		a->lrpcs.rpc_scheme = buf[6];
+		return (0);
+
+	case DVD_HOST_SEND_RPC_STATE:
+		cmd.opcode = GPCMD_SEND_KEY;
+		cmd.bytes[8] = 8;
+		cmd.bytes[9] = 6 | (0 << 6);
+		buf[1] = 6;
+		buf[4] = a->hrpcs.pdrc;
+		error = scsi_scsi_cmd(cd->sc_link, &cmd, sizeof(cmd), buf, 8,
+		    CDRETRIES, 30000, NULL, SCSI_DATA_OUT);
+		if (error)
+			return (error);
+		return (0);
+
 	default:
 		return (ENOTTY);
 	}
@@ -2033,7 +2091,7 @@ cd_interpret_sense(xs)
 	u_int8_t serr = sense->error_code & SSD_ERRCODE;
 
 	if (((sc_link->flags & SDEV_OPEN) == 0) ||
-	    (serr != 0x70 && serr != 0x71))
+	    (serr != SSD_ERRCODE_CURRENT && serr != SSD_ERRCODE_DEFERRED))
 		return (EJUSTRETURN); /* let the generic code handle it */
 
 	/*
@@ -2052,9 +2110,8 @@ cd_interpret_sense(xs)
 	case SKEY_NOT_READY:
 		if ((xs->flags & SCSI_IGNORE_NOT_READY) != 0)
 			return (0);
-		if (sense->add_sense_code == 0x04 &&   /* Not ready */
-		    sense->add_sense_code_qual == 0x01) { /* Becoming ready */
-			SC_DEBUG(sc_link, SDEV_DB1, ("not ready: busy (%#x)\n",
+		if (ASC_ASCQ(sense) == SENSE_NOT_READY_BECOMING_READY) {
+		    	SC_DEBUG(sc_link, SDEV_DB1, ("not ready: busy (%#x)\n",
 			    sense->add_sense_code_qual));
 			/* don't count this as a retry */
 			xs->retries++;

@@ -1,4 +1,4 @@
-/*	$OpenBSD: amphy.c,v 1.12 2005/02/05 22:30:52 brad Exp $	*/
+/*	$OpenBSD: amphy.c,v 1.14 2006/12/27 19:11:08 kettenis Exp $	*/
 
 /*
  * Copyright (c) 1997, 1998, 1999
@@ -179,7 +179,7 @@ amphy_service(struct mii_softc *sc, struct mii_data *mii, int cmd)
 	}
 
 	/* Update the media status. */
-	amphy_status(sc);
+	mii_phy_status(sc);
 
 	/* Callback if something changed. */
 	mii_phy_update(sc, cmd);
@@ -226,15 +226,15 @@ amphy_status(struct mii_softc *sc)
 			anlpar = PHY_READ(sc, MII_ANAR) &
 			    PHY_READ(sc, MII_ANLPAR);
 			if (anlpar & ANLPAR_T4)
-				mii->mii_media_active |= IFM_100_T4;
+				mii->mii_media_active |= IFM_100_T4|IFM_HDX;
 			else if (anlpar & ANLPAR_TX_FD)
 				mii->mii_media_active |= IFM_100_TX|IFM_FDX;
 			else if (anlpar & ANLPAR_TX)
-				mii->mii_media_active |= IFM_100_TX;
+				mii->mii_media_active |= IFM_100_TX|IFM_HDX;
 			else if (anlpar & ANLPAR_10_FD)
 				mii->mii_media_active |= IFM_10_T|IFM_FDX;
 			else if (anlpar & ANLPAR_10)
-				mii->mii_media_active |= IFM_10_T;
+				mii->mii_media_active |= IFM_10_T|IFM_HDX;
 			else
 				mii->mii_media_active |= IFM_NONE;
 			return;
@@ -247,11 +247,11 @@ amphy_status(struct mii_softc *sc)
 		if (par & DSCSR_100FDX)
 			mii->mii_media_active |= IFM_100_TX|IFM_FDX;
 		else if (par & DSCSR_100HDX)
-			mii->mii_media_active |= IFM_100_TX;
+			mii->mii_media_active |= IFM_100_TX|IFM_HDX;
 		else if (par & DSCSR_10FDX)
 			mii->mii_media_active |= IFM_10_T|IFM_HDX;
 		else if (par & DSCSR_10HDX)
-			mii->mii_media_active |= IFM_10_T;
+			mii->mii_media_active |= IFM_10_T|IFM_HDX;
 	} else
 		mii->mii_media_active = ife->ifm_media;
 }

@@ -1,4 +1,4 @@
-/*	$OpenBSD: fb.c,v 1.38 2006/06/30 21:38:17 miod Exp $	*/
+/*	$OpenBSD: fb.c,v 1.42 2006/12/03 16:41:56 miod Exp $	*/
 /*	$NetBSD: fb.c,v 1.23 1997/07/07 23:30:22 pk Exp $ */
 
 /*
@@ -90,6 +90,15 @@
 #include "wsdisplay.h"
 
 /*
+ * Sun specific color indexes.
+ * Black is not really 7, but rather ~0; to fit within the 8 ANSI color
+ * palette we are using on console, we pick (~0) & 0x07 instead.
+ * This essentially swaps WSCOL_BLACK and WSCOL_WHITE.
+ */
+#define	WSCOL_SUN_WHITE		0
+#define	WSCOL_SUN_BLACK		7
+
+/*
  * emergency unblank code
  * XXX should be somewhat moved to wscons MI code
  */
@@ -111,7 +120,6 @@ static int a2int(char *, int);
 #endif
 static void fb_initwsd(struct sunfb *);
 static void fb_updatecursor(struct rasops_info *);
-int	fb_alloc_cattr(void *, int, int, int, long *);
 int	fb_alloc_screen(void *, const struct wsscreen_descr *, void **,
 	    int *, int *, long *);
 void	fb_free_screen(void *, void *);
@@ -139,32 +147,17 @@ fb_setsize(struct sunfb *sf, int def_depth, int def_width, int def_height,
 		sf->sf_height = def_height;
 		sf->sf_depth = def_depth;
 
+#if defined(SUN4)
 		/*
 		 * This is not particularly useful on Sun 4 VME framebuffers.
 		 * The EEPROM only contains info about the built-in.
 		 */
-		if (CPU_ISSUN4 && (bustype == BUS_VME16 ||
-		    bustype == BUS_VME32))
-			goto donesize;
-
-#if defined(SUN4)
-		if (CPU_ISSUN4) {
+		if (CPU_ISSUN4 && bustype == BUS_OBIO) {
 			struct eeprom *eep = (struct eeprom *)eeprom_va;
 
 			if (ISSET(sf->sf_flags, FB_PFOUR)) {
 				volatile u_int32_t pfour;
-
-				/*
-				 * Some pfour framebuffers, e.g. the
-				 * cgsix, don't encode resolution the
-				 * same, so the driver handles that.
-				 * The driver can let us know that it
-				 * needs to do this by not mapping in
-				 * the pfour register by the time this
-				 * routine is called.
-				 */
-				if (sf->sf_pfour == NULL)
-					goto donesize;
+				u_int size;
 
 				pfour = *sf->sf_pfour;
 
@@ -178,45 +171,34 @@ fb_setsize(struct sunfb *sf, int def_depth, int def_width, int def_height,
 				 */
 				if ((PFOUR_ID(pfour) == PFOUR_ID_COLOR24) ||
 				    (PFOUR_ID(pfour) == PFOUR_ID_FASTCOLOR))
-					goto donesize;
+					size = 0x00; /* invalid */
+				else
+					size = PFOUR_SIZE(pfour);
 
-				switch (PFOUR_SIZE(pfour)) {
+				switch (size) {
 				case PFOUR_SIZE_1152X900:
 					sf->sf_width = 1152;
 					sf->sf_height = 900;
 					break;
-
 				case PFOUR_SIZE_1024X1024:
 					sf->sf_width = 1024;
 					sf->sf_height = 1024;
 					break;
-
 				case PFOUR_SIZE_1280X1024:
 					sf->sf_width = 1280;
 					sf->sf_height = 1024;
 					break;
-
 				case PFOUR_SIZE_1600X1280:
 					sf->sf_width = 1600;
 					sf->sf_height = 1280;
 					break;
-
 				case PFOUR_SIZE_1440X1440:
 					sf->sf_width = 1440;
 					sf->sf_height = 1440;
 					break;
-
 				case PFOUR_SIZE_640X480:
 					sf->sf_width = 640;
 					sf->sf_height = 480;
-					break;
-
-				default:
-					/*
-					 * XXX: Do nothing, I guess.
-					 * Should we print a warning about
-					 * an unknown value? --thorpej
-					 */
 					break;
 				}
 			} else if (eep != NULL) {
@@ -225,28 +207,17 @@ fb_setsize(struct sunfb *sf, int def_depth, int def_width, int def_height,
 					sf->sf_width = 1152;
 					sf->sf_height = 900;
 					break;
-
 				case EE_SCR_1024X1024:
 					sf->sf_width = 1024;
 					sf->sf_height = 1024;
 					break;
-
 				case EE_SCR_1600X1280:
 					sf->sf_width = 1600;
 					sf->sf_height = 1280;
 					break;
-
 				case EE_SCR_1440X1440:
 					sf->sf_width = 1440;
 					sf->sf_height = 1440;
-					break;
-
-				default:
-					/*
-					 * XXX: Do nothing, I guess.
-					 * Should we print a warning about
-					 * an unknown value? --thorpej
-					 */
 					break;
 				}
 			}
@@ -258,7 +229,6 @@ fb_setsize(struct sunfb *sf, int def_depth, int def_width, int def_height,
 		}
 #endif /* SUN4M */
 
-donesize:
 		sf->sf_linebytes = (sf->sf_width * sf->sf_depth) / 8;
 		break;
 
@@ -273,20 +243,17 @@ obpsize:
 		def_linebytes =
 		    roundup(sf->sf_width, sf->sf_depth) * sf->sf_depth / 8;
 		sf->sf_linebytes = getpropint(node, "linebytes", def_linebytes);
+
 		/*
 		 * XXX If we are configuring a board in a wider depth level
 		 * than the mode it is currently operating in, the PROM will
 		 * return a linebytes property tied to the current depth value,
 		 * which is NOT what we are relying upon!
 		 */
-		if (sf->sf_linebytes < (sf->sf_width * sf->sf_depth) / 8) {
+		if (sf->sf_linebytes < (sf->sf_width * sf->sf_depth) / 8)
 			sf->sf_linebytes = def_linebytes;
-		}
-		break;
 
-	default:
-		panic("fb_setsize: inappropriate bustype");
-		/* NOTREACHED */
+		break;
 	}
 
 	sf->sf_fbsize = sf->sf_height * sf->sf_linebytes;
@@ -367,15 +334,28 @@ fbwscons_init(struct sunfb *sf, int flags)
 #endif
 
 	rasops_init(ri, rows, cols);
-	if (ri->ri_caps & WSSCREEN_WSCOLORS)
-		ri->ri_ops.alloc_attr = fb_alloc_cattr;
+
+	if (sf->sf_depth == 8) {
+		/*
+		 * If we are running with an indexed palette, compensate
+		 * the swap of black and white through ri_devcmap.
+		 */
+		ri->ri_devcmap[WSCOL_SUN_BLACK] = 0;
+		ri->ri_devcmap[WSCOL_SUN_WHITE] = 0xffffffff;
+	} else if (sf->sf_depth > 8) {
+		/*
+		 * If we are running on a direct color frame buffer,
+		 * make the ``normal'' white the same as the hilighted
+		 * white.
+		 */
+		ri->ri_devcmap[WSCOL_WHITE] = ri->ri_devcmap[WSCOL_WHITE + 8];
+	}
 }
 
 void
 fbwscons_console_init(struct sunfb *sf, int row)
 {
 	struct rasops_info *ri = &sf->sf_ro;
-	int32_t tmp;
 	long defattr;
 
 	if (CPU_ISSUN4 || romgetcursoraddr(&sf->sf_crowp, &sf->sf_ccolp))
@@ -417,16 +397,6 @@ fbwscons_console_init(struct sunfb *sf, int row)
 	    (sf->sf_ccolp != NULL || sf->sf_crowp != NULL))
 		ri->ri_updatecursor = fb_updatecursor;
 
-	/*
-	 * Select appropriate color settings to mimic a
-	 * black on white Sun console.
-	 */
-	if (sf->sf_depth > 8) {
-		tmp = ri->ri_devcmap[WSCOL_WHITE];
-		ri->ri_devcmap[WSCOL_WHITE] = ri->ri_devcmap[WSCOL_BLACK];
-		ri->ri_devcmap[WSCOL_BLACK] = tmp;
-	}
-
 	if (ISSET(ri->ri_caps, WSSCREEN_WSCOLORS))
 		ri->ri_ops.alloc_attr(ri,
 		    WSCOL_BLACK, WSCOL_WHITE, WSATTR_WSCOLORS, &defattr);
@@ -443,22 +413,27 @@ fbwscons_setcolormap(struct sunfb *sf,
     void (*setcolor)(void *, u_int, u_int8_t, u_int8_t, u_int8_t))
 {
 	int i;
-	u_char *color;
+	const u_char *color;
 
 	if (sf->sf_depth <= 8 && setcolor != NULL) {
 		for (i = 0; i < 16; i++) {
-			color = (u_char *)&rasops_cmap[i * 3];
+			color = &rasops_cmap[i * 3];
 			setcolor(sf, i, color[0], color[1], color[2]);
 		}
 		for (i = 240; i < 256; i++) {
-			color = (u_char *)&rasops_cmap[i * 3];
+			color = &rasops_cmap[i * 3];
 			setcolor(sf, i, color[0], color[1], color[2]);
 		}
-		/* compensate for BoW palette */
-		setcolor(sf, WSCOL_BLACK, 0, 0, 0);
-		setcolor(sf, 0xff ^ WSCOL_BLACK, 255, 255, 255);
-		setcolor(sf, WSCOL_WHITE, 255, 255, 255);
-		setcolor(sf, 0xff ^ WSCOL_WHITE, 0, 0, 0);
+		/*
+		 * Compensate for BoW default hardware palette: existing
+		 * output (which we do not want to affect) is black on
+		 * white with color index 0 being white and 0xff being
+		 * black.
+		 */
+		setcolor(sf, WSCOL_SUN_WHITE, 0xff, 0xff, 0xff);
+		setcolor(sf, 0xff ^ WSCOL_SUN_WHITE, 0, 0, 0);
+		setcolor(sf, WSCOL_SUN_BLACK, 0, 0, 0);
+		setcolor(sf, 0xff ^ (WSCOL_SUN_BLACK), 0xff, 0xff, 0xff);
 	}
 }
 
@@ -491,6 +466,7 @@ fbwscons_attach(struct sunfb *sf, struct wsdisplay_accessops *op, int isconsole)
 	waa.scrdata = &sf->sf_wsl;
 	waa.accessops = op;
 	waa.accesscookie = sf;
+	waa.defaultscreens = 0;
 	config_found(&sf->sf_dev, &waa, wsemuldisplaydevprint);
 }
 
@@ -531,48 +507,6 @@ int
 fb_show_screen(void *v, void *cookie, int waitok, void (*cb)(void *, int, int),
     void *cbarg)
 {
-	return (0);
-}
-
-/*
- * A variant of rasops_alloc_cattr() which handles the WSCOL_BLACK and
- * WSCOL_WHITE specific values wrt highlighting.
- */
-int
-fb_alloc_cattr(void *cookie, int fg, int bg, int flg, long *attrp)
-{
-	int swap;
-
-	if ((flg & WSATTR_BLINK) != 0)
-		return (EINVAL);
-
-	if ((flg & WSATTR_WSCOLORS) == 0) {
-		fg = WSCOL_WHITE;
-		bg = WSCOL_BLACK;
-	}
-
-	if ((flg & WSATTR_REVERSE) != 0) {
-		swap = fg;
-		fg = bg;
-		bg = swap;
-	}
-
-	if ((flg & WSATTR_HILIT) != 0) {
-		if (fg == WSCOL_BLACK)
-			fg = 8;	/* ``regular'' dark gray */
-		else if (fg != WSCOL_WHITE) /* white is always highlighted */
-			fg += 8;
-	}
-
-	flg = ((flg & WSATTR_UNDERLINE) ? 1 : 0);
-
-	/* we're lucky we do not need a different isgray table... */
-	if (rasops_isgray[fg])
-		flg |= 2;
-	if (rasops_isgray[bg])
-		flg |= 4;
-
-	*attrp = (bg << 16) | (fg << 24) | flg;
 	return (0);
 }
 

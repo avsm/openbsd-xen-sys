@@ -1,4 +1,4 @@
-/*	$OpenBSD: vs.c,v 1.61 2006/03/15 20:20:40 miod Exp $	*/
+/*	$OpenBSD: vs.c,v 1.63 2006/11/28 23:59:45 dlg Exp $	*/
 
 /*
  * Copyright (c) 2004, Miodrag Vallat.
@@ -137,6 +137,7 @@ vsattach(struct device *parent, struct device *self, void *args)
 	struct vs_softc *sc = (struct vs_softc *)self;
 	struct confargs *ca = args;
 	struct scsi_link *sc_link;
+	struct scsibus_attach_args saa;
 	int evec, bus;
 	int tmp;
 
@@ -218,8 +219,11 @@ vsattach(struct device *parent, struct device *self, void *args)
 		if (sc->sc_id[bus] < 0)
 			continue;
 
+		bzero(&saa, sizeof(saa));
+		saa.saa_sc_link = &sc->sc_link[bus];
+
 		bootbus = bus;
-		config_found(self, &sc->sc_link[bus], scsiprint);
+		config_found(self, &saa, scsiprint);
 	}
 
 	bootpart = tmp;		    /* restore old values */

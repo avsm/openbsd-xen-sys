@@ -1,4 +1,4 @@
-/* $OpenBSD: if_pppoe.c,v 1.8 2006/03/25 22:41:47 djm Exp $ */
+/* $OpenBSD: if_pppoe.c,v 1.10 2006/12/28 20:06:11 deraadt Exp $ */
 /* $NetBSD: if_pppoe.c,v 1.51 2003/11/28 08:56:48 keihan Exp $ */
 
 /*
@@ -370,15 +370,17 @@ pppoeintr(void)
 	splassert(IPL_SOFTNET);
 	
 	LIST_FOREACH(sc, &pppoe_softc_list, sc_list) {
-		for (;;) {
+		while (ppoediscinq.ifq_head) {
 			MBUFLOCK(IF_DEQUEUE(&ppoediscinq, m););
-			if (m == NULL) break;
+			if (m == NULL)
+				break;
 			pppoe_disc_input(m);
 		}
 
-		for (;;) {
+		while (ppoeinq.ifq_head) {
 			MBUFLOCK(IF_DEQUEUE(&ppoeinq, m););
-			if (m == NULL) break;
+			if (m == NULL)
+				break;
 			pppoe_data_input(m);
 		}
 	}
@@ -981,6 +983,7 @@ pppoe_get_mbuf(size_t len)
 		MCLGET(m, M_DONTWAIT);
 		if ((m->m_flags & M_EXT) == 0) {
 			struct mbuf *n;
+
 			MFREE(m, n);
 			return (NULL);
 		}

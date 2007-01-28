@@ -1,4 +1,4 @@
-/* $OpenBSD: wsdisplayvar.h,v 1.17 2006/06/29 17:54:32 miod Exp $ */
+/* $OpenBSD: wsdisplayvar.h,v 1.21 2006/11/29 19:11:17 miod Exp $ */
 /* $NetBSD: wsdisplayvar.h,v 1.30 2005/02/04 02:10:49 perry Exp $ */
 
 /*
@@ -55,31 +55,23 @@ struct device;
 struct wsdisplay_emulops {
 	void	(*cursor)(void *c, int on, int row, int col);
 	int	(*mapchar)(void *, int, unsigned int *);
-	void	(*putchar)(void *c, int row, int col,
-				u_int uc, long attr);
+	void	(*putchar)(void *c, int row, int col, u_int uc, long attr);
 	void	(*copycols)(void *c, int row, int srccol, int dstcol,
 		    int ncols);
-	void	(*erasecols)(void *c, int row, int startcol,
-		    int ncols, long);
-	void	(*copyrows)(void *c, int srcrow, int dstrow,
-		    int nrows);
-	void	(*eraserows)(void *c, int row, int nrows, long);
-	int	(*alloc_attr)(void *c, int fg, int bg, int flags, long *);
+	void	(*erasecols)(void *c, int row, int startcol, int ncols, long);
+	void	(*copyrows)(void *c, int srcrow, int dstrow, int nrows);
+	void	(*eraserows)(void *c, int row, int nrows, long attr);
+	int	(*alloc_attr)(void *c, int fg, int bg, int flags, long *attrp);
+	void	(*unpack_attr)(void *c, long attr, int *fg, int *bg, int *ul);
 /* fg / bg values. Made identical to ANSI terminal color codes. */
-/* XXX should be #if NWSEMUL_SUN > 1 */
-#if defined(__sparc__) || defined(__sparc64__)
-#define WSCOL_WHITE	0
-#define WSCOL_BLACK	15
-#else
 #define WSCOL_BLACK	0
-#define WSCOL_WHITE	7
-#endif
 #define WSCOL_RED	1
 #define WSCOL_GREEN	2
 #define WSCOL_BROWN	3
 #define WSCOL_BLUE	4
 #define WSCOL_MAGENTA	5
 #define WSCOL_CYAN	6
+#define WSCOL_WHITE	7
 /* flag values: */
 #define WSATTR_REVERSE	1
 #define WSATTR_HILIT	2
@@ -104,6 +96,14 @@ struct wsscreen_descr {
 #define WSSCREEN_UNDERLINE	16	/* can underline */
 };
 
+/*
+ * Character cell description (for emulation mode).
+ */
+struct wsdisplay_charcell {
+	u_int	uc;
+	long	attr;
+};
+
 struct wsdisplay_font;
 /*
  * Display access functions, invoked by user-land programs which require
@@ -123,7 +123,7 @@ struct wsdisplay_accessops {
 			       void (*) (void *, int, int), void *);
 	int	(*load_font)(void *, void *, struct wsdisplay_font *);
 	void	(*scrollback)(void *, void *, int);
-	u_int16_t (*getchar)(void *, int, int);
+	int	(*getchar)(void *, int, int, struct wsdisplay_charcell *);
 	void	(*burn_screen)(void *, u_int, u_int);
 	void	(*pollc)(void *, int);
 };
@@ -143,6 +143,7 @@ struct wsemuldisplaydev_attach_args {
 	const struct wsscreen_list *scrdata;		/* screen cfg info */
 	const struct wsdisplay_accessops *accessops;	/* access ops */
 	void	*accesscookie;				/* access cookie */
+	u_int	defaultscreens;				/* screens to create */
 };
 
 #define	WSEMULDISPLAYDEVCF_CONSOLE	0

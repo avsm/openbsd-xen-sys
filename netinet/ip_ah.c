@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip_ah.c,v 1.84 2006/03/25 22:41:48 djm Exp $ */
+/*	$OpenBSD: ip_ah.c,v 1.86 2006/12/13 09:01:59 itojun Exp $ */
 /*
  * The authors of this code are John Ioannidis (ji@tla.org),
  * Angelos D. Keromytis (kermit@csd.uch.gr) and
@@ -364,9 +364,9 @@ ah_massage_headers(struct mbuf **m0, int proto, int skip, int alg, int out)
 		ip6.ip6_vfc |= IPV6_VERSION;
 
 		/* Scoped address handling. */
-		if (IN6_IS_SCOPE_LINKLOCAL(&ip6.ip6_src))
+		if (IN6_IS_SCOPE_EMBED(&ip6.ip6_src))
 			ip6.ip6_src.s6_addr16[1] = 0;
-		if (IN6_IS_SCOPE_LINKLOCAL(&ip6.ip6_dst))
+		if (IN6_IS_SCOPE_EMBED(&ip6.ip6_dst))
 			ip6.ip6_dst.s6_addr16[1] = 0;
 
 		/* Done with IPv6 header. */
@@ -953,6 +953,9 @@ ah_output(struct mbuf *m, struct tdb *tdb, struct mbuf **mp, int skip,
 	struct ah *ah;
 #if NBPFILTER > 0
 	struct ifnet *ifn = &(encif[0].sc_if);
+
+	ifn->if_opackets++;
+	ifn->if_obytes += m->m_pkthdr.len;
 
 	if (ifn->if_bpf) {
 		struct enchdr hdr;

@@ -1,4 +1,4 @@
-/*	$OpenBSD: dnkbd.c,v 1.11 2006/04/15 23:56:48 miod Exp $	*/
+/*	$OpenBSD: dnkbd.c,v 1.13 2007/01/06 20:09:12 miod Exp $	*/
 
 /*
  * Copyright (c) 2005, Miodrag Vallat
@@ -38,6 +38,7 @@
 #include <sys/timeout.h>
 
 #include <machine/autoconf.h>
+#include <machine/bus.h>
 #include <machine/cpu.h>
 
 #include <dev/cons.h>
@@ -287,10 +288,8 @@ dnkbd_attach_subdevices(struct dnkbd_softc *sc)
 	/*
 	 * If both hilkbd and dnkbd are configured, prefer the Domain
 	 * keyboard as console (if we are here, we know the keyboard is
-	 * plugged). But if it's a late hotplug, the hil code will have
-	 * claimed the console keyboard, so don't claim it now.
-	 * Unfortunately, the hil code will claim the console keyboard
-	 * even if no HIL keyboard is connected...
+	 * plugged), unless the console keyboard has been claimed already
+	 * (i.e. late hotplug with hil keyboard plugged first).
 	 */
 	if (cn_tab == &wsdisplay_cons) {
 #if NHILKBD > 0
@@ -416,7 +415,7 @@ dnkbd_probe(struct dnkbd_softc *sc)
 		rspbuf[i] = 0;
 
 	/*
-	 * Now display the identification strings, if it changed.
+	 * Now display the identification strings, if they changed.
 	 */
 	if (i != sc->sc_identlen || bcmp(rspbuf, sc->sc_ident, i) != 0) {
 		sc->sc_layout = KB_US;
@@ -436,8 +435,10 @@ dnkbd_probe(struct dnkbd_softc *sc)
 			/*
 			 * Parse the layout code if applicable
 			 */
-			if (i == 1 && *word == '3')
-				switch (*++word) {
+			if (i == 1 && *word++ == '3') {
+				if (*word == '-')
+					word++;
+				switch (*word) {
 #if 0
 				default:
 				case ' ':
@@ -466,6 +467,7 @@ dnkbd_probe(struct dnkbd_softc *sc)
 					sc->sc_layout = KB_SG;
 					break;
 				}
+			}
 			word = end;
 		}
 		printf("\n");

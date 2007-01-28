@@ -1,4 +1,4 @@
-/*	$OpenBSD: ipsec_input.c,v 1.78 2006/03/04 22:40:16 brad Exp $	*/
+/*	$OpenBSD: ipsec_input.c,v 1.81 2006/12/05 09:17:12 markus Exp $	*/
 /*
  * The authors of this code are John Ioannidis (ji@tla.org),
  * Angelos D. Keromytis (kermit@csd.uch.gr) and
@@ -35,6 +35,8 @@
  * PURPOSE.
  */
 
+#include "pf.h"
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/protosw.h>
@@ -46,6 +48,10 @@
 #include <net/if.h>
 #include <net/netisr.h>
 #include <net/bpf.h>
+
+#if NPF > 0
+#include <net/pfvar.h>
+#endif
 
 #include <netinet/in.h>
 #include <netinet/in_systm.h>
@@ -554,11 +560,20 @@ ipsec_common_input_cb(struct mbuf *m, struct tdb *tdbp, int skip, int protoff,
 	} else if (sproto == IPPROTO_AH)
 		m->m_flags |= M_AUTH | M_AUTH_AH;
 
+#if NPF > 0
+	/* Add pf tag if requested. */
+	if (pf_tag_packet(m, NULL, tdbp->tdb_tag, -1))
+		DPRINTF(("failed to tag ipsec packet\n"));
+#endif
+
 	if (tdbp->tdb_flags & TDBF_TUNNELING)
 		m->m_flags |= M_TUNNEL;
 
 #if NBPFILTER > 0
 	bpfif = &encif[0].sc_if;
+	bpfif->if_ipackets++;
+	bpfif->if_ibytes += m->m_pkthdr.len;
+
 	if (bpfif->if_bpf) {
 		struct enchdr hdr;
 
@@ -852,6 +867,10 @@ ipsec_common_ctlinput(int cmd, struct sockaddr *sa, void *v, int proto)
 			tdbp->tdb_mtu = mtu;
 			tdbp->tdb_mtutimeout = time_second +
 			    ip_mtudisc_timeout;
+			DPRINTF(("ipsec_common_ctlinput: "
+			    "spi %08x mtu %d adjust %d\n",
+			    ntohl(tdbp->tdb_spi), tdbp->tdb_mtu,
+			    adjust));
 		}
 		splx(s);
 		return (NULL);
@@ -906,6 +925,10 @@ udpencap_ctlinput(int cmd, struct sockaddr *sa, void *v)
 				tdbp->tdb_mtu = mtu - adjust;
 				tdbp->tdb_mtutimeout = time_second +
 				    ip_mtudisc_timeout;
+				DPRINTF(("udpencap_ctlinput: "
+				    "spi %08x mtu %d adjust %d\n",
+				    ntohl(tdbp->tdb_spi), tdbp->tdb_mtu,
+				    adjust));
 			}
 		}
 	}

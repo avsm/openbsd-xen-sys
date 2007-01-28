@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_nfereg.h,v 1.18 2006/05/01 15:59:31 brad Exp $	*/
+/*	$OpenBSD: if_nfereg.h,v 1.20 2006/11/15 02:24:37 brad Exp $	*/
 
 /*-
  * Copyright (c) 2005 Jonathan Gray <jsg@openbsd.org>
@@ -86,7 +86,7 @@
 #define NFE_R2_MAGIC		0x16
 #define NFE_R4_MAGIC		0x08
 #define NFE_R6_MAGIC		0x03
-#define NFE_WOL_MAGIC		0x7770
+#define NFE_WOL_ENABLE		0x1111
 #define NFE_RX_START		0x01
 #define NFE_TX_START		0x01
 
@@ -176,10 +176,12 @@ struct nfe_desc64 {
 	"\14FORCEDINT\13LASTPACKET\12UNDERFLOW\10LOSTCARRIER\09DEFERRED\02RETRY"
 
 /* flags common to V1/V2 descriptors */
-#define NFE_RX_CSUMOK		0x1c00
+#define NFE_RX_UDP_CSUMOK	(1 << 10)
+#define NFE_RX_TCP_CSUMOK	(1 << 11)
+#define NFE_RX_IP_CSUMOK	(1 << 12)
 #define NFE_RX_ERROR		(1 << 14)
 #define NFE_RX_READY		(1 << 15)
-#define NFE_TX_TCP_CSUM		(1 << 10)
+#define NFE_TX_TCP_UDP_CSUM	(1 << 10)
 #define NFE_TX_IP_CSUM		(1 << 11)
 #define NFE_TX_VALID		(1 << 15)
 

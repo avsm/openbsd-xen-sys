@@ -1,4 +1,4 @@
-/*	$OpenBSD: icmp6.c,v 1.86 2006/03/05 21:48:57 miod Exp $	*/
+/*	$OpenBSD: icmp6.c,v 1.91 2007/01/15 21:32:29 itojun Exp $	*/
 /*	$KAME: icmp6.c,v 1.217 2001/06/20 15:03:29 jinmei Exp $	*/
 
 /*
@@ -377,9 +377,9 @@ icmp6_error(m, type, code, param)
 	nip6->ip6_src  = oip6->ip6_src;
 	nip6->ip6_dst  = oip6->ip6_dst;
 
-	if (IN6_IS_SCOPE_LINKLOCAL(&oip6->ip6_src))
+	if (IN6_IS_SCOPE_EMBED(&oip6->ip6_src))
 		oip6->ip6_src.s6_addr16[1] = 0;
-	if (IN6_IS_SCOPE_LINKLOCAL(&oip6->ip6_dst))
+	if (IN6_IS_SCOPE_EMBED(&oip6->ip6_dst))
 		oip6->ip6_dst.s6_addr16[1] = 0;
 
 	icmp6 = (struct icmp6_hdr *)(nip6 + 1);
@@ -619,7 +619,8 @@ icmp6_input(mp, offp, proto)
 		} else {
 	 deliverecho:
 			nip6 = mtod(n, struct ip6_hdr *);
-			nicmp6 = (struct icmp6_hdr *)((caddr_t)nip6 + off);
+			IP6_EXTHDR_GET(nicmp6, struct icmp6_hdr *, n, off,
+			    sizeof(*nicmp6));
 			noff = off;
 		}
 		nicmp6->icmp6_type = ICMP6_ECHO_REPLY;
@@ -1027,7 +1028,6 @@ icmp6_notify_error(m, off, icmp6len, code)
 			icmp6dst.sin6_addr = *finaldst;
 		icmp6dst.sin6_scope_id = in6_addr2scopeid(m->m_pkthdr.rcvif,
 							  &icmp6dst.sin6_addr);
-#ifndef SCOPEDROUTING
 		if (in6_embedscope(&icmp6dst.sin6_addr, &icmp6dst,
 				   NULL, NULL)) {
 			/* should be impossbile */
@@ -1035,7 +1035,6 @@ icmp6_notify_error(m, off, icmp6len, code)
 			    "icmp6_notify_error: in6_embedscope failed\n"));
 			goto freeit;
 		}
-#endif
 
 		/*
 		 * retrieve parameters from the inner IPv6 header, and convert
@@ -1047,7 +1046,6 @@ icmp6_notify_error(m, off, icmp6len, code)
 		icmp6src.sin6_addr = eip6->ip6_src;
 		icmp6src.sin6_scope_id = in6_addr2scopeid(m->m_pkthdr.rcvif,
 							  &icmp6src.sin6_addr);
-#ifndef SCOPEDROUTING
 		if (in6_embedscope(&icmp6src.sin6_addr, &icmp6src,
 				   NULL, NULL)) {
 			/* should be impossbile */
@@ -1055,7 +1053,6 @@ icmp6_notify_error(m, off, icmp6len, code)
 			    "icmp6_notify_error: in6_embedscope failed\n"));
 			goto freeit;
 		}
-#endif
 		icmp6src.sin6_flowinfo =
 		    (eip6->ip6_flow & IPV6_FLOWLABEL_MASK);
 
@@ -1265,7 +1262,7 @@ ni6_input(m, off)
 			m_copydata(m, off + sizeof(struct icmp6_nodeinfo),
 			    subjlen, (caddr_t)&sin6.sin6_addr);
 			/* XXX kame scope hack */
-			if (IN6_IS_SCOPE_LINKLOCAL(&sin6.sin6_addr)) {
+			if (IN6_IS_SCOPE_EMBED(&sin6.sin6_addr)) {
 				if ((m->m_flags & M_PKTHDR) != 0 &&
 				    m->m_pkthdr.rcvif) {
 					sin6.sin6_addr.s6_addr16[1] =
@@ -1917,7 +1914,7 @@ icmp6_rip6_input(mp, off)
 			struct	mbuf *n;
 			if ((n = m_copy(m, 0, (int)M_COPYALL)) != NULL) {
 				if (last->in6p_flags & IN6P_CONTROLOPTS)
-					ip6_savecontrol(last, &opts, ip6, n);
+					ip6_savecontrol(last, n, &opts);
 				/* strip intermediate headers */
 				m_adj(n, off);
 				if (sbappendaddr(&last->in6p_socket->so_rcv,
@@ -1936,7 +1933,7 @@ icmp6_rip6_input(mp, off)
 	}
 	if (last) {
 		if (last->in6p_flags & IN6P_CONTROLOPTS)
-			ip6_savecontrol(last, &opts, ip6, m);
+			ip6_savecontrol(last, m, &opts);
 		/* strip intermediate headers */
 		m_adj(m, off);
 		if (sbappendaddr(&last->in6p_socket->so_rcv,

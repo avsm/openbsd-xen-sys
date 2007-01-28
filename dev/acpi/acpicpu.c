@@ -1,4 +1,4 @@
-/* $OpenBSD: acpicpu.c,v 1.9 2006/03/09 05:16:27 jordan Exp $ */
+/* $OpenBSD: acpicpu.c,v 1.17 2006/12/26 23:58:08 marco Exp $ */
 /*
  * Copyright (c) 2005 Marco Peereboom <marco@openbsd.org>
  *
@@ -18,6 +18,7 @@
 #include <sys/param.h>
 #include <sys/proc.h>
 #include <sys/signalvar.h>
+#include <sys/sysctl.h>
 #include <sys/systm.h>
 #include <sys/device.h>
 #include <sys/malloc.h>
@@ -38,6 +39,7 @@
 int	acpicpu_match(struct device *, void *, void *);
 void	acpicpu_attach(struct device *, struct device *, void *);
 int	acpicpu_notify(struct aml_node *, int, void *);
+void	acpicpu_setperf(int);
 
 struct acpicpu_softc {
 	struct device		sc_dev;
@@ -65,12 +67,20 @@ struct cfdriver acpicpu_cd = {
 	NULL, "acpicpu", DV_DULL
 };
 
+extern int setperf_prio;
+
+#ifdef __i386__
+struct acpicpu_softc *acpicpu_sc[I386_MAXPROCS];
+#elif __amd64__
+struct acpicpu_softc *acpicpu_sc[X86_MAXPROCS];
+#endif
+
 int
 acpicpu_match(struct device *parent, void *match, void *aux)
 {
 	struct acpi_attach_args	*aa = aux;
 	struct cfdata		*cf = match;
-	
+
 	/* sanity */
 	if (aa->aaa_name == NULL ||
 	    strcmp(aa->aaa_name, cf->cf_driver->cd_name) != 0 ||
@@ -111,22 +121,31 @@ acpicpu_attach(struct device *parent, struct device *self, void *aux)
 	}
 	dnprintf(20, "\n");
 #endif
+	/* XXX this needs to be moved to probe routine */
+	if (acpicpu_getpct(sc))
+		return;
+
 	for (i = 0; i < sc->sc_pss_len; i++)
 		printf("%d%s", sc->sc_pss[i].pss_core_freq,
 		    i < sc->sc_pss_len - 1 ? ", " : " MHz\n");
 
-	acpicpu_getpct(sc);
+	aml_register_notify(sc->sc_devnode->parent, NULL,
+	    acpicpu_notify, sc, ACPIDEV_NOPOLL);
 
-	aml_register_notify(sc->sc_devnode->parent, NULL, 
-	    acpicpu_notify, sc);
+	if (setperf_prio < 30) {
+		cpu_setperf = acpicpu_setperf;
+		setperf_prio = 30;
+	}
+	acpicpu_sc[sc->sc_dev.dv_unit] = sc;
 }
 
 int
 acpicpu_getpct(struct acpicpu_softc *sc)
 {
 	struct aml_value	res;
+	int			rv = 1;
 
-	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_PPC", 0, NULL, &res) != 0) {
+	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_PPC", 0, NULL, &res)) {
 		dnprintf(20, "%s: no _PPC\n", DEVNAME(sc));
 		printf("%s: no _PPC\n", DEVNAME(sc));
 		return (1);
@@ -135,8 +154,7 @@ acpicpu_getpct(struct acpicpu_softc *sc)
 	dnprintf(10, "_PPC: %d\n", aml_val2int(&res));
 	aml_freevalue(&res);
 
-	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_PCT", 0, NULL, &res) != 0) {
-		dnprintf(20, "%s: no _PCT\n", DEVNAME(sc));
+	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_PCT", 0, NULL, &res)) {
 		printf("%s: no _PCT\n", DEVNAME(sc));
 		return (1);
 	}
@@ -149,9 +167,19 @@ acpicpu_getpct(struct acpicpu_softc *sc)
 
 	memcpy(&sc->sc_pct.pct_ctrl, res.v_package[0]->v_buffer,
 	    sizeof sc->sc_pct.pct_ctrl);
+	if (sc->sc_pct.pct_ctrl.grd_gas.address_space_id ==
+	    GAS_FUNCTIONAL_FIXED) {
+		printf("CTRL GASIO is CPU manufacturer overridden\n");
+		goto bad;
+	}
+
 	memcpy(&sc->sc_pct.pct_status, res.v_package[1]->v_buffer,
 	    sizeof sc->sc_pct.pct_status);
-	aml_freevalue(&res);
+	if (sc->sc_pct.pct_status.grd_gas.address_space_id ==
+	    GAS_FUNCTIONAL_FIXED) {
+		printf("STATUS GASIO is CPU manufacturer overridden\n");
+		goto bad;
+	}
 
 	dnprintf(10, "_PCT(ctrl)  : %02x %04x %02x %02x %02x %02x %016x\n",
 	    sc->sc_pct.pct_ctrl.grd_descriptor,
@@ -171,36 +199,10 @@ acpicpu_getpct(struct acpicpu_softc *sc)
 	    sc->sc_pct.pct_status.grd_gas.access_size,
 	    sc->sc_pct.pct_status.grd_gas.address);
 
-#if 0
-	char			pb[8];
-
-	acpi_gasio(sc->sc_acpi, ACPI_IOREAD,
-	   sc->sc_pct.pct_ctrl.grd_gas.address_space_id,
-	   sc->sc_pct.pct_ctrl.grd_gas.address,
-	   1,
-	   4,
-	   //sc->sc_pct.pct_ctrl.grd_gas.register_bit_width >> 3,
-	   pb);
-
-	acpi_gasio(sc->sc_acpi, ACPI_IOWRITE,
-	   sc->sc_pct.pct_ctrl.grd_gas.address_space_id,
-	   sc->sc_pct.pct_ctrl.grd_gas.address,
-	   1,
-	   4,
-	   //sc->sc_pct.pct_ctrl.grd_gas.register_bit_width >> 3,
-	   &sc->sc_pss[3].pss_ctrl);
-
-	acpi_gasio(sc->sc_acpi, ACPI_IOREAD,
-	   sc->sc_pct.pct_ctrl.grd_gas.address_space_id,
-	   sc->sc_pct.pct_ctrl.grd_gas.address,
-	   1,
-	   4,
-	   //sc->sc_pct.pct_ctrl.grd_gas.register_bit_width >> 3,
-	   pb);
-	printf("acpicpu: %02x %02x %02x %02x\n", pb[0], pb[1], pb[2], pb[3]);
-#endif
-
-	return (0);
+	rv = 0;
+bad:
+	aml_freevalue(&res);
+	return (rv);
 }
 
 int
@@ -209,11 +211,11 @@ acpicpu_getpss(struct acpicpu_softc *sc)
 	struct aml_value	res;
 	int			i;
 
-	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_PSS", 0, NULL, &res) != 0) {
+	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_PSS", 0, NULL, &res)) {
 		dnprintf(20, "%s: no _PSS\n", DEVNAME(sc));
 		return (1);
 	}
-	
+
 	if (sc->sc_pss)
 		free(sc->sc_pss, M_DEVBUF);
 
@@ -262,6 +264,93 @@ acpicpu_notify(struct aml_node *node, int notify_type, void *arg)
 		break;
 	}
 
-
 	return (0);
+}
+
+void
+acpicpu_setperf(int level) {
+	struct acpicpu_softc	*sc;
+	struct acpicpu_pss	*pss = NULL;
+	int			idx;
+	u_int32_t		stat_as, ctrl_as, stat_len, ctrl_len;
+	u_int32_t		status = 0;
+
+	sc = acpicpu_sc[cpu_number()];
+
+	dnprintf(10, "%s: acpicpu setperf level %d\n", 
+	    sc->sc_devnode->parent->name, level);
+
+	if (level < 0 || level > 100) {
+		dnprintf(10, "%s: acpicpu setperf illegal percentage\n", 
+		    sc->sc_devnode->parent->name);
+		return;
+	}
+
+	idx = (sc->sc_pss_len - 1) - (level / (100 / sc->sc_pss_len));
+	if (idx < 0)
+		idx = 0; /* compensate */
+	if (idx > sc->sc_pss_len) {
+		/* XXX should never happen */
+		printf("%s: acpicpu setperf index out of range\n", 
+		    sc->sc_devnode->parent->name);
+		return;
+	}
+
+	dnprintf(10, "%s: acpicpu setperf index %d\n", 
+	    sc->sc_devnode->parent->name, idx);
+
+	pss = &sc->sc_pss[idx];
+
+	/* if not set assume single 32 bit access */
+	stat_as = sc->sc_pct.pct_status.grd_gas.register_bit_width / 8;
+	if (stat_as == 0)
+		stat_as = 4;
+	ctrl_as = sc->sc_pct.pct_ctrl.grd_gas.register_bit_width / 8;
+	if (ctrl_as == 0)
+		ctrl_as = 4;
+	stat_len = sc->sc_pct.pct_status.grd_gas.access_size;
+	if (stat_len == 0)
+		stat_len = stat_as;
+	ctrl_len = sc->sc_pct.pct_ctrl.grd_gas.access_size;
+	if (ctrl_len == 0)
+		ctrl_len = ctrl_as;
+
+#ifdef ACPI_DEBUG
+	/* keep this for now since we will need this for debug in the field */
+	printf("0 status: %x %llx %u %u ctrl: %x %llx %u %u\n",
+	    sc->sc_pct.pct_status.grd_gas.address_space_id,
+	    sc->sc_pct.pct_status.grd_gas.address,
+	    stat_as, stat_len,
+	    sc->sc_pct.pct_ctrl.grd_gas.address_space_id,
+	    sc->sc_pct.pct_ctrl.grd_gas.address,
+	    ctrl_as, ctrl_len);
+#endif
+	acpi_gasio(sc->sc_acpi, ACPI_IOREAD,
+	    sc->sc_pct.pct_status.grd_gas.address_space_id,
+	    sc->sc_pct.pct_status.grd_gas.address, stat_as, stat_len,
+	    &status);
+	dnprintf(20, "status: %u <- %u\n", status, pss->pss_status);
+
+	/* Are we already at the requested frequency? */
+	if (status == pss->pss_status)
+		return;
+
+	acpi_gasio(sc->sc_acpi, ACPI_IOWRITE,
+	    sc->sc_pct.pct_ctrl.grd_gas.address_space_id,
+	    sc->sc_pct.pct_ctrl.grd_gas.address, ctrl_as, ctrl_len,
+	    &pss->pss_ctrl);
+	dnprintf(20, "pss_ctrl: %x\n", pss->pss_ctrl);
+
+	acpi_gasio(sc->sc_acpi, ACPI_IOREAD,
+	    sc->sc_pct.pct_status.grd_gas.address_space_id,
+	    sc->sc_pct.pct_status.grd_gas.address, stat_as, stat_as,
+	    &status);
+	dnprintf(20, "3 status: %d\n", status);
+
+	/* Did the transition succeed? */
+	 if (status == pss->pss_status)
+		cpuspeed = pss->pss_core_freq;
+	else
+		printf("%s: acpicpu setperf failed to alter frequency\n", 
+		    sc->sc_devnode->parent->name);
 }

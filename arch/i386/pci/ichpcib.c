@@ -1,4 +1,4 @@
-/*	$OpenBSD: ichpcib.c,v 1.10 2006/08/06 02:04:20 brad Exp $	*/
+/*	$OpenBSD: ichpcib.c,v 1.15 2006/11/29 20:03:20 dim Exp $	*/
 /*
  * Copyright (c) 2004 Alexander Yurchenko <grange@openbsd.org>
  *
@@ -38,6 +38,9 @@
 
 #include <dev/pci/ichreg.h>
 
+#include <machine/cpu.h>
+#include <machine/cpufunc.h>
+
 struct ichpcib_softc {
 	struct device sc_dev;
 
@@ -49,7 +52,7 @@ int	ichpcib_match(struct device *, void *, void *);
 void	ichpcib_attach(struct device *, struct device *, void *);
 
 int	ichss_present(struct pci_attach_args *);
-int	ichss_setperf(int);
+void	ichss_setperf(int);
 
 /* arch/i386/pci/pcib.c */
 void    pcibattach(struct device *, struct device *, void *);
@@ -78,6 +81,7 @@ struct cfdriver ichpcib_cd = {
 };
 
 #ifndef SMALL_KERNEL
+static const char p4hint[] = "Mobile Intel(R) Pentium(R) 4";
 static void *ichss_cookie;	/* XXX */
 extern int setperf_prio;
 #endif	/* !SMALL_KERNEL */
@@ -131,10 +135,8 @@ ichpcib_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_pm_iot = pa->pa_iot;
 	pmbase = pci_conf_read(pa->pa_pc, pa->pa_tag, ICH_PMBASE);
 	if (bus_space_map(sc->sc_pm_iot, PCI_MAPREG_IO_ADDR(pmbase),
-	    ICH_PMSIZE, 0, &sc->sc_pm_ioh) != 0) {
-		printf(": failed to map I/O space");
+	    ICH_PMSIZE, 0, &sc->sc_pm_ioh) != 0)
 		goto corepcib;
-	}
 
 #ifdef __HAVE_TIMECOUNTER
 	/* Register new timecounter */
@@ -154,14 +156,14 @@ ichpcib_attach(struct device *parent, struct device *self, void *aux)
 		/* Enable SpeedStep */
 		pci_conf_write(pa->pa_pc, pa->pa_tag, ICH_GEN_PMCON1,
 		    pci_conf_read(pa->pa_pc, pa->pa_tag, ICH_GEN_PMCON1) |
-		    ICH_GEN_PMCON1_SS_EN);
+			ICH_GEN_PMCON1_SS_EN);
 
 		/* Hook into hw.setperf sysctl */
 		ichss_cookie = sc;
 		cpu_setperf = ichss_setperf;
 		setperf_prio = 2;
 	}
-#endif	/* !SMALL_KERNEL */
+#endif /* !SMALL_KERNEL */
 
 corepcib:
 	/* Provide core pcib(4) functionality */
@@ -174,8 +176,31 @@ ichss_present(struct pci_attach_args *pa)
 {
 	pcitag_t br_tag;
 	pcireg_t br_id, br_class;
+	struct cpu_info *ci;
+	int family, model, stepping, brandid;
 
 	if (setperf_prio > 2)
+		return (0);
+
+	ci = curcpu();
+	family = (ci->ci_signature >> 8) & 15;
+	model = (ci->ci_signature >> 4) & 15;
+	stepping = ci->ci_signature & 15;
+	brandid = cpu_miscinfo & 0xff; /* XXX should put this in ci */
+
+	/*
+	 * This form of SpeedStep works only on Intel Mobile Pentium 4.
+	 * Intel Celeron processors don't support it.  However, they
+	 * can be coupled with ICH southbridges that do, causing false
+	 * positives.  So we ensure that we are running on Intel Mobile
+	 * Pentium 4.
+	 * This heuristic comes from the Linux speedstep-ich driver.
+	 */
+	if (!(family == 15 && model == 2 &&
+	    ((stepping == 4 && (brandid == 14 || brandid == 15)) ||
+	    (stepping == 7 && brandid == 14) ||
+	    (stepping == 9 && (brandid == 14 || strncasecmp(cpu_model, p4hint,
+	    sizeof(p4hint) - 1) == 0)))))
 		return (0);
 
 	if (PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_INTEL_82801DBM_LPC ||
@@ -204,7 +229,7 @@ ichss_present(struct pci_attach_args *pa)
 	return (0);
 }
 
-int
+void
 ichss_setperf(int level)
 {
 	struct ichpcib_softc *sc = ichss_cookie;
@@ -214,7 +239,7 @@ ichss_setperf(int level)
 #ifdef DIAGNOSTIC
 	if (sc == NULL) {
 		printf("%s: no cookie", __func__);
-		return (EFAULT);
+		return;
 	}
 #endif
 
@@ -253,8 +278,6 @@ ichss_setperf(int level)
 			update_cpuspeed();
 	}
 	splx(s);
-
-	return (0);
 }
 #endif	/* !SMALL_KERNEL */
 

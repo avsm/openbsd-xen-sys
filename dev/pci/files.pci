@@ -1,4 +1,4 @@
-#	$OpenBSD: files.pci,v 1.215 2006/08/16 21:06:23 kettenis Exp $
+#	$OpenBSD: files.pci,v 1.222 2006/12/09 05:10:43 dlg Exp $
 #	$NetBSD: files.pci,v 1.20 1996/09/24 17:47:15 christos Exp $
 #
 # Config file and device description for machine-independent PCI code.
@@ -79,6 +79,11 @@ device	arc: scsi
 attach	arc at pci
 file	dev/pci/arc.c			arc
 
+# Advanced Host Controller Interface for Serial ATA
+device	ahci
+attach	ahci at pci
+file	dev/pci/ahci.c			ahci
+
 # AMI MegaRAID Express x00/Elite 1500/Express 1x00 RAID Controllers
 attach	ami at pci with ami_pci
 file	dev/pci/ami_pci.c		ami_pci
@@ -86,6 +91,11 @@ file	dev/pci/ami_pci.c		ami_pci
 # LSI MegaRAID SAS RAID controllers
 attach	mfi at pci with mfi_pci
 file	dev/pci/mfi_pci.c		mfi_pci
+
+# IBM ServeRAID controllers
+device	ips: scsi
+attach	ips at pci
+file	dev/pci/ips.c			ips
 
 # I2O
 attach	iop at pci with iop_pci
@@ -393,9 +403,8 @@ attach	wb at pci
 file	dev/pci/if_wb.c			wb
 
 # Adaptec AIC-6915 "Starfire" ethernet
-device	sf: ether, ifnet, mii, ifmedia
-attach	sf at pci
-file	dev/pci/if_sf.c			sf
+attach	sf at pci with sf_pci
+file	dev/pci/if_sf_pci.c		sf_pci
 
 # SiS 900/7016 ethernet
 device	sis: ether, ifnet, mii, ifmedia
@@ -411,6 +420,16 @@ file	dev/pci/if_ste.c		ste
 device	wdt: pcibus
 attach	wdt at pci
 file	dev/pci/wdt.c			wdt	needs-flag
+
+# Quancom PWDOG1
+device	pwdog: pcibus
+attach	pwdog at pci
+file	dev/pci/pwdog.c			pwdog
+
+# Meinberg Funkuhren PCI32
+device	mbg: pcibus
+attach	mbg at pci
+file	dev/pci/mbg.c			mbg
 
 # UHCI USB controller
 attach	uhci at pci with uhci_pci
@@ -584,6 +603,18 @@ file	dev/pci/if_acx_pci.c		acx_pci
 #
 attach	pgt at pci with pgt_pci
 file	dev/pci/if_pgt_pci.c		pgt_pci
+
+#
+# Marvel Libertas Open
+#
+attach	malo at pci with malo_pci
+file	dev/pci/if_malo_pci.c		malo_pci
+
+#
+# Broadcom BC43xx
+#
+attach	bcw at pci with bcw_pci
+file	dev/pci/if_bcw_pci.c		bcw_pci
 
 # Sangoma PCI card
 device	san: ifnet, ifmedia, sppp

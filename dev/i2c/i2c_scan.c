@@ -1,4 +1,4 @@
-/*	$OpenBSD: i2c_scan.c,v 1.90 2006/09/26 23:48:56 jsg Exp $	*/
+/*	$OpenBSD: i2c_scan.c,v 1.95 2006/12/26 19:57:17 kettenis Exp $	*/
 
 /*
  * Copyright (c) 2005 Theo de Raadt <deraadt@openbsd.org>
@@ -380,17 +380,36 @@ iic_ignore_addr(u_int8_t addr)
 void
 iic_dump(struct device *dv, u_int8_t addr, char *name)
 {
-	u_int8_t val = iicprobe(0);
+	static u_int8_t iicvalcnt[256];
+	u_int8_t val, val2, max;
 	int i, cnt = 0;
 
+	/*
+	 * Don't bother printing the most often repeated register
+	 * value, since it is often weird devices that respond
+	 * incorrectly, busted controller driver, or in the worst
+	 * case, it in mosts cases, the value 0xff.
+	 */
+	bzero(iicvalcnt, sizeof iicvalcnt);
+	val = iicprobe(0);
+	iicvalcnt[val]++;
 	for (i = 1; i <= 0xff; i++) {
-		if (val == iicprobe(i))
+		val2 = iicprobe(i);
+		iicvalcnt[val2]++;
+		if (val == val2)
 			cnt++;
 	}
+
+	for (val = max = i = 0; i <= 0xff; i++)
+		if (max < iicvalcnt[i]) {
+			max = iicvalcnt[i];
+			val = i;
+		}
+
 	if (cnt <= 254) {
 		printf("%s: addr 0x%x", dv->dv_xname, addr);
 		for (i = 0; i <= 0xff; i++) {
-			if (iicprobe(i) != 0xff)
+			if (iicprobe(i) != val)
 				printf(" %02x=%02x", i, iicprobe(i));
 		}
 		if (name)
@@ -465,6 +484,8 @@ iic_probe(struct device *self, struct i2cbus_attach_args *iba, u_int8_t addr)
 		else if ((addr == 0x2c || addr == 0x2d || addr == 0x2e) &&
 		    iicprobe(0x3d) == 0x76)
 			name = "adt7476";
+		else if (addr == 0x2e && iicprobe(0x3d) == 0x75)
+			name = "adt7475";
 		else if (iicprobe(0x3d) == 0x27 &&
 		    (iicprobe(0x3f) == 0x60 || iicprobe(0x3f) == 0x6a))
 			name = "adm1027";	/* complete check */
@@ -566,10 +587,14 @@ iic_probe(struct device *self, struct i2cbus_attach_args *iba, u_int8_t addr)
 	switch (iicprobe(0xfe)) {
 	case 0x01:		/* National Semiconductor */
 		if (addr == 0x4c &&
+		    iicprobe(0xff) == 0x41 && (iicprobe(0x03) & 0x18) == 0 &&
+		    iicprobe(0x04) <= 0x0f && (iicprobe(0xbf) & 0xf8) == 0)
+			name = "lm63";
+		else if (addr == 0x4c &&
 		    iicprobe(0xff) == 0x11 && (iicprobe(0x03) & 0x2a) == 0 &&
 		    iicprobe(0x04) <= 0x09 && (iicprobe(0xbf) & 0xf8) == 0)
 			name = "lm86";
-		if (addr == 0x4c &&
+		else if (addr == 0x4c &&
 		    iicprobe(0xff) == 0x31 && (iicprobe(0x03) & 0x2a) == 0 &&
 		    iicprobe(0x04) <= 0x09 && (iicprobe(0xbf) & 0xf8) == 0)
 			name = "lm89";		/* or lm99 */
@@ -791,6 +816,10 @@ iic_probe(struct device *self, struct i2cbus_attach_args *iba, u_int8_t addr)
 		else if (iicprobe(0x5b) == 0x00)
 			name = "it8712f-a";		/* sis950 too */
 	}
+
+	if (name == NULL && iicprobe(0x48) == addr &&
+	    (iicprobe(0x40) & 0x80) == 0x00 && iicprobe(0x58) == 0xac)
+		name = "mtp008";
 
 	if (name == NULL) {
 		name = adm1032cloneprobe(addr);

@@ -1,4 +1,4 @@
-/* $OpenBSD: acpiac.c,v 1.8 2006/10/12 16:38:21 jordan Exp $ */
+/* $OpenBSD: acpiac.c,v 1.15 2006/12/28 17:30:46 mk Exp $ */
 /*
  * Copyright (c) 2005 Marco Peereboom <marco@openbsd.org>
  *
@@ -56,7 +56,6 @@ acpiac_match(struct device *parent, void *match, void *aux)
 	    strcmp(aa->aaa_name, cf->cf_driver->cd_name) != 0 ||
 	    aa->aaa_table != NULL)
 		return (0);
-
 	return (1);
 }
 
@@ -69,40 +68,35 @@ acpiac_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_acpi = (struct acpi_softc *)parent;
 	sc->sc_devnode = aa->aaa_node->child;
 
-	aml_register_notify(sc->sc_devnode->parent, aa->aaa_dev, acpiac_notify, sc);
+	aml_register_notify(sc->sc_devnode->parent, aa->aaa_dev,
+	    acpiac_notify, sc, ACPIDEV_NOPOLL);
 
-	acpiac_getsta(sc); 
-
-	printf(": ");
-
+	acpiac_getsta(sc);
+	printf(": AC unit ");
 	if (sc->sc_ac_stat == PSR_ONLINE)
-		printf("AC unit online");
+		printf("online\n");
 	else if (sc->sc_ac_stat == PSR_OFFLINE)
-		printf("AC unit offline");
+		printf("offline\n");
 	else
-		printf("AC unit in unknown state");
+		printf("in unknown state\n");
 
-	printf("\n");
-
-	strlcpy(sc->sens[0].device, DEVNAME(sc), sizeof(sc->sens[0].device));
-	strlcpy(sc->sens[0].desc, "power supply", sizeof(sc->sens[2].desc));
-	sc->sens[0].type = SENSOR_INDICATOR;
-	sensor_add(&sc->sens[0]);
-	sc->sens[0].value = sc->sc_ac_stat;
-
-	if (sensor_task_register(sc, acpiac_refresh, 10))
-		printf(", unable to register update task\n");
+	strlcpy(sc->sc_sensdev.xname, DEVNAME(sc),
+	    sizeof(sc->sc_sensdev.xname));
+	strlcpy(sc->sc_sens[0].desc, "power supply",
+	    sizeof(sc->sc_sens[0].desc));
+	sc->sc_sens[0].type = SENSOR_INDICATOR;
+	sensor_attach(&sc->sc_sensdev, &sc->sc_sens[0]);
+	sensordev_install(&sc->sc_sensdev);
+	sc->sc_sens[0].value = sc->sc_ac_stat;
 }
 
-/* XXX this is for debug only, remove later */
 void
 acpiac_refresh(void *arg)
 {
 	struct acpiac_softc *sc = arg;
 
-	acpiac_getsta(sc); 
-
-	sc->sens[0].value = sc->sc_ac_stat;
+	acpiac_getsta(sc);
+	sc->sc_sens[0].value = sc->sc_ac_stat;
 }
 
 int
@@ -110,19 +104,18 @@ acpiac_getsta(struct acpiac_softc *sc)
 {
 	struct aml_value res;
 
-	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_STA", 0, NULL, NULL) != 0) {
+	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_STA", 0, NULL, NULL)) {
 		dnprintf(10, "%s: no _STA\n",
 		    DEVNAME(sc));
 	}
 
-	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_PSR", 0, NULL, &res) != 0) {
+	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_PSR", 0, NULL, &res)) {
 		dnprintf(10, "%s: no _PSR\n",
 		    DEVNAME(sc));
 		return (1);
 	}
 	sc->sc_ac_stat = aml_val2int(&res);
 	aml_freevalue(&res);
-
 	return (0);
 }
 
@@ -136,10 +129,9 @@ acpiac_notify(struct aml_node *node, int notify_type, void *arg)
 
 	switch (notify_type) {
 	case 0x80:
-		acpiac_getsta(sc);
+		acpiac_refresh(sc);
 		dnprintf(10, "A/C status: %d\n", sc->sc_ac_stat);
 		break;
 	}
-
 	return (0);
 }

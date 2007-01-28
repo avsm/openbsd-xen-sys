@@ -1,4 +1,4 @@
-/*	$OpenBSD: spec_vnops.c,v 1.35 2006/07/12 19:56:18 thib Exp $	*/
+/*	$OpenBSD: spec_vnops.c,v 1.37 2006/11/29 14:30:30 krw Exp $	*/
 /*	$NetBSD: spec_vnops.c,v 1.29 1996/04/22 01:42:38 christos Exp $	*/
 
 /*
@@ -68,7 +68,6 @@ struct vnodeopv_entry_desc spec_vnodeop_entries[] = {
 	{ &vop_setattr_desc, spec_setattr },		/* setattr */
 	{ &vop_read_desc, spec_read },			/* read */
 	{ &vop_write_desc, spec_write },		/* write */
-	{ &vop_lease_desc, spec_lease_check },		/* lease */
 	{ &vop_ioctl_desc, spec_ioctl },		/* ioctl */
 	{ &vop_poll_desc, spec_poll },			/* poll */
 	{ &vop_kqfilter_desc, spec_kqfilter },		/* kqfilter */
@@ -237,7 +236,7 @@ spec_read(v)
  	struct proc *p = uio->uio_procp;
 	struct buf *bp;
 	daddr64_t bn, nextbn;
-	long bsize, bscale, ssize;
+	long bsize, bscale;
 	struct partinfo dpart;
 	int n, on, majordev;
 	int (*ioctl)(dev_t, u_long, caddr_t, int, struct proc *);
@@ -267,7 +266,6 @@ spec_read(v)
 		if (uio->uio_offset < 0)
 			return (EINVAL);
 		bsize = BLKDEV_IOSIZE;
-		ssize = DEV_BSIZE;
 		if ((majordev = major(vp->v_rdev)) < nblkdev &&
 		    (ioctl = bdevsw[majordev].d_ioctl) != NULL &&
 		    (*ioctl)(vp->v_rdev, DIOCGPART, (caddr_t)&dpart, FREAD, p) == 0) {
@@ -275,12 +273,10 @@ spec_read(v)
 			    dpart.part->p_frag != 0 && dpart.part->p_fsize != 0)
 				bsize = dpart.part->p_frag *
 				    dpart.part->p_fsize;
-			if (dpart.disklab->d_secsize != 0)
-				ssize = dpart.disklab->d_secsize;
 		}
-		bscale = bsize / ssize;
+		bscale = btodb(bsize);
 		do {
-			bn = (uio->uio_offset / ssize) &~ (bscale - 1);
+			bn = btodb(uio->uio_offset) & ~(bscale - 1);
 			on = uio->uio_offset % bsize;
 			n = min((unsigned)(bsize - on), uio->uio_resid);
 			if (vp->v_lastr + bscale == bn) {
@@ -338,7 +334,7 @@ spec_write(v)
 	struct proc *p = uio->uio_procp;
 	struct buf *bp;
 	daddr_t bn;
-	long bsize, bscale, ssize;
+	long bsize, bscale;
 	struct partinfo dpart;
 	int n, on, majordev;
 	int (*ioctl)(dev_t, u_long, caddr_t, int, struct proc *);
@@ -366,7 +362,6 @@ spec_write(v)
 		if (uio->uio_offset < 0)
 			return (EINVAL);
 		bsize = BLKDEV_IOSIZE;
-		ssize = DEV_BSIZE;
 		if ((majordev = major(vp->v_rdev)) < nblkdev &&
 		    (ioctl = bdevsw[majordev].d_ioctl) != NULL &&
 		    (*ioctl)(vp->v_rdev, DIOCGPART, (caddr_t)&dpart, FREAD, p) == 0) {
@@ -374,12 +369,10 @@ spec_write(v)
 			    dpart.part->p_frag != 0 && dpart.part->p_fsize != 0)
 				bsize = dpart.part->p_frag *
 				    dpart.part->p_fsize;
-			if (dpart.disklab->d_secsize != 0)
-				ssize = dpart.disklab->d_secsize;
 		}
-		bscale = bsize / ssize;
+		bscale = btodb(bsize);
 		do {
-			bn = (uio->uio_offset / ssize) &~ (bscale - 1);
+			bn = btodb(uio->uio_offset) & ~(bscale - 1);
 			on = uio->uio_offset % bsize;
 			n = min((unsigned)(bsize - on), uio->uio_resid);
 			error = bread(vp, bn, bsize, NOCRED, &bp);

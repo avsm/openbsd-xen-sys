@@ -1,4 +1,4 @@
-/*	$OpenBSD: brgphy.c,v 1.65 2006/10/20 03:52:22 brad Exp $	*/
+/*	$OpenBSD: brgphy.c,v 1.69 2006/12/31 15:04:33 krw Exp $	*/
 
 /*
  * Copyright (c) 2000
@@ -256,21 +256,9 @@ setit:
 			if (sc->mii_model != MII_MODEL_xxBROADCOM_BCM5701)
  				break;
 
-			/*
-			 * When setting the link manually, one side must
-			 * be the master and the other the slave. However
-			 * ifmedia doesn't give us a good way to specify
-			 * this, so we fake it by using one of the LINK
-			 * flags. If LINK0 is set, we program the PHY to
-			 * be a master, otherwise it's a slave.
-			 */
-			if ((mii->mii_ifp->if_flags & IFF_LINK0)) {
-				PHY_WRITE(sc, BRGPHY_MII_1000CTL,
-				    gig|BRGPHY_1000CTL_MSE|BRGPHY_1000CTL_MSC);
-			} else {
-				PHY_WRITE(sc, BRGPHY_MII_1000CTL,
-				    gig|BRGPHY_1000CTL_MSE);
-			}
+			if (mii->mii_media.ifm_media & IFM_ETH_MASTER)
+				gig |= BRGPHY_1000CTL_MSE|BRGPHY_1000CTL_MSC;
+			PHY_WRITE(sc, BRGPHY_MII_1000CTL, gig);
 			break;
 		default:
 			return (EINVAL);
@@ -317,7 +305,7 @@ setit:
 	}
 
 	/* Update the media status. */
-	brgphy_status(sc);
+	mii_phy_status(sc);
 
 	/*
 	 * Callback if something changed. Note that we need to poke the DSP on
@@ -351,7 +339,7 @@ brgphy_status(struct mii_softc *sc)
 {
 	struct mii_data *mii = sc->mii_pdata;
 	struct ifmedia_entry *ife = mii->mii_media.ifm_cur;
-	int bmsr, bmcr;
+	int bmsr, bmcr, gsr;
 
 	mii->mii_media_status = IFM_AVALID;
 	mii->mii_media_active = IFM_ETHER;
@@ -399,6 +387,15 @@ brgphy_status(struct mii_softc *sc)
 			mii->mii_media_active |= IFM_NONE;
 			break;
 		}
+
+		if (mii->mii_media_active & IFM_FDX)
+			mii->mii_media_active |= mii_phy_flowstatus(sc);
+
+		gsr = PHY_READ(sc, BRGPHY_MII_1000STS);
+		if ((IFM_SUBTYPE(mii->mii_media_active) == IFM_1000_T) &&
+		    gsr & BRGPHY_1000STS_MSR)
+			mii->mii_media_active |= IFM_ETH_MASTER;
+
 		return;
 	}
 
@@ -409,7 +406,7 @@ brgphy_status(struct mii_softc *sc)
 int
 brgphy_mii_phy_auto(struct mii_softc *sc)
 {
-	int ktcr = 0;
+	int anar, ktcr = 0;
 
 	brgphy_loop(sc);
 	PHY_RESET(sc);
@@ -419,8 +416,11 @@ brgphy_mii_phy_auto(struct mii_softc *sc)
 	PHY_WRITE(sc, BRGPHY_MII_1000CTL, ktcr);
 	ktcr = PHY_READ(sc, BRGPHY_MII_1000CTL);
 	DELAY(1000);
-	PHY_WRITE(sc, BRGPHY_MII_ANAR,
-	    BMSR_MEDIA_TO_ANAR(sc->mii_capabilities) | ANAR_CSMA);
+	anar = BMSR_MEDIA_TO_ANAR(sc->mii_capabilities) | ANAR_CSMA;
+	if (sc->mii_flags & MIIF_DOPAUSE)
+		anar |= BRGPHY_ANAR_PC | BRGPHY_ANAR_ASP;
+
+	PHY_WRITE(sc, BRGPHY_MII_ANAR, anar);
 	DELAY(1000);
 	PHY_WRITE(sc, BRGPHY_MII_BMCR,
 	    BRGPHY_BMCR_AUTOEN | BRGPHY_BMCR_STARTNEG);

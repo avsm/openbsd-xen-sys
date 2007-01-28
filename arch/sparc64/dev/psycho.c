@@ -1,4 +1,4 @@
-/*	$OpenBSD: psycho.c,v 1.46 2006/07/01 13:57:50 kettenis Exp $	*/
+/*	$OpenBSD: psycho.c,v 1.49 2006/12/24 01:25:01 deraadt Exp $	*/
 /*	$NetBSD: psycho.c,v 1.39 2001/10/07 20:30:41 eeh Exp $	*/
 
 /*
@@ -355,6 +355,7 @@ psycho_attach(struct device *parent, struct device *self, void *aux)
 	/* get the bus-range for the psycho */
 	psycho_get_bus_range(sc->sc_node, psycho_br);
 
+	pba.pba_domain = pci_ndomains++;
 	pba.pba_bus = psycho_br[0];
 	pba.pba_bridgetag = NULL;
 
@@ -626,7 +627,7 @@ psycho_set_intr(struct psycho_softc *sc, int ipl, void *handler,
 	ih->ih_pil = (1 << ipl);
 	ih->ih_number = INTVEC(*(ih->ih_map));
 	snprintf(ih->ih_name, sizeof(ih->ih_name),
-	    "%s_%s", sc->sc_dev.dv_xname, suffix);
+	    "%s:%s", sc->sc_dev.dv_xname, suffix);
 
 	DPRINTF(PDB_INTR, (
 	    "\ninstalling handler %p arg %p for %s with number %x pil %u",
@@ -834,7 +835,7 @@ psycho_iommu_init(struct psycho_softc *sc, int tsbsize)
 		free(vdma, M_DEVBUF);
 	} else {
 		DPRINTF(PDB_CONF, ("psycho_iommu_init: getprop failed, "
-		    "iobase=0x%x\n", iobase));
+		    "iobase=0x%x, tsbsize=%d\n", iobase, tsbsize));
 	}
 
 	/* give us a nice name.. */

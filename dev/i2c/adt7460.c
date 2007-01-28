@@ -1,4 +1,4 @@
-/*	$OpenBSD: adt7460.c,v 1.12 2006/04/14 15:48:41 deraadt Exp $	*/
+/*	$OpenBSD: adt7460.c,v 1.15 2006/12/26 19:45:43 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2005 Mark Kettenis
@@ -70,6 +70,7 @@ struct adt_chip {
 
 	{ "adt7460",	{ 2500,    0, 3300,    0,     0 },	7460,	5000 },
 	{ "adt7467",	{ 2500, 2250, 3300, 5000, 12000 },	7467,	5000 },
+	{ "adt7475",	{    0, 2250, 3300,    0,     0 },	7475,	   0 },
 	{ "adt7476",	{ 2500, 2250, 3300, 5000, 12000 },	7476,	   0 },
 	{ "adm1027",	{ 2500, 2250, 3300, 5000, 12000 },	1027,	5000 },
 	{ "lm85",	{ 2500, 2250, 3300, 5000, 12000 },	7467,	   0 },
@@ -77,6 +78,25 @@ struct adt_chip {
 	{ "emc6w201",	{ 2500, 2250, 3300, 5000, 12000 },	6201,	   0 },
 	{ "lm96000",	{ 2500, 2250, 3300, 5000, 12000 },	96000,	   0 },
 	{ "sch5017",	{ 5000, 2250, 3300, 5000, 12000 },	5017,	   0 }
+};
+
+struct {
+	char		sensor;
+	u_int8_t	cmd;
+	u_short		index;
+} worklist[] = {
+	{ ADT_2_5V, ADT7460_2_5V, 32768 + 0 },
+	{ ADT_VCCP, ADT7460_VCCP, 32768 + 1 },
+	{ ADT_VCC, ADT7460_VCC, 32768 + 2 },
+	{ ADT_V5, ADT7460_V5, 32768 + 3 },
+	{ ADT_V12, ADT7460_V12, 32768 + 4 },
+	{ ADT_REM1_TEMP, ADT7460_REM1_TEMP },
+	{ ADT_LOCAL_TEMP, ADT7460_LOCAL_TEMP },
+	{ ADT_REM2_TEMP, ADT7460_REM2_TEMP },
+	{ ADT_TACH1, ADT7460_TACH1L },
+	{ ADT_TACH2, ADT7460_TACH2L },
+	{ ADT_TACH3, ADT7460_TACH3L },
+	{ ADT_TACH4, ADT7460_TACH4L },
 };
 
 struct adt_softc {
@@ -87,6 +107,7 @@ struct adt_softc {
 	struct adt_chip *chip;
 
 	struct sensor sc_sensor[ADT_NUM_SENSORS];
+	struct sensordev sc_sensordev;
 };
 
 int	adt_match(struct device *, void *, void *);
@@ -166,13 +187,13 @@ adt_attach(struct device *parent, struct device *self, void *aux)
 	printf(": %s rev 0x%02x", ia->ia_name, rev);
 
 	/* Initialize sensor data. */
-	for (i = 0; i < ADT_NUM_SENSORS; i++)
-		strlcpy(sc->sc_sensor[i].device, sc->sc_dev.dv_xname,
-		    sizeof(sc->sc_sensor[i].device));
+	strlcpy(sc->sc_sensordev.xname, sc->sc_dev.dv_xname,
+	    sizeof(sc->sc_sensordev.xname));
 
 	sc->sc_sensor[ADT_2_5V].type = SENSOR_VOLTS_DC;
 	strlcpy(sc->sc_sensor[ADT_2_5V].desc, "+2.5Vin",
 	    sizeof(sc->sc_sensor[ADT_2_5V].desc));
+		
 	if (sc->chip->type == 5017)
 		strlcpy(sc->sc_sensor[ADT_2_5V].desc, "+5VTR",
 		    sizeof(sc->sc_sensor[ADT_2_5V].desc));
@@ -194,32 +215,21 @@ adt_attach(struct device *parent, struct device *self, void *aux)
 	    sizeof(sc->sc_sensor[ADT_V12].desc));
 
 	sc->sc_sensor[ADT_REM1_TEMP].type = SENSOR_TEMP;
-	strlcpy(sc->sc_sensor[ADT_REM1_TEMP].desc, "Remote1 Temp",
+	strlcpy(sc->sc_sensor[ADT_REM1_TEMP].desc, "Remote",
 	    sizeof(sc->sc_sensor[ADT_REM1_TEMP].desc));
 
 	sc->sc_sensor[ADT_LOCAL_TEMP].type = SENSOR_TEMP;
-	strlcpy(sc->sc_sensor[ADT_LOCAL_TEMP].desc, "Internal Temp",
+	strlcpy(sc->sc_sensor[ADT_LOCAL_TEMP].desc, "Internal",
 	    sizeof(sc->sc_sensor[ADT_LOCAL_TEMP].desc));
 
 	sc->sc_sensor[ADT_REM2_TEMP].type = SENSOR_TEMP;
-	strlcpy(sc->sc_sensor[ADT_REM2_TEMP].desc, "Remote2 Temp",
+	strlcpy(sc->sc_sensor[ADT_REM2_TEMP].desc, "Remote",
 	    sizeof(sc->sc_sensor[ADT_REM2_TEMP].desc));
 
 	sc->sc_sensor[ADT_TACH1].type = SENSOR_FANRPM;
-	strlcpy(sc->sc_sensor[ADT_TACH1].desc, "TACH1",
-	    sizeof(sc->sc_sensor[ADT_TACH1].desc));
-
 	sc->sc_sensor[ADT_TACH2].type = SENSOR_FANRPM;
-	strlcpy(sc->sc_sensor[ADT_TACH2].desc, "TACH2",
-	    sizeof(sc->sc_sensor[ADT_TACH2].desc));
-
 	sc->sc_sensor[ADT_TACH3].type = SENSOR_FANRPM;
-	strlcpy(sc->sc_sensor[ADT_TACH3].desc, "TACH3",
-	    sizeof(sc->sc_sensor[ADT_TACH3].desc));
-
 	sc->sc_sensor[ADT_TACH4].type = SENSOR_FANRPM;
-	strlcpy(sc->sc_sensor[ADT_TACH4].desc, "TACH4",
-	    sizeof(sc->sc_sensor[ADT_TACH4].desc));
 
 	if (sensor_task_register(sc, adt_refresh, 5)) {
 		printf(", unable to register update task\n");
@@ -227,31 +237,17 @@ adt_attach(struct device *parent, struct device *self, void *aux)
 	}
 
 	for (i = 0; i < ADT_NUM_SENSORS; i++) {
+		if (worklist[i].index >= 32768 &&
+		    sc->chip->ratio[worklist[i].index - 32768] == 0)
+			continue;
 		sc->sc_sensor[i].flags &= ~SENSOR_FINVALID;
-		sensor_add(&sc->sc_sensor[i]);
+		sensor_attach(&sc->sc_sensordev, &sc->sc_sensor[i]);
 	}
+	sensordev_install(&sc->sc_sensordev);
+
 
 	printf("\n");
 }
-
-struct {
-	char		sensor;
-	u_int8_t	cmd;
-	u_char		index;
-} worklist[] = {
-	{ ADT_2_5V, ADT7460_2_5V, 0 },
-	{ ADT_VCCP, ADT7460_VCCP, 1 },
-	{ ADT_VCC, ADT7460_VCC, 2 },
-	{ ADT_V5, ADT7460_V5, 3 },
-	{ ADT_V12, ADT7460_V12, 4 },
-	{ ADT_REM1_TEMP, ADT7460_REM1_TEMP },
-	{ ADT_LOCAL_TEMP, ADT7460_LOCAL_TEMP },
-	{ ADT_REM2_TEMP, ADT7460_REM2_TEMP },
-	{ ADT_TACH1, ADT7460_TACH1L },
-	{ ADT_TACH2, ADT7460_TACH2L },
-	{ ADT_TACH3, ADT7460_TACH3L },
-	{ ADT_TACH4, ADT7460_TACH4L },
-};
 
 void
 adt_refresh(void *arg)
@@ -265,8 +261,11 @@ adt_refresh(void *arg)
 
 	for (i = 0; i < sizeof worklist / sizeof(worklist[0]); i++) {
 
-		if (sc->chip->ratio[worklist[i].index] == 0)
-			continue;
+		if (worklist[i].index >= 32768) {
+			ratio = sc->chip->ratio[worklist[i].index - 32768];
+			if (ratio == 0)	/* do not read a dead register */
+				continue;
+		}
 		cmd = worklist[i].cmd;
 		if (iic_exec(sc->sc_tag, I2C_OP_READ_WITH_STOP,
 		    sc->sc_addr, &cmd, sizeof cmd, &data, sizeof data, 0)) {
@@ -275,7 +274,6 @@ adt_refresh(void *arg)
 		}
 
 		sc->sc_sensor[i].flags &= ~SENSOR_FINVALID;
-		ratio = sc->chip->ratio[worklist[i].index];
 		switch (worklist[i].sensor) {
 		case ADT_VCC:
 			if (sc->chip->vcc && (sc->sc_conf & ADT7460_CONFIG_Vcc))

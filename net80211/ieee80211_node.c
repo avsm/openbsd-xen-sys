@@ -1,4 +1,4 @@
-/*	$OpenBSD: ieee80211_node.c,v 1.15 2006/06/18 18:39:41 damien Exp $	*/
+/*	$OpenBSD: ieee80211_node.c,v 1.17 2006/11/13 20:32:45 damien Exp $	*/
 /*	$NetBSD: ieee80211_node.c,v 1.14 2004/05/09 09:18:47 dyoung Exp $	*/
 
 /*-
@@ -118,8 +118,8 @@ ieee80211_node_attach(struct ifnet *ifp)
 		/* XXX no way to recover */
 		printf("%s: no memory for AID bitmap!\n", __func__);
 		ic->ic_max_aid = 0;
-	}
-	memset(ic->ic_aid_bitmap, 0, size);
+	} else
+		memset(ic->ic_aid_bitmap, 0, size);
 }
 
 static struct ieee80211_node *
@@ -390,7 +390,7 @@ ieee80211_end_scan(struct ifnet *ifp)
 
 	if (ic->ic_opmode == IEEE80211_M_HOSTAP) {
 		/* XXX off stack? */
-		u_char occupied[roundup(IEEE80211_CHAN_MAX, NBBY)];
+		u_char occupied[howmany(IEEE80211_CHAN_MAX, NBBY)];
 		/*
 		 * The passive scan to look for existing AP's completed,
 		 * select a channel to camp on.  Identify the channels

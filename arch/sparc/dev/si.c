@@ -1,4 +1,4 @@
-/*	$OpenBSD: si.c,v 1.20 2004/09/29 07:35:11 miod Exp $	*/
+/*	$OpenBSD: si.c,v 1.24 2006/12/10 16:15:03 miod Exp $	*/
 /*	$NetBSD: si.c,v 1.38 1997/08/27 11:24:20 bouyer Exp $	*/
 
 /*-
@@ -177,26 +177,19 @@ struct si_softc {
 };
 
 /*
- * Options.  By default, DMA is enabled and DMA completion interrupts
- * and reselect are disabled.  You may enable additional features
+ * Options.  By default, configuration files enable DMA and disable
+ * DMA completion interrupts and reselect.  You may enable additional features
  * the `flags' directive in your kernel's configuration file.
  *
- * Alternatively, you can patch your kernel with DDB or some other
- * mechanism.  The sc_options member of the softc is OR'd with
- * the value in si_options.
- *
  * On the "sw", interrupts (and thus) reselection don't work, so they're
- * disabled by default.  DMA is still a little dangerous, too.
- *
- * Note, there's a separate sw_options to make life easier.
+ * disabled.  DMA is still a little dangerous, too.
  */
 #define	SI_ENABLE_DMA	0x01	/* Use DMA (maybe polled) */
 #define	SI_DMA_INTR	0x02	/* DMA completion interrupts */
 #define	SI_DO_RESELECT	0x04	/* Allow disconnect/reselect */
 #define	SI_OPTIONS_MASK	(SI_ENABLE_DMA|SI_DMA_INTR|SI_DO_RESELECT)
+#define	SW_OPTIONS_MASK	(SI_ENABLE_DMA)
 #define SI_OPTIONS_BITS	"\10\3RESELECT\2DMA_INTR\1DMA"
-int si_options = SI_ENABLE_DMA;
-int sw_options = SI_ENABLE_DMA;
 
 /* How long to wait for DMA before declaring an error. */
 int si_dma_intr_timo = 500;	/* ticks (sec. X 100) */
@@ -213,7 +206,6 @@ void si_dma_poll(struct ncr5380_softc *);
 
 void si_vme_dma_setup(struct ncr5380_softc *);
 void si_vme_dma_start(struct ncr5380_softc *);
-void si_vme_dma_eop(struct ncr5380_softc *);
 void si_vme_dma_stop(struct ncr5380_softc *);
 
 void si_vme_intr_on(struct ncr5380_softc *);
@@ -221,7 +213,6 @@ void si_vme_intr_off(struct ncr5380_softc *);
 
 void si_obio_dma_setup(struct ncr5380_softc *);
 void si_obio_dma_start(struct ncr5380_softc *);
-void si_obio_dma_eop(struct ncr5380_softc *);
 void si_obio_dma_stop(struct ncr5380_softc *);
 
 void si_obio_intr_on(struct ncr5380_softc *);
@@ -331,6 +322,7 @@ si_attach(parent, self, args)
 {
 	struct si_softc *sc = (struct si_softc *) self;
 	struct ncr5380_softc *ncr_sc = (struct ncr5380_softc *)sc;
+	struct scsibus_attach_args saa;
 	volatile struct si_regs *regs;
 	struct confargs *ca = args;
 	struct romaux *ra = &ca->ca_ra;
@@ -341,12 +333,8 @@ si_attach(parent, self, args)
 	 * Pull in the options flags.  Allow the user to completely
 	 * override the default values.
 	 */
-	if ((ncr_sc->sc_dev.dv_cfdata->cf_flags & SI_OPTIONS_MASK) != 0)
-		sc->sc_options =
-		    (ncr_sc->sc_dev.dv_cfdata->cf_flags & SI_OPTIONS_MASK);
-	else
-		sc->sc_options =
-		    (ca->ca_bustype == BUS_OBIO) ? sw_options : si_options;
+	sc->sc_options = ncr_sc->sc_dev.dv_cfdata->cf_flags &
+	    (ca->ca_bustype == BUS_OBIO ? SW_OPTIONS_MASK : SI_OPTIONS_MASK);
 
 	/* Map the controller registers. */
 	regs = (struct si_regs *)
@@ -378,31 +366,35 @@ si_attach(parent, self, args)
 	 */
 	ncr_sc->sc_pio_out = ncr5380_pio_out;
 	ncr_sc->sc_pio_in =  ncr5380_pio_in;
-	ncr_sc->sc_dma_alloc = si_dma_alloc;
-	ncr_sc->sc_dma_free  = si_dma_free;
-	ncr_sc->sc_dma_poll  = si_dma_poll;
+	if (sc->sc_options & SI_ENABLE_DMA) {
+		ncr_sc->sc_dma_alloc = si_dma_alloc;
+		ncr_sc->sc_dma_free  = si_dma_free;
+		ncr_sc->sc_dma_poll  = si_dma_poll;
+	}
 
 	switch (ca->ca_bustype) {
 	case BUS_VME16:
-		ncr_sc->sc_dma_setup = si_vme_dma_setup;
-		ncr_sc->sc_dma_start = si_vme_dma_start;
-		ncr_sc->sc_dma_eop   = si_vme_dma_stop;
-		ncr_sc->sc_dma_stop  = si_vme_dma_stop;
-		if (sc->sc_options & SI_DO_RESELECT) {
-			/*
-			 * Need to enable interrupts (and DMA!)
-			 * on this H/W for reselect to work.
-			 */
-			ncr_sc->sc_intr_on   = si_vme_intr_on;
-			ncr_sc->sc_intr_off  = si_vme_intr_off;
+		if (sc->sc_options & SI_ENABLE_DMA) {
+			ncr_sc->sc_dma_setup = si_vme_dma_setup;
+			ncr_sc->sc_dma_start = si_vme_dma_start;
+			ncr_sc->sc_dma_stop  = si_vme_dma_stop;
+			if (sc->sc_options & SI_DO_RESELECT) {
+				/*
+				 * Need to enable interrupts (and DMA!)
+				 * on this H/W for reselect to work.
+				 */
+				ncr_sc->sc_intr_on   = si_vme_intr_on;
+				ncr_sc->sc_intr_off  = si_vme_intr_off;
+			}
 		}
 		break;
 
 	case BUS_OBIO:
-		ncr_sc->sc_dma_setup = si_obio_dma_setup;
-		ncr_sc->sc_dma_start = si_obio_dma_start;
-		ncr_sc->sc_dma_eop   = si_obio_dma_stop;
-		ncr_sc->sc_dma_stop  = si_obio_dma_stop;
+		if (sc->sc_options & SI_ENABLE_DMA) {
+			ncr_sc->sc_dma_setup = si_obio_dma_setup;
+			ncr_sc->sc_dma_start = si_obio_dma_start;
+			ncr_sc->sc_dma_stop  = si_obio_dma_stop;
+		}
 		ncr_sc->sc_intr_on   = si_obio_intr_on;
 		ncr_sc->sc_intr_off  = si_obio_intr_off;
 		break;
@@ -415,7 +407,8 @@ si_attach(parent, self, args)
 	ncr_sc->sc_flags = 0;
 	if ((sc->sc_options & SI_DO_RESELECT) == 0)
 		ncr_sc->sc_flags |= NCR5380_PERMIT_RESELECT;
-	if ((sc->sc_options & SI_DMA_INTR) == 0)
+	if ((sc->sc_options & (SI_ENABLE_DMA | SI_DMA_INTR)) !=
+	    (SI_ENABLE_DMA | SI_DMA_INTR))
 		ncr_sc->sc_flags |= NCR5380_FORCE_POLLING;
 	ncr_sc->sc_min_dma_len = MIN_DMA_LEN;
 
@@ -468,11 +461,11 @@ si_attach(parent, self, args)
 		break;
 	}
 	printf(" pri %d\n", ra->ra_intr[0].int_pri);
+#ifdef	DEBUG
 	if (sc->sc_options) {
 		printf("%s: options=%b\n", ncr_sc->sc_dev.dv_xname,
 			sc->sc_options, SI_OPTIONS_BITS);
 	}
-#ifdef	DEBUG
 	if (si_debug)
 		printf("si: Set TheSoftC=%p TheRegs=%p\n", sc, regs);
 	ncr_sc->sc_link.flags |= si_link_flags;
@@ -484,6 +477,7 @@ si_attach(parent, self, args)
 	si_reset_adapter(ncr_sc);
 	ncr5380_init(ncr_sc);
 	ncr5380_reset_scsibus(ncr_sc);
+	DELAY(2000000);
 
 	/*
 	 * If the boot path is "sw" or "si" at the moment and it's me, then
@@ -495,8 +489,11 @@ si_attach(parent, self, args)
 	    bp->val[0] == -1 && bp->val[1] == ncr_sc->sc_dev.dv_unit)
 		bootpath_store(1, bp + 1);
 
+	bzero(&saa, sizeof(saa));
+	saa.saa_sc_link = &(ncr_sc->sc_link);
+
 	/* Configure sub-devices */
-	config_found(self, &(ncr_sc->sc_link), scsiprint);
+	config_found(self, &saa, scsiprint);
 
 	bootpath_store(1, NULL);
 }
@@ -957,15 +954,6 @@ si_vme_dma_start(ncr_sc)
 
 
 void
-si_vme_dma_eop(ncr_sc)
-	struct ncr5380_softc *ncr_sc;
-{
-
-	/* Not needed - DMA was stopped prior to examining sci_csr */
-}
-
-
-void
 si_vme_dma_stop(ncr_sc)
 	struct ncr5380_softc *ncr_sc;
 {
@@ -1262,14 +1250,6 @@ si_obio_dma_start(ncr_sc)
 #endif
 }
 
-
-void
-si_obio_dma_eop(ncr_sc)
-	struct ncr5380_softc *ncr_sc;
-{
-
-	/* Not needed - DMA was stopped prior to examining sci_csr */
-}
 
 #if (defined(DEBUG) || defined(DIAGNOSTIC)) && !defined(COUNT_SW_LEFTOVERS)
 #define COUNT_SW_LEFTOVERS

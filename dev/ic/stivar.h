@@ -1,4 +1,4 @@
-/*	$OpenBSD: stivar.h,v 1.18 2006/04/16 21:03:45 miod Exp $	*/
+/*	$OpenBSD: stivar.h,v 1.22 2007/01/11 22:02:04 miod Exp $	*/
 
 /*
  * Copyright (c) 2000-2003 Michael Shalayeff
@@ -29,12 +29,16 @@
 #ifndef _IC_STIVAR_H_
 #define _IC_STIVAR_H_
 
+struct sti_softc;
+
 struct sti_screen {
+	struct sti_softc *scr_main;	/* may be NULL if early console */
 	int		scr_devtype;
 
 	bus_space_tag_t	iot, memt;
 	bus_space_handle_t romh;
-	bus_addr_t	base, fbaddr;
+	bus_addr_t	*bases;
+	bus_addr_t	fbaddr;
 	bus_size_t	fblen;
 
 	int		scr_bpp;
@@ -69,6 +73,11 @@ struct sti_screen {
 
 	u_int16_t	fbheight, fbwidth, oheight, owidth;
 	u_int8_t	name[STI_DEVNAME_LEN];
+
+	/* wsdisplay information */
+	struct	wsscreen_descr	scr_wsd;
+	struct	wsscreen_descr	*scr_scrlist[1];
+	struct	wsscreen_list	scr_screenlist;
 };
 
 struct sti_softc {
@@ -80,19 +89,24 @@ struct sti_softc {
 #define	STI_CLEARSCR	0x0002
 #define	STI_CONSOLE	0x0004
 #define	STI_ATTACHED	0x0008
+#define	STI_ROM_ENABLED	0x0010
 	int	sc_nscreens;
 
 	bus_space_tag_t iot, memt;
 	bus_space_handle_t romh;
-	bus_addr_t base;
+	bus_addr_t	bases[STI_REGION_MAX];
 
 	struct sti_screen *sc_scr;
 	u_int	sc_wsmode;
+
+	/* optional, required for PCI */
+	void	(*sc_enable_rom)(struct sti_softc *);
+	void	(*sc_disable_rom)(struct sti_softc *);
 };
 
-void	sti_attach_common(struct sti_softc *sc, u_int codebase);
+int	sti_attach_common(struct sti_softc *sc, u_int codebase);
 void	sti_clear(struct sti_screen *);
-int	sti_cnattach(struct sti_screen *, bus_space_tag_t, bus_addr_t, u_int);
+int	sti_cnattach(struct sti_screen *, bus_space_tag_t, bus_addr_t *, u_int);
 void	sti_describe(struct sti_softc *);
 void	sti_end_attach(void *);
 u_int	sti_rom_size(bus_space_tag_t, bus_space_handle_t);

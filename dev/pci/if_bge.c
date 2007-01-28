@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bge.c,v 1.194 2006/10/26 22:57:17 brad Exp $	*/
+/*	$OpenBSD: if_bge.c,v 1.203 2007/01/10 23:04:53 kettenis Exp $	*/
 
 /*
  * Copyright (c) 2001 Wind River Systems
@@ -255,6 +255,7 @@ const struct pci_matchid bge_devices[] = {
 	{ PCI_VENDOR_BROADCOM, PCI_PRODUCT_BROADCOM_BCM5782 },
 	{ PCI_VENDOR_BROADCOM, PCI_PRODUCT_BROADCOM_BCM5786 },
 	{ PCI_VENDOR_BROADCOM, PCI_PRODUCT_BROADCOM_BCM5787 },
+	{ PCI_VENDOR_BROADCOM, PCI_PRODUCT_BROADCOM_BCM5787F },
 	{ PCI_VENDOR_BROADCOM, PCI_PRODUCT_BROADCOM_BCM5787M },
 	{ PCI_VENDOR_BROADCOM, PCI_PRODUCT_BROADCOM_BCM5788 },
 	{ PCI_VENDOR_BROADCOM, PCI_PRODUCT_BROADCOM_BCM5789 },
@@ -569,6 +570,15 @@ bge_miibus_statchg(struct device *dev)
 	struct bge_softc *sc = (struct bge_softc *)dev;
 	struct mii_data *mii = &sc->bge_mii;
 
+	/*
+	 * Get flow control negotiation result.
+	 */
+	if (IFM_SUBTYPE(mii->mii_media.ifm_cur->ifm_media) == IFM_AUTO &&
+	    (mii->mii_media_active & IFM_ETH_FMASK) != sc->bge_flowflags) {
+		sc->bge_flowflags = mii->mii_media_active & IFM_ETH_FMASK;
+		mii->mii_media_active &= ~IFM_ETH_FMASK;
+	}
+
 	BGE_CLRBIT(sc, BGE_MAC_MODE, BGE_MACMODE_PORTMODE);
 	if (IFM_SUBTYPE(mii->mii_media_active) == IFM_1000_T)
 		BGE_SETBIT(sc, BGE_MAC_MODE, BGE_PORTMODE_GMII);
@@ -579,6 +589,19 @@ bge_miibus_statchg(struct device *dev)
 		BGE_CLRBIT(sc, BGE_MAC_MODE, BGE_MACMODE_HALF_DUPLEX);
 	else
 		BGE_SETBIT(sc, BGE_MAC_MODE, BGE_MACMODE_HALF_DUPLEX);
+
+	/*
+	 * 802.3x flow control
+	 */
+	if (sc->bge_flowflags & IFM_ETH_RXPAUSE)
+		BGE_SETBIT(sc, BGE_RX_MODE, BGE_RXMODE_FLOWCTL_ENABLE);
+	else
+		BGE_CLRBIT(sc, BGE_RX_MODE, BGE_RXMODE_FLOWCTL_ENABLE);
+
+	if (sc->bge_flowflags & IFM_ETH_TXPAUSE)
+		BGE_SETBIT(sc, BGE_TX_MODE, BGE_TXMODE_FLOWCTL_ENABLE);
+	else
+		BGE_CLRBIT(sc, BGE_TX_MODE, BGE_TXMODE_FLOWCTL_ENABLE);
 }
 
 /*
@@ -1225,6 +1248,7 @@ bge_blockinit(struct bge_softc *sc)
 	vaddr_t			rcb_addr;
 	int			i;
 	bge_hostaddr		taddr;
+	u_int32_t		val;
 
 	/*
 	 * Initialize the memory window pointer register so that
@@ -1236,12 +1260,8 @@ bge_blockinit(struct bge_softc *sc)
 
 	/* Configure mbuf memory pool */
 	if (!(BGE_IS_5705_OR_BEYOND(sc))) {
-		if (sc->bge_flags & BGE_EXTRAM)
-			CSR_WRITE_4(sc, BGE_BMAN_MBUFPOOL_BASEADDR,
-			    BGE_EXT_SSRAM);
-		else
-			CSR_WRITE_4(sc, BGE_BMAN_MBUFPOOL_BASEADDR,
-			    BGE_BUFFPOOL_1);
+		CSR_WRITE_4(sc, BGE_BMAN_MBUFPOOL_BASEADDR,
+		    BGE_BUFFPOOL_1);
 
 		if (BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5704)
 			CSR_WRITE_4(sc, BGE_BMAN_MBUFPOOL_LEN, 0x10000);
@@ -1312,10 +1332,7 @@ bge_blockinit(struct bge_softc *sc)
 	else
 		rcb->bge_maxlen_flags =
 		    BGE_RCB_MAXLEN_FLAGS(ETHER_MAX_DIX_LEN, 0);
-	if (sc->bge_flags & BGE_EXTRAM)
-		rcb->bge_nicaddr = BGE_EXT_STD_RX_RINGS;
-	else
-		rcb->bge_nicaddr = BGE_STD_RX_RINGS;
+	rcb->bge_nicaddr = BGE_STD_RX_RINGS;
 	CSR_WRITE_4(sc, BGE_RX_STD_RCB_HADDR_HI, rcb->bge_hostaddr.bge_addr_hi);
 	CSR_WRITE_4(sc, BGE_RX_STD_RCB_HADDR_LO, rcb->bge_hostaddr.bge_addr_lo);
 	CSR_WRITE_4(sc, BGE_RX_STD_RCB_MAXLEN_FLAGS, rcb->bge_maxlen_flags);
@@ -1335,10 +1352,7 @@ bge_blockinit(struct bge_softc *sc)
 		rcb->bge_maxlen_flags =
 		    BGE_RCB_MAXLEN_FLAGS(BGE_JUMBO_FRAMELEN,
 		        BGE_RCB_FLAG_RING_DISABLED);
-		if (sc->bge_flags & BGE_EXTRAM)
-			rcb->bge_nicaddr = BGE_EXT_JUMBO_RX_RINGS;
-		else
-			rcb->bge_nicaddr = BGE_JUMBO_RX_RINGS;
+		rcb->bge_nicaddr = BGE_JUMBO_RX_RINGS;
 
 		CSR_WRITE_4(sc, BGE_RX_JUMBO_RCB_HADDR_HI,
 		    rcb->bge_hostaddr.bge_addr_hi);
@@ -1367,8 +1381,16 @@ bge_blockinit(struct bge_softc *sc)
 	 * values are 1/8th the number of descriptors allocated to
 	 * each ring.
 	 */
-	CSR_WRITE_4(sc, BGE_RBDI_STD_REPL_THRESH, BGE_STD_RX_RING_CNT/8);
-	CSR_WRITE_4(sc, BGE_RBDI_JUMBO_REPL_THRESH, BGE_JUMBO_RX_RING_CNT/8);
+	i = BGE_STD_RX_RING_CNT / 8;
+
+	/* Use a value of 8 for these chips to workaround HW errata */
+	if (BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5750 ||
+	    BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5752 ||
+	    BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5755)
+		i = 8;
+
+	CSR_WRITE_4(sc, BGE_RBDI_STD_REPL_THRESH, i);
+	CSR_WRITE_4(sc, BGE_RBDI_JUMBO_REPL_THRESH, BGE_JUMBO_RX_RING_CNT / 8);
 
 	/*
 	 * Disable all unused send rings by setting the 'ring disabled'
@@ -1536,9 +1558,15 @@ bge_blockinit(struct bge_softc *sc)
 	if (!(BGE_IS_5705_OR_BEYOND(sc)))
 		CSR_WRITE_4(sc, BGE_DMAC_MODE, BGE_DMACMODE_ENABLE);
 
+	val = BGE_WDMAMODE_ENABLE|BGE_WDMAMODE_ALL_ATTNS;
+
+	/* Enable host coalescing bug fix. */
+	if (BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5755 ||
+	    BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5787)
+		val |= (1 << 29);
+
 	/* Turn on write DMA state machine */
-	CSR_WRITE_4(sc, BGE_WDMA_MODE,
-	    BGE_WDMAMODE_ENABLE|BGE_WDMAMODE_ALL_ATTNS);
+	CSR_WRITE_4(sc, BGE_WDMA_MODE, val);
 
 	/* Turn on read DMA state machine */
 	{
@@ -1790,7 +1818,8 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 	      PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_BROADCOM_BCM5705F)) ||
 	    (PCI_VENDOR(pa->pa_id) == PCI_VENDOR_BROADCOM &&
 	     (PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_BROADCOM_BCM5751F ||
-	      PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_BROADCOM_BCM5753F)) ||
+	      PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_BROADCOM_BCM5753F ||
+	      PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_BROADCOM_BCM5787F)) ||
 	    BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5906)
 		sc->bge_flags |= BGE_10_100_ONLY;
 
@@ -1933,6 +1962,10 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 
 	ifp->if_capabilities = IFCAP_VLAN_MTU;
 
+#if NVLAN > 0
+	ifp->if_capabilities |= IFCAP_VLAN_HWTAGGING;
+#endif
+
 	if (BGE_IS_JUMBO_CAPABLE(sc))
 		ifp->if_hardmtu = BGE_JUMBO_MTU;
 
@@ -2005,7 +2038,7 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 		ifmedia_init(&sc->bge_mii.mii_media, 0, bge_ifmedia_upd,
 			     bge_ifmedia_sts);
 		mii_attach(&sc->bge_dev, &sc->bge_mii, 0xffffffff,
-			   MII_PHY_ANY, MII_OFFSET_ANY, 0);
+			   MII_PHY_ANY, MII_OFFSET_ANY, MIIF_DOPAUSE);
 		
 		if (LIST_FIRST(&sc->bge_mii.mii_phys) == NULL) {
 			printf("%s: no PHY found!\n", sc->bge_dev.dv_xname);
@@ -2064,6 +2097,7 @@ bge_reset(struct bge_softc *sc)
 	    BGE_PCIMISCCTL_INDIRECT_ACCESS|BGE_PCIMISCCTL_MASK_PCI_INTR|
 	    BGE_PCIMISCCTL_ENDIAN_WORDSWAP|BGE_PCIMISCCTL_PCISTATE_RW);
 
+	/* Disable fastboot on controllers that support it. */
 	if (BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5752 ||
 	    BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5755 ||
 	    BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5787)
@@ -2086,6 +2120,10 @@ bge_reset(struct bge_softc *sc)
 		}
 	}
 
+	/*
+	 * Set GPHY Power Down Override to leave GPHY
+	 * powered up in D0 uninitialized.
+	 */
 	if (BGE_IS_5705_OR_BEYOND(sc))
 		reset |= BGE_MISCCFG_KEEP_GPHY_POWER;
 
@@ -2102,7 +2140,11 @@ bge_reset(struct bge_softc *sc)
 			v = pci_conf_read(pa->pa_pc, pa->pa_tag, 0xc4);
 			pci_conf_write(pa->pa_pc, pa->pa_tag, 0xc4, v | (1<<15));
 		}
-		/* Set PCI Express max payload size and clear error status. */
+
+		/*
+		 * Set PCI Express max payload size to 128 bytes
+		 * and clear error status.
+		 */
 		pci_conf_write(pa->pa_pc, pa->pa_tag,
 		    BGE_PCI_CONF_DEV_CTRL, 0xf5000);
 	}
@@ -2131,8 +2173,7 @@ bge_reset(struct bge_softc *sc)
 	bge_writemem_ind(sc, BGE_SOFTWARE_GENCOMM, BGE_MAGIC_NUMBER);
 
 	/*
-	 * Poll the value location we just wrote until
-	 * we see the 1's complement of the magic number.
+	 * Poll until we see 1's complement of the magic number.
 	 * This indicates that the firmware initialization
 	 * is complete.  We expect this to fail if no SEEPROM
 	 * is fitted.
@@ -3006,6 +3047,7 @@ bge_ifmedia_upd(struct ifnet *ifp)
 		default:
 			return (EINVAL);
 		}
+		/* XXX 802.3x flow control for 1000BASE-SX */
 		return (0);
 	}
 
@@ -3048,8 +3090,9 @@ bge_ifmedia_sts(struct ifnet *ifp, struct ifmediareq *ifmr)
 	}
 
 	mii_pollstat(mii);
-	ifmr->ifm_active = mii->mii_media_active;
 	ifmr->ifm_status = mii->mii_media_status;
+	ifmr->ifm_active = (mii->mii_media_active & ~IFM_ETH_FMASK) |
+	    sc->bge_flowflags;
 }
 
 int
@@ -3125,6 +3168,26 @@ bge_ioctl(struct ifnet *ifp, u_long command, caddr_t data)
 		}
 		break;
 	case SIOCSIFMEDIA:
+		/* XXX Flow control is not supported for 1000BASE-SX */
+		if (sc->bge_flags & BGE_TBI) {
+			ifr->ifr_media &= ~IFM_ETH_FMASK;
+			sc->bge_flowflags = 0;
+		}
+
+		/* Flow control requires full-duplex mode. */
+		if (IFM_SUBTYPE(ifr->ifr_media) == IFM_AUTO ||
+		    (ifr->ifr_media & IFM_FDX) == 0) {
+		    	ifr->ifr_media &= ~IFM_ETH_FMASK;
+		}
+		if (IFM_SUBTYPE(ifr->ifr_media) != IFM_AUTO) {
+			if ((ifr->ifr_media & IFM_ETH_FMASK) == IFM_FLOW) {
+				/* We can do both TXPAUSE and RXPAUSE. */
+				ifr->ifr_media |=
+				    IFM_ETH_TXPAUSE | IFM_ETH_RXPAUSE;
+			}
+			sc->bge_flowflags = ifr->ifr_media & IFM_ETH_FMASK;
+		}
+		/* FALLTHROUGH */
 	case SIOCGIFMEDIA:
 		if (sc->bge_flags & BGE_TBI) {
 			error = ifmedia_ioctl(ifp, ifr, &sc->bge_ifmedia,
@@ -3354,7 +3417,11 @@ bge_link_upd(struct bge_softc *sc)
 					BGE_CLRBIT(sc, BGE_MAC_MODE,
 					    BGE_MACMODE_TBI_SEND_CFGS);
 				CSR_WRITE_4(sc, BGE_MAC_STS, 0xFFFFFFFF);
-				ifp->if_link_state = LINK_STATE_UP;
+				status = CSR_READ_4(sc, BGE_MAC_MODE);
+				ifp->if_link_state =
+				    (status & BGE_MACMODE_HALF_DUPLEX) ?
+				    LINK_STATE_HALF_DUPLEX :
+				    LINK_STATE_FULL_DUPLEX;
 				if_link_state_change(ifp);
 			}
 		} else if (sc->bge_link) {

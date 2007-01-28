@@ -1,4 +1,4 @@
-/*	$OpenBSD: pci_machdep.c,v 1.32 2006/06/02 19:39:49 pascoe Exp $	*/
+/*	$OpenBSD: pci_machdep.c,v 1.36 2006/12/11 19:47:37 kettenis Exp $	*/
 /*	$NetBSD: pci_machdep.c,v 1.28 1997/06/06 23:29:17 thorpej Exp $	*/
 
 /*-
@@ -167,9 +167,8 @@ struct i386_bus_dma_tag pci_bus_dma_tag = {
 };
 
 void
-pci_attach_hook(parent, self, pba)
-	struct device *parent, *self;
-	struct pcibus_attach_args *pba;
+pci_attach_hook(struct device *parent, struct device *self,
+    struct pcibus_attach_args *pba)
 {
 
 #if NBIOS > 0
@@ -183,9 +182,7 @@ pci_attach_hook(parent, self, pba)
 }
 
 int
-pci_bus_maxdevs(pc, busno)
-	pci_chipset_tag_t pc;
-	int busno;
+pci_bus_maxdevs(pci_chipset_tag_t pc, int busno)
 {
 
 	/*
@@ -201,9 +198,7 @@ pci_bus_maxdevs(pc, busno)
 }
 
 pcitag_t
-pci_make_tag(pc, bus, device, function)
-	pci_chipset_tag_t pc;
-	int bus, device, function;
+pci_make_tag(pci_chipset_tag_t pc, int bus, int device, int function)
 {
 	pcitag_t tag;
 
@@ -231,10 +226,7 @@ pci_make_tag(pc, bus, device, function)
 }
 
 void
-pci_decompose_tag(pc, tag, bp, dp, fp)
-	pci_chipset_tag_t pc;
-	pcitag_t tag;
-	int *bp, *dp, *fp;
+pci_decompose_tag(pci_chipset_tag_t pc, pcitag_t tag, int *bp, int *dp, int *fp)
 {
 
 	switch (pci_mode) {
@@ -260,10 +252,7 @@ pci_decompose_tag(pc, tag, bp, dp, fp)
 }
 
 pcireg_t
-pci_conf_read(pc, tag, reg)
-	pci_chipset_tag_t pc;
-	pcitag_t tag;
-	int reg;
+pci_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int reg)
 {
 	pcireg_t data;
 
@@ -287,11 +276,7 @@ pci_conf_read(pc, tag, reg)
 }
 
 void
-pci_conf_write(pc, tag, reg, data)
-	pci_chipset_tag_t pc;
-	pcitag_t tag;
-	int reg;
-	pcireg_t data;
+pci_conf_write(pci_chipset_tag_t pc, pcitag_t tag, int reg, pcireg_t data)
 {
 
 	switch (pci_mode) {

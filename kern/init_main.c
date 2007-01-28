@@ -1,4 +1,4 @@
-/*	$OpenBSD: init_main.c,v 1.129 2006/03/04 22:40:15 brad Exp $	*/
+/*	$OpenBSD: init_main.c,v 1.133 2007/01/02 06:07:58 drahn Exp $	*/
 /*	$NetBSD: init_main.c,v 1.84.4.1 1996/06/02 09:08:06 mrg Exp $	*/
 
 /*
@@ -100,7 +100,7 @@ extern void nfs_init(void);
 const char	copyright[] =
 "Copyright (c) 1982, 1986, 1989, 1991, 1993\n"
 "\tThe Regents of the University of California.  All rights reserved.\n"
-"Copyright (c) 1995-2006 OpenBSD. All rights reserved.  http://www.OpenBSD.org\n";
+"Copyright (c) 1995-2007 OpenBSD. All rights reserved.  http://www.OpenBSD.org\n";
 
 /* Components of the first process -- never freed. */
 struct	session session0;
@@ -230,9 +230,6 @@ main(void *framep)
 	/* Initialize sockets. */
 	soinit();
 
-	/* Initialize sysctls (must be done before any processes run) */
-	sysctl_init();
-
 	/*
 	 * Initialize process and pgrp structures.
 	 */
@@ -273,7 +270,7 @@ main(void *framep)
 	p->p_thrparent = p;
 	LIST_INIT(&p->p_thrchildren);
 
-	p->p_flag = P_INMEM | P_SYSTEM | P_NOCLDWAIT;
+	p->p_flag = P_SYSTEM | P_NOCLDWAIT;
 	p->p_stat = SONPROC;
 	p->p_nice = NZERO;
 	p->p_emul = &emul_native;
@@ -423,7 +420,7 @@ main(void *framep)
 		panic("fork init");
 
 	/*
-	 * Create any kernel threads who's creation was deferred because
+	 * Create any kernel threads whose creation was deferred because
 	 * initproc had not yet been created.
 	 */
 	kthread_run_deferred_queue();

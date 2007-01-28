@@ -1,4 +1,4 @@
-/*	$OpenBSD: sti_sgc.c,v 1.31 2006/04/01 22:50:29 miod Exp $	*/
+/*	$OpenBSD: sti_sgc.c,v 1.34 2006/12/18 18:57:26 miod Exp $	*/
 
 /*
  * Copyright (c) 2000-2003 Michael Shalayeff
@@ -54,12 +54,8 @@
 #define	STI_ROMSIZE	(sizeof(struct sti_dd) * 4)
 #define	STI_ID_FDDI	0x280b31af	/* Medusa FDDI ROM id */
 
-/* gecko optional graphics */
-#define	STI_GOPT1_REV	0x17
-#define	STI_GOPT2_REV	0x70
-#define	STI_GOPT3_REV	0xd0
-#define	STI_GOPT4_REV	0x20
-#define	STI_GOPT5_REV	0x40
+/* gecko optional graphics (these share the onboard's prom) */
+char sti_sgc_opt[] = { 0x17, 0x20, 0x30, 0x40, 0x70, 0xc0, 0xd0 };
 
 /* internal EG */
 #define	STI_INEG_REV	0x60
@@ -67,8 +63,9 @@
 
 extern struct cfdriver sti_cd;
 
-int sti_sgc_probe(struct device *, void *, void *);
-void sti_sgc_attach(struct device *, struct device *, void *);
+int	sti_sgc_probe(struct device *, void *, void *);
+void	sti_sgc_attach(struct device *, struct device *, void *);
+paddr_t	sti_sgc_getrom(int, struct confargs *);
 
 struct cfattach sti_gedoens_ca = {
 	sizeof(struct sti_softc), sti_sgc_probe, sti_sgc_attach
@@ -82,16 +79,15 @@ paddr_t
 sti_sgc_getrom(int unit, struct confargs *ca)
 {
 	paddr_t rom = PAGE0->pd_resv2[1];
+	int i;
 
 	if (unit) {
-		if (ca->ca_type.iodc_sv_model == HPPA_FIO_GSGC &&
-		    (ca->ca_type.iodc_revision == STI_GOPT1_REV ||
-		     ca->ca_type.iodc_revision == STI_GOPT2_REV ||
-		     ca->ca_type.iodc_revision == STI_GOPT3_REV ||
-		     ca->ca_type.iodc_revision == STI_GOPT4_REV ||
-		     ca->ca_type.iodc_revision == STI_GOPT5_REV))
-			/* these share the onboard's prom */ ;
-		else
+		i = -1;
+		if (ca->ca_type.iodc_sv_model == HPPA_FIO_GSGC)
+			for (i = sizeof(sti_sgc_opt); i-- &&
+			    sti_sgc_opt[i] != ca->ca_type.iodc_revision; )
+				;
+		if (i < 0)
 			rom = 0;
 	}
 
@@ -206,9 +202,9 @@ sti_sgc_attach(parent, self, aux)
 	paddr_t rom;
 	u_int32_t romlen;
 	int rv;
+	int i;
 
 	sc->memt = sc->iot = ca->ca_iot;
-	sc->base = ca->ca_hpa;
 
 	/* we stashed rom addr/len into the last slot during probe */
 	rom = ca->ca_addrs[ca->ca_naddrs - 1].addr;
@@ -222,6 +218,10 @@ sti_sgc_attach(parent, self, aux)
 		}
 	}
 
+	sc->bases[0] = sc->romh;
+	for (i = 1; i < STI_REGION_MAX; i++)
+		sc->bases[i] = ca->ca_hpa;
+
 #ifdef	HP7300LC_CPU
 	/* PCXL2: enable accel i/o for this space */
 	if (cpu_type == hpcxl2)
@@ -230,6 +230,6 @@ sti_sgc_attach(parent, self, aux)
 
 	if (ca->ca_hpa == (hppa_hpa_t)PAGE0->mem_cons.pz_hpa)
 		sc->sc_flags |= STI_CONSOLE;
-	sti_attach_common(sc, STI_CODEBASE_PA);
-	startuphook_establish(sti_end_attach, sc);
+	if (sti_attach_common(sc, STI_CODEBASE_PA) == 0)
+		startuphook_establish(sti_end_attach, sc);
 }

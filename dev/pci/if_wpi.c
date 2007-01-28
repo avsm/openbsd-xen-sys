@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_wpi.c,v 1.34 2006/10/23 18:19:26 damien Exp $	*/
+/*	$OpenBSD: if_wpi.c,v 1.37 2006/11/26 11:14:22 deraadt Exp $	*/
 
 /*-
  * Copyright (c) 2006
@@ -68,18 +68,6 @@ const struct pci_matchid wpi_devices[] = {
 	{ PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_PRO_WL_3945ABG_1 },
 	{ PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_PRO_WL_3945ABG_2 }
 };
-
-/*
- * Supported rates for 802.11a/b/g modes (in 500Kbps unit).
- */
-static const struct ieee80211_rateset wpi_rateset_11a =
-	{ 8, { 12, 18, 24, 36, 48, 72, 96, 108 } };
-
-static const struct ieee80211_rateset wpi_rateset_11b =
-	{ 4, { 2, 4, 11, 22 } };
-
-static const struct ieee80211_rateset wpi_rateset_11g =
-	{ 12, { 2, 4, 11, 22, 12, 18, 24, 36, 48, 72, 96, 108 } };
 
 static const uint8_t wpi_ridx_to_plcp[] = {
 	0xd, 0xf, 0x5, 0x7, 0x9, 0xb, 0x1, 0x3,	/* OFDM R1-R4 */
@@ -290,7 +278,7 @@ wpi_attach(struct device *parent, struct device *self, void *aux)
 	printf(", address %s\n", ether_sprintf(ic->ic_myaddr));
 
 	/* set supported .11a rates */
-	ic->ic_sup_rates[IEEE80211_MODE_11A] = wpi_rateset_11a;
+	ic->ic_sup_rates[IEEE80211_MODE_11A] = ieee80211_std_rateset_11a;
 
 	/* set supported .11a channels */
 	for (i = 36; i <= 64; i += 4) {
@@ -310,8 +298,8 @@ wpi_attach(struct device *parent, struct device *self, void *aux)
 	}
 
 	/* set supported .11b and .11g rates */
-	ic->ic_sup_rates[IEEE80211_MODE_11B] = wpi_rateset_11b;
-	ic->ic_sup_rates[IEEE80211_MODE_11G] = wpi_rateset_11g;
+	ic->ic_sup_rates[IEEE80211_MODE_11B] = ieee80211_std_rateset_11b;
+	ic->ic_sup_rates[IEEE80211_MODE_11G] = ieee80211_std_rateset_11g;
 
 	/* set supported .11b and .11g channels (1 through 14) */
 	for (i = 1; i <= 14; i++) {
@@ -1169,11 +1157,12 @@ wpi_rx_intr(struct wpi_softc *sc, struct wpi_rx_desc *desc,
 		if (letoh16(head->flags) & 0x4)
 			tap->wr_flags |= IEEE80211_RADIOTAP_F_SHORTPRE;
 
-		M_DUP_PKTHDR(&mb, m);
 		mb.m_data = (caddr_t)tap;
 		mb.m_len = sc->sc_rxtap_len;
 		mb.m_next = m;
-		mb.m_pkthdr.len += mb.m_len;
+		mb.m_nextpkt = NULL;
+		mb.m_type = 0;
+		mb.m_flags = 0;
 		bpf_mtap(sc->sc_drvbpf, &mb, BPF_DIRECTION_IN);
 	}
 #endif
@@ -1457,17 +1446,16 @@ wpi_tx_data(struct wpi_softc *sc, struct mbuf *m0, struct ieee80211_node *ni,
 	}
 
 	/* pickup a rate */
-	if ((wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) ==
-	    IEEE80211_FC0_TYPE_MGT) {
-		/* mgmt frames are sent at the lowest available bit-rate */
+	if (IEEE80211_IS_MULTICAST(wh->i_addr1) ||
+	    ((wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) ==
+	     IEEE80211_FC0_TYPE_MGT)) {
+		/* mgmt/multicast frames are sent at the lowest avail. rate */
 		rate = ni->ni_rates.rs_rates[0];
-	} else {
-		if (ic->ic_fixed_rate != -1) {
-			rate = ic->ic_sup_rates[ic->ic_curmode].
-			    rs_rates[ic->ic_fixed_rate];
-		} else
-			rate = ni->ni_rates.rs_rates[ni->ni_txrate];
-	}
+	} else if (ic->ic_fixed_rate != -1) {
+		rate = ic->ic_sup_rates[ic->ic_curmode].
+		    rs_rates[ic->ic_fixed_rate];
+	} else
+		rate = ni->ni_rates.rs_rates[ni->ni_txrate];
 	rate &= IEEE80211_RATE_VAL;
 
 #if NBPFILTER > 0
@@ -1483,11 +1471,12 @@ wpi_tx_data(struct wpi_softc *sc, struct mbuf *m0, struct ieee80211_node *ni,
 		if (wh->i_fc[1] & IEEE80211_FC1_WEP)
 			tap->wt_flags |= IEEE80211_RADIOTAP_F_WEP;
 
-		M_DUP_PKTHDR(&mb, m0);
 		mb.m_data = (caddr_t)tap;
 		mb.m_len = sc->sc_txtap_len;
 		mb.m_next = m0;
-		mb.m_pkthdr.len += mb.m_len;
+		mb.m_nextpkt = NULL;
+		mb.m_type = 0;
+		mb.m_flags = 0;
 		bpf_mtap(sc->sc_drvbpf, &mb, BPF_DIRECTION_OUT);
 	}
 #endif
@@ -1504,15 +1493,27 @@ wpi_tx_data(struct wpi_softc *sc, struct mbuf *m0, struct ieee80211_node *ni,
 	if (!IEEE80211_IS_MULTICAST(wh->i_addr1)) {
 		tx->id = WPI_ID_BSS;
 		tx->flags |= htole32(WPI_TX_NEED_ACK);
-
-		if (m0->m_pkthdr.len + IEEE80211_CRC_LEN >
-		    ic->ic_rtsthreshold || (WPI_RATE_IS_OFDM(rate) &&
-		    (ic->ic_flags & IEEE80211_F_USEPROT))) {
-			tx->flags |= htole32(WPI_TX_NEED_RTS |
-			    WPI_TX_FULL_TXOP);
-		}
 	} else
 		tx->id = WPI_ID_BROADCAST;
+
+	/* check if RTS/CTS or CTS-to-self protection must be used */
+	if (!IEEE80211_IS_MULTICAST(wh->i_addr1)) {
+		/* multicast frames are not sent at OFDM rates in 802.11b/g */
+		if (m0->m_pkthdr.len + IEEE80211_CRC_LEN >
+		    ic->ic_rtsthreshold) {
+			tx->flags |= htole32(WPI_TX_NEED_RTS |
+			    WPI_TX_FULL_TXOP);
+		} else if ((ic->ic_flags & IEEE80211_F_USEPROT) &&
+		    WPI_RATE_IS_OFDM(rate)) {
+			if (ic->ic_protmode == IEEE80211_PROT_CTSONLY) {
+				tx->flags |= htole32(WPI_TX_NEED_CTS |
+				    WPI_TX_FULL_TXOP);
+			} else if (ic->ic_protmode == IEEE80211_PROT_RTSCTS) {
+				tx->flags |= htole32(WPI_TX_NEED_RTS |
+				    WPI_TX_FULL_TXOP);
+			}
+		}
+	}
 
 	tx->flags |= htole32(WPI_TX_AUTO_SEQ);
 

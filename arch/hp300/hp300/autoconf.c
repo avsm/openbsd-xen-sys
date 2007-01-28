@@ -1,4 +1,4 @@
-/*	$OpenBSD: autoconf.c,v 1.37 2005/12/31 18:13:44 miod Exp $	*/
+/*	$OpenBSD: autoconf.c,v 1.39 2006/11/28 16:56:50 dlg Exp $	*/
 /*	$NetBSD: autoconf.c,v 1.45 1999/04/10 17:31:02 kleink Exp $	*/
 
 /*
@@ -94,13 +94,6 @@
 #include <scsi/scsiconf.h>
 
 #include <uvm/uvm_extern.h>
-
-#include "sgc.h"
-
-#if NSGC > 0
-#include <hp300/dev/sgcreg.h>
-#include <hp300/dev/sgcvar.h>
-#endif
 
 /*
  * The following several variables are related to
@@ -378,7 +371,7 @@ device_register(dev, aux)
 	if (device_match(dev->dv_xname, "cd") == 0 ||
 	    device_match(dev->dv_xname, "sd") == 0 ||
 	    device_match(dev->dv_xname, "st") == 0) {
-		struct scsibus_attach_args *sa = aux;
+		struct scsi_attach_args *sa = aux;
 
 		dd->dd_slave = sa->sa_sc_link->target;
 		dd->dd_punit = sa->sa_sc_link->lun;

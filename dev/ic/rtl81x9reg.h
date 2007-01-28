@@ -1,4 +1,4 @@
-/*	$OpenBSD: rtl81x9reg.h,v 1.30 2006/10/31 22:45:15 brad Exp $	*/
+/*	$OpenBSD: rtl81x9reg.h,v 1.35 2006/12/01 01:13:01 todd Exp $	*/
 
 /*
  * Copyright (c) 1997, 1998
@@ -140,7 +140,7 @@
 #define RL_TXCFG_LOOPBKTST	0x00060000	/* loopback test */
 #define RL_TXCFG_IFG2		0x00080000	/* 8169 only */
 #define RL_TXCFG_IFG		0x03000000	/* interframe gap */
-#define RL_TXCFG_HWREV		0x7CC00000
+#define RL_TXCFG_HWREV		0x7C800000
 
 #define RL_LOOPTEST_OFF		0x00000000
 #define RL_LOOPTEST_ON		0x00020000
@@ -154,9 +154,10 @@
 #define RL_HWREV_8169_8110SB	0x10000000
 #define RL_HWREV_8169_8110SC	0x18000000
 #define RL_HWREV_8168_SPIN1	0x30000000
-#define RL_HWREV_8100E		0x30800000
+#define RL_HWREV_8100E_SPIN1	0x30800000
 #define RL_HWREV_8101E		0x34000000
 #define RL_HWREV_8168_SPIN2	0x38000000
+#define RL_HWREV_8100E_SPIN2	0x38800000
 #define RL_HWREV_8139		0x60000000
 #define RL_HWREV_8139A		0x70000000
 #define RL_HWREV_8139AG		0x70800000
@@ -587,6 +588,8 @@ struct rl_stats {
 
 #define RL_TX_QLEN		64
 
+#define RL_NTXDESC_RSVD		4
+
 #define RL_RX_LIST_SZ		(RL_RX_DESC_CNT * sizeof(struct rl_desc))
 #define RL_RING_ALIGN		256
 #define RL_PKTSZ(x)		((x)/* >> 3*/)
@@ -677,27 +680,31 @@ struct rl_rxsoft {
 	bus_dmamap_t		rxs_dmamap;
 };
 
+struct rl_txq {
+	struct mbuf *txq_mbuf;
+	bus_dmamap_t txq_dmamap;
+	int txq_descidx;
+	int txq_nsegs;
+};
+
 struct rl_list_data {
-	struct rl_txq {
-		struct mbuf *txq_mbuf;
-		bus_dmamap_t txq_dmamap;
-		int txq_descidx;
-	} rl_txq[RL_TX_QLEN];
+	struct rl_txq		rl_txq[RL_TX_QLEN];
 	int			rl_txq_considx;
 	int			rl_txq_prodidx;
+
 	bus_dmamap_t		rl_tx_list_map;
 	struct rl_desc		*rl_tx_list;
-	bus_dma_segment_t 	rl_tx_listseg;
 	int			rl_tx_free;	/* # of free descriptors */
 	int			rl_tx_nextfree; /* next descriptor to use */
 	int			rl_tx_desc_cnt; /* # of descriptors */
+	bus_dma_segment_t	rl_tx_listseg;
 	int			rl_tx_listnseg;
 
 	struct rl_rxsoft	rl_rxsoft[RL_RX_DESC_CNT];
 	bus_dmamap_t		rl_rx_list_map;
 	struct rl_desc		*rl_rx_list;
-	bus_dma_segment_t	rl_rx_listseg;
 	int			rl_rx_prodidx;
+	bus_dma_segment_t	rl_rx_listseg;
 	int			rl_rx_listnseg;
 };
 
@@ -732,6 +739,23 @@ struct rl_softc {
 	int			rl_txstart;
 	int			rl_link;
 };
+
+/*
+ * re(4) hardware ip4csum-tx could be mangled with 28 byte or less IP packets
+ */
+#define RL_IP4CSUMTX_MINLEN	28
+#define RL_IP4CSUMTX_PADLEN	(ETHER_HDR_LEN + RL_IP4CSUMTX_MINLEN)
+/*
+ * XXX
+ * We are allocating pad DMA buffer after RX DMA descs for now
+ * because RL_TX_LIST_SZ(sc) always occupies whole page but
+ * RL_RX_LIST_SZ is less than PAGE_SIZE so there is some unused region.
+ */
+#define RL_RX_DMAMEM_SZ		(RL_RX_LIST_SZ + RL_IP4CSUMTX_PADLEN)
+#define RL_TXPADOFF		RL_RX_LIST_SZ
+#define RL_TXPADDADDR(sc)	\
+	((sc)->rl_ldata.rl_rx_list_map->dm_segs[0].ds_addr + RL_TXPADOFF)
+
 
 #define RL_ATTACHED	0x00000001	/* attach has succeeded */
 #define RL_ENABLED	0x00000002	/* chip is enabled      */

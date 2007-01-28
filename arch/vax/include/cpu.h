@@ -1,4 +1,4 @@
-/*      $OpenBSD: cpu.h,v 1.19 2006/01/04 15:41:29 martin Exp $      */
+/*      $OpenBSD: cpu.h,v 1.21 2006/11/29 12:26:14 miod Exp $      */
 /*      $NetBSD: cpu.h,v 1.41 1999/10/21 20:01:36 ragge Exp $      */
 
 /*
@@ -44,9 +44,9 @@
 #include <machine/pcb.h>
 #include <machine/uvax.h>
 #include <machine/psl.h>
+#include <machine/trap.h>
 
 #define	cpu_wait(p)
-#define	cpu_swapout(p)
 #define	cpu_number()			0
 
 /*
@@ -103,8 +103,13 @@ extern int bootdev;
 extern	int     want_resched;   /* resched() was called */
 
 /*
+ * This is used during profiling to integrate system time.
+ */
+#define	PROC_PC(p)	(((struct trapframe *)((p)->p_addr->u_pcb.framep))->pc)
+
+/*
  * Give a profiling tick to the current process when the user profiling
- * buffer pages are invalid.  On the hp300, request an ast to send us
+ * buffer pages are invalid.  On the vax, request an ast to send us
  * through trap, marking the proc as needing a profiling tick.
  */
 #define need_proftick(p) {(p)->p_flag |= P_OWEUPC; mtpr(AST_OK,PR_ASTLVL); }
@@ -120,7 +125,6 @@ extern char cpu_model[100];
 
 /* Some low-level prototypes */
 int	badaddr(caddr_t, int);
-void	cpu_swapin(struct proc *);
 void	dumpconf(void);
 void	dumpsys(void);
 void	swapconf(void);

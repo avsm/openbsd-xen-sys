@@ -1,4 +1,4 @@
-/*	$OpenBSD: ipmi.c,v 1.48 2006/09/17 19:09:20 marco Exp $ */
+/*	$OpenBSD: ipmi.c,v 1.50 2006/12/23 00:36:24 deraadt Exp $ */
 
 /*
  * Copyright (c) 2005 Jordan Hargrave
@@ -1117,16 +1117,16 @@ get_sdr(struct ipmi_softc *sc, u_int16_t recid, u_int16_t *nxtrec)
 	/* Reserve SDR */
 	if (ipmi_sendcmd(sc, BMC_SA, 0, STORAGE_NETFN, STORAGE_RESERVE_SDR,
 	    0, NULL)) {
-		printf("%s: reserve send fails\n", DEVNAME(sc));
+		printf(": reserve send fails\n");
 		return (-1);
 	}
 	if (ipmi_recvcmd(sc, sizeof(resid), &len, &resid)) {
-		printf("%s: reserve recv fails\n", DEVNAME(sc));
+		printf(": reserve recv fails\n");
 		return (-1);
 	}
 	/* Get SDR Header */
 	if (get_sdr_partial(sc, recid, resid, 0, sizeof shdr, &shdr, nxtrec)) {
-		printf("%s: get header fails\n", DEVNAME(sc));
+		printf(": get header fails\n");
 		return (-1);
 	}
 	/* Allocate space for entire SDR Length of SDR in header does not
@@ -1146,8 +1146,7 @@ get_sdr(struct ipmi_softc *sc, u_int16_t recid, u_int16_t *nxtrec)
 
 		if (get_sdr_partial(sc, recid, resid, offset, len,
 		    psdr + offset, NULL)) {
-			printf("%s: get chunk : %d,%d fails\n", DEVNAME(sc),
-			    offset, len);
+			printf(": get chunk: %d,%d fails\n", offset, len);
 			return (-1);
 		}
 	}
@@ -1486,8 +1485,6 @@ add_child_sensors(struct ipmi_softc *sc, u_int8_t *psdr, int count,
 		psensor->stype = sensor_type;
 		psensor->etype = ext_type;
 		psensor->i_sensor.type = typ;
-		strlcpy(psensor->i_sensor.device, DEVNAME(sc),
-		    sizeof(psensor->i_sensor.device));
 		if (count > 1)
 			snprintf(psensor->i_sensor.desc,
 			    sizeof(psensor->i_sensor.desc),
@@ -1502,7 +1499,7 @@ add_child_sensors(struct ipmi_softc *sc, u_int8_t *psdr, int count,
 		    psensor->i_sensor.desc);
 		if (read_sensor(sc, psensor) == 0) {
 			SLIST_INSERT_HEAD(&ipmi_sensor_list, psensor, list);
-			sensor_add(&psensor->i_sensor);
+			sensor_attach(&sc->sc_sensordev, &psensor->i_sensor);
 			dbg_printf(5, "	 reading: %lld [%s]\n",
 			    psensor->i_sensor.value,
 			    psensor->i_sensor.desc);
@@ -1684,6 +1681,18 @@ ipmi_attach(struct device *parent, struct device *self, void *aux)
 	struct ipmi_attach_args *ia = aux;
 	u_int16_t		rec;
 
+	/* Map registers */
+	ipmi_map_regs(sc, ia);
+
+	/* Scan SDRs, add sensors */
+	for (rec = 0; rec != 0xFFFF;) {
+		if (get_sdr(sc, rec, &rec)) {
+			/* IPMI may have been advertised, but it is stillborn */
+			ipmi_unmap_regs(sc, ia);
+			return;
+		}
+	}
+
 	sc->sc_thread = malloc(sizeof(struct ipmi_thread), M_DEVBUF,
 	    M_NOWAIT|M_CANFAIL);
 	if (sc->sc_thread == NULL) {
@@ -1693,20 +1702,16 @@ ipmi_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_thread->sc = sc;
 	sc->sc_thread->running = 1;
 
-	/* Map registers */
-	ipmi_map_regs(sc, ia);
-
-	/* Scan SDRs, add sensors */
-	for (rec = 0; rec != 0xFFFF;)
-		if (get_sdr(sc, rec, &rec))
-			break;
-
 	/* initialize sensor list for thread */
 	if (!SLIST_EMPTY(&ipmi_sensor_list))
 		sc->current_sensor = SLIST_FIRST(&ipmi_sensor_list);
 
 	/* Setup threads */
 	kthread_create_deferred(ipmi_create_thread, sc);
+
+	strlcpy(sc->sc_sensordev.xname, sc->sc_dev.dv_xname,
+	    sizeof(sc->sc_sensordev.xname));
+	sensordev_install(&sc->sc_sensordev);
 
 	printf(": version %d.%d interface %s %sbase 0x%x/%x spacing %d",
 	    ia->iaa_if_rev >> 4, ia->iaa_if_rev & 0xF, sc->sc_if->name,

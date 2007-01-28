@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.h,v 1.11 2005/08/07 07:29:44 miod Exp $	*/
+/*	$OpenBSD: cpu.h,v 1.13 2006/11/29 12:26:13 miod Exp $	*/
 
 /*-
  * Copyright (c) 1992, 1993
@@ -319,7 +319,6 @@
 #define	COPY_SIGCODE		/* copy sigcode above user stack in exec */
 
 #define	cpu_wait(p)		/* nothing */
-#define cpu_swapout(p)		panic("cpu_swapout: can't get here");
 
 #ifndef _LOCORE
 #include <machine/frame.h>
@@ -333,6 +332,11 @@ extern int int_nest_cntr;
 #define	CLKF_USERMODE(framep)	((framep)->sr & SR_KSU_USER)
 #define	CLKF_PC(framep)		((framep)->pc)
 #define	CLKF_INTR(framep)	(int_nest_cntr > 0)
+
+/*
+ * This is used during profiling to integrate system time.
+ */
+#define	PROC_PC(p)	((p)->p_md.md_regs->pc)
 
 /*
  * Preempt the current process if in interrupt from user mode,

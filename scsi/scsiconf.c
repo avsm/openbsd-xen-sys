@@ -1,4 +1,4 @@
-/*	$OpenBSD: scsiconf.c,v 1.116 2006/10/07 23:40:07 beck Exp $	*/
+/*	$OpenBSD: scsiconf.c,v 1.123 2006/11/28 23:59:45 dlg Exp $	*/
 /*	$NetBSD: scsiconf.c,v 1.57 1996/05/02 01:09:01 neil Exp $	*/
 
 /*
@@ -47,6 +47,8 @@
  * Ported to run under 386BSD by Julian Elischer (julian@tfs.com) Sept 1992
  */
 
+#include "bio.h"
+
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -55,6 +57,12 @@
 
 #include <scsi/scsi_all.h>
 #include <scsi/scsiconf.h>
+
+#if NBIO > 0
+#include <sys/ioctl.h>
+#include <sys/scsiio.h>
+#include <dev/biovar.h>
+#endif
 
 /*
  * Declarations
@@ -74,6 +82,10 @@ int	scsibusactivate(struct device *, enum devact);
 int	scsibusdetach(struct device *, int);
 
 int	scsibussubmatch(struct device *, void *, void *);
+
+#if NBIO > 0
+int	scsibus_bioctl(struct device *, u_long, caddr_t);
+#endif
 
 struct cfattach scsibus_ca = {
 	sizeof(struct scsibus_softc), scsibusmatch, scsibusattach,
@@ -128,7 +140,8 @@ void
 scsibusattach(struct device *parent, struct device *self, void *aux)
 {
 	struct scsibus_softc		*sb = (struct scsibus_softc *)self;
-	struct scsi_link		*sc_link_proto = aux;
+	struct scsibus_attach_args	*saa = aux;
+	struct scsi_link		*sc_link_proto = saa->saa_sc_link;
 	int				nbytes, i;
 
 	if (!cold)
@@ -159,6 +172,11 @@ scsibusattach(struct device *parent, struct device *self, void *aux)
 		bzero(sb->sc_link[i], nbytes);
 	}
 
+#if NBIO > 0
+	if (bio_register(&sb->sc_dev, scsibus_bioctl) != 0)
+		printf("%s: unable to register bio\n", sb->sc_dev.dv_xname);
+#endif
+
 	scsi_probe_bus(sb);
 }
 
@@ -173,6 +191,10 @@ scsibusdetach(struct device *dev, int type)
 {
 	struct scsibus_softc		*sb = (struct scsibus_softc *)dev;
 	int				i, j, error;
+
+#if NBIO > 0
+	bio_unregister(&sb->sc_dev);
+#endif
 
 	if ((error = config_detach_children(dev, type)) != 0)
 		return (error);
@@ -199,7 +221,7 @@ int
 scsibussubmatch(struct device *parent, void *match, void *aux)
 {
 	struct cfdata			*cf = match;
-	struct scsibus_attach_args	*sa = aux;
+	struct scsi_attach_args		*sa = aux;
 	struct scsi_link		*sc_link = sa->sa_sc_link;
 
 	if (cf->cf_loc[0] != -1 && cf->cf_loc[0] != sc_link->target)
@@ -209,6 +231,46 @@ scsibussubmatch(struct device *parent, void *match, void *aux)
 
 	return ((*cf->cf_attach->ca_match)(parent, match, aux));
 }
+
+#if NBIO > 0
+int
+scsibus_bioctl(struct device *dev, u_long cmd, caddr_t addr)
+{
+	struct scsibus_softc		*sc = (struct scsibus_softc *)dev;
+	struct sbioc_device		*sdev;
+
+	switch (cmd) {
+	case SBIOCPROBE:
+		sdev = (struct sbioc_device *)addr;
+
+		if (sdev->sd_target == -1 && sdev->sd_lun == -1)
+			return (scsi_probe_bus(sc));
+
+		/* specific lun and wildcard target is bad */
+		if (sdev->sd_target == -1)
+			return (EINVAL);
+
+		if (sdev->sd_lun == -1)
+			return (scsi_probe_target(sc, sdev->sd_target));
+
+		return (scsi_probe_lun(sc, sdev->sd_target, sdev->sd_lun));
+
+	case SBIOCDETACH:
+		sdev = (struct sbioc_device *)addr;
+
+		if (sdev->sd_target == -1)
+			return (EINVAL);
+
+		if (sdev->sd_lun == -1)
+			return (scsi_detach_target(sc, sdev->sd_target, 0));
+
+		return (scsi_detach_lun(sc, sdev->sd_target, sdev->sd_lun, 0));
+
+	default:
+		return (ENOTTY);
+	}
+}
+#endif
 
 int
 scsi_probe_bus(struct scsibus_softc *sc)
@@ -295,6 +357,80 @@ scsi_probe_lun(struct scsibus_softc *sc, int target, int lun)
 		return (ENXIO);
 
 	return (scsi_probedev(sc, target, lun));
+}
+
+int
+scsi_detach_bus(struct scsibus_softc *sc, int flags)
+{
+	struct scsi_link *alink = sc->adapter_link;
+	int i;
+
+	for (i = 0; i < alink->adapter_buswidth; i++)
+		scsi_detach_target(sc, i, flags);
+
+	return (0);
+}
+
+int
+scsi_detach_target(struct scsibus_softc *sc, int target, int flags)
+{
+	struct scsi_link *alink = sc->adapter_link;
+	int i, err, rv = 0, detached = 0;
+
+	if (target < 0 || target >= alink->adapter_buswidth ||
+	    target == alink->adapter_target)
+		return (ENXIO);
+
+	if (sc->sc_link[target] == NULL)
+		return (ENXIO);
+
+	for (i = 0; i < alink->luns; i++) { /* nicer backwards? */
+		if (sc->sc_link[target][i] == NULL)
+			continue;
+
+		err = scsi_detach_lun(sc, target, i, flags);
+		if (err != 0)
+			rv = err;
+		detached = 1;
+	}
+
+	return (detached ? rv : ENXIO);
+}
+
+int
+scsi_detach_lun(struct scsibus_softc *sc, int target, int lun, int flags)
+{
+	struct scsi_link *alink = sc->adapter_link;
+	struct scsi_link *link;
+	int rv;
+
+	if (target < 0 || target >= alink->adapter_buswidth ||
+	    target == alink->adapter_target ||
+	    lun < 0 || lun >= alink->luns)
+		return (ENXIO);
+
+	if (sc->sc_link[target] == NULL)
+		return (ENXIO);
+
+	link = sc->sc_link[target][lun];
+	if (link == NULL)
+		return (ENXIO);
+
+	if (((flags & DETACH_FORCE) == 0) && (link->flags & SDEV_OPEN))
+		return (EBUSY);
+
+	/* detaching a device from scsibus is a two step process... */
+
+	/* 1. detach the device */
+	rv = config_detach(link->device_softc, flags);
+	if (rv != 0)
+		return (rv);
+
+	/* 2. free up its state in the midlayer */
+	free(link, M_DEVBUF);
+	sc->sc_link[target][lun] = NULL;
+
+	return (0);
 }
 
 void
@@ -446,7 +582,7 @@ const struct scsi_quirk_inquiry_pattern scsi_quirk_patterns[] = {
 int
 scsibusprint(void *aux, const char *pnp)
 {
-	struct scsibus_attach_args	*sa = aux;
+	struct scsi_attach_args		*sa = aux;
 	struct scsi_inquiry_data	*inqbuf;
 	u_int8_t			type;
 	int				removable;
@@ -558,7 +694,7 @@ scsi_probedev(struct scsibus_softc *scsi, int target, int lun)
 {
 	const struct scsi_quirk_inquiry_pattern *finger;
 	static struct scsi_inquiry_data	inqbuf;
-	struct scsibus_attach_args sa;
+	struct scsi_attach_args sa;
 	struct scsi_link *sc_link;
 	struct cfdata *cf;
 	int priority, rslt = 0;
@@ -733,12 +869,13 @@ bad:
  * the patterns for the particular driver.
  */
 const void *
-scsi_inqmatch(struct scsi_inquiry_data *inqbuf, const void *base, int nmatches,
-    int matchsize, int *bestpriority)
+scsi_inqmatch(struct scsi_inquiry_data *inqbuf, const void *_base,
+    int nmatches, int matchsize, int *bestpriority)
 {
 	u_int8_t			type;
 	int				removable;
 	const void			*bestmatch;
+	const unsigned char		*base = (const unsigned char *)_base;
 
 	/* Include the qualifier to catch vendor-unique types. */
 	type = inqbuf->device;

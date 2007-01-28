@@ -1,4 +1,4 @@
-/*	$OpenBSD: scsi_base.c,v 1.113 2006/09/22 00:33:41 dlg Exp $	*/
+/*	$OpenBSD: scsi_base.c,v 1.116 2006/11/27 23:14:22 beck Exp $	*/
 /*	$NetBSD: scsi_base.c,v 1.43 1997/04/02 02:29:36 mycroft Exp $	*/
 
 /*
@@ -234,27 +234,25 @@ scsi_get_xs(struct scsi_link *sc_link, int flags)
  * If another process is waiting for an xs, do a wakeup, let it proceed
  */
 void
-scsi_free_xs(struct scsi_xfer *xs)
+scsi_free_xs(struct scsi_xfer *xs, int start)
 {
-	struct scsi_link		*sc_link = xs->sc_link;
+	struct scsi_link *sc_link = xs->sc_link;
 
 	splassert(IPL_BIO);
 
 	SC_DEBUG(sc_link, SDEV_DB3, ("scsi_free_xs\n"));
 
 	pool_put(&scsi_xfer_pool, xs);
-
-	/* if was 0 and someone waits, wake them up */
 	sc_link->openings++;
+
+	/* If someone is waiting for scsi_xfer, wake them up. */
 	if ((sc_link->flags & SDEV_WAITING) != 0) {
 		sc_link->flags &= ~SDEV_WAITING;
 		wakeup(sc_link);
-	} else {
-		if (sc_link->device->start) {
-			SC_DEBUG(sc_link, SDEV_DB2,
-			    ("calling private start()\n"));
-			(*(sc_link->device->start)) (sc_link->device_softc);
-		}
+	} else if (start && sc_link->device->start) {
+		SC_DEBUG(sc_link, SDEV_DB2,
+		    ("calling private start()\n"));
+		(*(sc_link->device->start)) (sc_link->device_softc);
 	}
 }
 
@@ -743,7 +741,7 @@ scsi_done(struct scsi_xfer *xs)
 		scsi_user_done(xs); /* to take a copy of the sense etc. */
 		SC_DEBUG(sc_link, SDEV_DB3, ("returned from user done()\n"));
 
-		scsi_free_xs(xs); /* restarts queue too */
+		scsi_free_xs(xs, 1); /* restarts queue too */
 		SC_DEBUG(sc_link, SDEV_DB3, ("returning to adapter\n"));
 		return;
 	}
@@ -788,6 +786,7 @@ retry:
 			bp->b_resid = xs->resid;
 		}
 	}
+
 	if (sc_link->device->done) {
 		/*
 		 * Tell the device the operation is actually complete.
@@ -797,7 +796,7 @@ retry:
 		 */
 		(*sc_link->device->done)(xs);
 	}
-	scsi_free_xs(xs);
+	scsi_free_xs(xs, 1);
 	if (bp != NULL)
 		biodone(bp);
 }
@@ -880,6 +879,9 @@ retry:
 		xs->error = XS_BUSY;
 		goto doit;
 
+	case NO_CCB:
+		return (EAGAIN);
+
 	default:
 		panic("scsi_execute_xs: invalid return code (%#x)", rslt);
 	}
@@ -920,11 +922,12 @@ scsi_scsi_cmd(struct scsi_link *sc_link, struct scsi_generic *scsi_cmd,
 		return (0);
 
 	s = splbio();
-	/*
-	 * we have finished with the xfer struct, free it and
-	 * check if anyone else needs to be started up.
-	 */
-	scsi_free_xs(xs);
+
+	if (error == EAGAIN)
+		scsi_free_xs(xs, 0); /* Don't restart queue. */
+	else
+		scsi_free_xs(xs, 1);
+
 	splx(s);
 
 	return (error);
@@ -1069,7 +1072,7 @@ scsi_interpret_sense(struct scsi_xfer *xs)
 
 	/* Default sense interpretation. */
 	serr = sense->error_code & SSD_ERRCODE;
-	if (serr != 0x70 && serr != 0x71)
+	if (serr != SSD_ERRCODE_CURRENT && serr != SSD_ERRCODE_DEFERRED)
 		skey = 0xff;	/* Invalid value, since key is 4 bit value. */
 	else
 		skey = sense->flags & SSD_KEY;
@@ -1092,64 +1095,76 @@ scsi_interpret_sense(struct scsi_xfer *xs)
 			return (0);
 		error = EIO;
 		if (xs->retries) {
-			switch (sense->add_sense_code) {
-			case 0x04:	/* LUN not ready */
-				switch (sense->add_sense_code_qual) {
-				case 0x01: /* Becoming Ready */
-				case 0x04: /* Format In Progress */
-				case 0x05: /* Rebuild In Progress */
-				case 0x06: /* Recalculation In Progress */
-				case 0x07: /* Operation In Progress */
-				case 0x08: /* Long Write In Progress */
-				case 0x09: /* Self-Test In Progress */
-					SC_DEBUG(sc_link, SDEV_DB1,
-		    			    ("not ready: busy (%#x)\n",
-					    sense->add_sense_code_qual));
-					return (scsi_delay(xs, 1));
-				}
-				break;
-			case 0x3a:	/* Medium not present */
+			switch (ASC_ASCQ(sense)) {
+			case SENSE_NOT_READY_BECOMING_READY:
+			case SENSE_NOT_READY_FORMAT:
+			case SENSE_NOT_READY_REBUILD:
+			case SENSE_NOT_READY_RECALC:		
+			case SENSE_NOT_READY_INPROGRESS:
+			case SENSE_NOT_READY_LONGWRITE:
+			case SENSE_NOT_READY_SELFTEST:
+				SC_DEBUG(sc_link, SDEV_DB1,
+		    		    ("not ready: busy (%#x)\n",
+				    sense->add_sense_code_qual));
+				return (scsi_delay(xs, 1));
+			case SENSE_NOMEDIUM:
+			case SENSE_NOMEDIUM_TCLOSED:
+			case SENSE_NOMEDIUM_TOPEN:
+			case SENSE_NOMEDIUM_LOADABLE:
+			case SENSE_NOMEDIUM_AUXMEM:
 				sc_link->flags &= ~SDEV_MEDIA_LOADED;
 				error = ENOMEDIUM;
+				break;
+			default:
 				break;
 			}
 		}
 		break;
 	case SKEY_MEDIUM_ERROR:
-		switch (sense->add_sense_code) {
-			case 0x3a:	/* Medium not present */
-				sc_link->flags &= ~SDEV_MEDIA_LOADED;
-				error = ENOMEDIUM;
-				break;
-			case 0x30:	/* Medium issues */
-				switch (sense->add_sense_code_qual) {
-				case 0x01: /* (Read) Unknown Format */
-				case 0x02: /* (Read) Incompatible Medium */
-				case 0x04: /* (Write) Unknown Format */
-				case 0x05: /* (Write) Incompatible Medium */
-				case 0x06: /* (Format) Incompatible Medium */
-				case 0x08: /* (Write/CD) Can't Write Media */
-					error = EMEDIUMTYPE;
-				default:
-					error = EIO;
-				}
-				break;
-			default:
-				error = EIO;
-				break;
+		switch (ASC_ASCQ(sense)) {
+		case SENSE_NOMEDIUM:
+		case SENSE_NOMEDIUM_TCLOSED:
+		case SENSE_NOMEDIUM_TOPEN:
+		case SENSE_NOMEDIUM_LOADABLE:
+		case SENSE_NOMEDIUM_AUXMEM:
+			sc_link->flags &= ~SDEV_MEDIA_LOADED;
+			error = ENOMEDIUM;
+			break;
+		case SENSE_BAD_MEDIUM:
+		case SENSE_NR_MEDIUM_UNKNOWN_FORMAT:
+		case SENSE_NR_MEDIUM_INCOMPATIBLE_FORMAT:
+		case SENSE_NW_MEDIUM_UNKNOWN_FORMAT:
+		case SENSE_NW_MEDIUM_INCOMPATIBLE_FORMAT:
+		case SENSE_NF_MEDIUM_INCOMPATIBLE_FORMAT:
+		case SENSE_NW_MEDIUM_AC_MISMATCH:
+			error = EMEDIUMTYPE;
+			break;
+		default:
+			error = EIO;
+			break;
 		}
 		break;
 	case SKEY_ILLEGAL_REQUEST:
 		if ((xs->flags & SCSI_IGNORE_ILLEGAL_REQUEST) != 0)
 			return (0);
-		if (sense->add_sense_code == 0x53 &&
-		    sense->add_sense_code_qual == 0x02)
-			return(EBUSY);	/* Medium Removal Prevented */
+		if (ASC_ASCQ(sense) == SENSE_MEDIUM_REMOVAL_PREVENTED)
+			return(EBUSY);
 		error = EINVAL;
 		break;
 	case SKEY_UNIT_ATTENTION:
-		if (sense->add_sense_code == 0x29) /* device or bus reset */
+		switch (ASC_ASCQ(sense)) {
+		case SENSE_POWER_RESET_OR_BUS:
+		case SENSE_POWER_ON:
+		case SENSE_BUS_RESET:
+		case SENSE_BUS_DEVICE_RESET:
+		case SENSE_DEVICE_INTERNAL_RESET:
+		case SENSE_TSC_CHANGE_SE:
+		case SENSE_TSC_CHANGE_LVD:
+		case SENSE_IT_NEXUS_LOSS:
 			return (scsi_delay(xs, 1));
+		default:
+			break;
+		}
 		if ((sc_link->flags & SDEV_REMOVABLE) != 0)
 			sc_link->flags &= ~SDEV_MEDIA_LOADED;
 		if ((xs->flags & SCSI_IGNORE_MEDIA_CHANGE) != 0 ||
@@ -1169,9 +1184,8 @@ scsi_interpret_sense(struct scsi_xfer *xs)
 		error = ENOSPC;
 		break;
 	case SKEY_HARDWARE_ERROR:
-		if (sense->add_sense_code == 0x52 &&
-		    sense->add_sense_code_qual == 0x00)
-			return(EMEDIUMTYPE);	/* Cartridge Fault */
+		if (ASC_ASCQ(sense) == SENSE_CARTRIDGE_FAULT)
+			return(EMEDIUMTYPE);
 		error = EIO;
 		break;
 	default:
@@ -1817,9 +1831,10 @@ scsi_print_sense(struct scsi_xfer *xs)
 
 	/* XXX For error 0x71, current opcode is not the relevant one. */
 	printf("%sCheck Condition (error %#x) on opcode 0x%x\n",
-	    (serr == 0x71) ? "DEFERRED " : "", serr, xs->cmd->opcode);
+	    (serr == SSD_ERRCODE_DEFERRED) ? "DEFERRED " : "", serr,
+	    xs->cmd->opcode);
 
-	if (serr != 0x70 && serr != 0x71) {
+	if (serr != SSD_ERRCODE_CURRENT && serr != SSD_ERRCODE_DEFERRED) {
 		if ((sense->error_code & SSD_ERRCODE_VALID) != 0) {
 			struct scsi_sense_data_unextended *usense =
 			    (struct scsi_sense_data_unextended *)sense;

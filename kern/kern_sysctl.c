@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_sysctl.c,v 1.140 2006/05/08 22:51:18 gwk Exp $	*/
+/*	$OpenBSD: kern_sysctl.c,v 1.146 2006/12/23 17:41:26 deraadt Exp $	*/
 /*	$NetBSD: kern_sysctl.c,v 1.17 1996/05/20 17:49:05 mrg Exp $	*/
 
 /*-
@@ -104,29 +104,15 @@ int sysctl_emul(int *, u_int, void *, size_t *, void *, size_t);
 int sysctl_cptime2(int *, u_int, void *, size_t *, void *, size_t);
 
 int (*cpu_cpuspeed)(int *);
-int (*cpu_setperf)(int);
+void (*cpu_setperf)(int);
 int perflevel = 100;
 
 /*
  * Lock to avoid too many processes vslocking a large amount of memory
  * at the same time.
  */
-struct lock sysctl_lock, sysctl_disklock;
-
-#if defined(KMEMSTATS) || defined(DIAGNOSTIC) || defined(FFS_SOFTUPDATES)
-struct lock sysctl_kmemlock;
-#endif
-
-void
-sysctl_init(void)
-{
-	lockinit(&sysctl_lock, PLOCK|PCATCH, "sysctl", 0, 0);
-	lockinit(&sysctl_disklock, PLOCK|PCATCH, "sysctl_disklock", 0, 0);
-
-#if defined(KMEMSTATS) || defined(DIAGNOSTIC) || defined(FFS_SOFTUPDATES)
-	lockinit(&sysctl_kmemlock, PLOCK|PCATCH, "sysctl_kmemlock", 0, 0);
-#endif
-}
+struct rwlock sysctl_lock = RWLOCK_INITIALIZER;
+struct rwlock sysctl_disklock = RWLOCK_INITIALIZER;
 
 int
 sys___sysctl(struct proc *p, void *v, register_t *retval)
@@ -199,13 +185,13 @@ sys___sysctl(struct proc *p, void *v, register_t *retval)
 	    (error = copyin(SCARG(uap, oldlenp), &oldlen, sizeof(oldlen))))
 		return (error);
 	if (SCARG(uap, old) != NULL) {
-		if ((error = lockmgr(&sysctl_lock, LK_EXCLUSIVE, NULL)) != 0)
+		if ((error = rw_enter(&sysctl_lock, RW_WRITE|RW_INTR)) != 0)
 			return (error);
 		if (dolock) {
 			error = uvm_vslock(p, SCARG(uap, old), oldlen,
 			    VM_PROT_READ|VM_PROT_WRITE);
 			if (error) {
-				lockmgr(&sysctl_lock, LK_RELEASE, NULL);
+				rw_exit_write(&sysctl_lock);
 				return (error);
 			}
 		}
@@ -216,7 +202,7 @@ sys___sysctl(struct proc *p, void *v, register_t *retval)
 	if (SCARG(uap, old) != NULL) {
 		if (dolock)
 			uvm_vsunlock(p, SCARG(uap, old), savelen);
-		lockmgr(&sysctl_lock, LK_RELEASE, NULL);
+		rw_exit_write(&sysctl_lock);
 	}
 	if (error)
 		return (error);
@@ -489,7 +475,7 @@ kern_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 			return (EINVAL);
 		stackgap_random = stackgap;
 		return (0);
-#if defined(SYSVMSG) || defined(SYSVSEM) || defined(SYSVSHM)  
+#if defined(SYSVMSG) || defined(SYSVSEM) || defined(SYSVSHM)
 	case KERN_SYSVIPC_INFO:
 		return (sysctl_sysvipc(name + 1, namelen - 1, oldp, oldlenp));
 #endif
@@ -564,8 +550,7 @@ hw_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
     size_t newlen, struct proc *p)
 {
 	extern char machine[], cpu_model[];
-	int err;
-	int cpuspeed;
+	int err, cpuspeed;
 
 	/* all sysctl names at this level except sensors are terminal */
 	if (name[0] != HW_SENSORS && namelen != 1)
@@ -627,9 +612,8 @@ hw_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		if (perflevel < 0)
 			perflevel = 0;
 		if (newp)
-			return (cpu_setperf(perflevel));
-		else
-			return (0);
+			cpu_setperf(perflevel);
+		return (0);
 	case HW_VENDOR:
 		if (hw_vendor)
 			return (sysctl_rdstring(oldp, oldlenp, newp,
@@ -1159,14 +1143,12 @@ fill_eproc(struct proc *p, struct eproc *ep)
 	} else {
 		struct vmspace *vm = p->p_vmspace;
 
-		PHOLD(p);	/* need for pstats */
 		ep->e_vm.vm_rssize = vm_resident_count(vm);
 		ep->e_vm.vm_tsize = vm->vm_tsize;
 		ep->e_vm.vm_dsize = vm->vm_dused;
 		ep->e_vm.vm_ssize = vm->vm_ssize;
 		ep->e_pstats = *p->p_stats;
 		ep->e_pstats_valid = 1;
-		PRELE(p);
 	}
 	if (p->p_pptr)
 		ep->e_ppid = p->p_pptr->p_pid;
@@ -1220,7 +1202,7 @@ fill_kproc2(struct proc *p, struct kinfo_proc2 *ki)
 
 	ki->p_eflag = 0;
 	ki->p_exitsig = p->p_exitsig;
-	ki->p_flag = p->p_flag;
+	ki->p_flag = p->p_flag | P_INMEM;
 
 	ki->p_pid = p->p_pid;
 	if (p->p_pptr)
@@ -1308,7 +1290,7 @@ fill_kproc2(struct proc *p, struct kinfo_proc2 *ki)
 #else
 		ki->p_schedflags = p->p_schedflags;
 #endif
-		ki->p_holdcnt = p->p_holdcnt;
+		ki->p_holdcnt = 1;
 		ki->p_priority = p->p_priority;
 		ki->p_usrpri = p->p_usrpri;
 		if (p->p_wmesg)
@@ -1330,7 +1312,6 @@ fill_kproc2(struct proc *p, struct kinfo_proc2 *ki)
 	} else {
 		ki->p_uvalid = 1;
 
-		PHOLD(p);	/* need for pstats */
 		ki->p_ustart_sec = p->p_stats->p_start.tv_sec;
 		ki->p_ustart_usec = p->p_stats->p_start.tv_usec;
 
@@ -1364,7 +1345,6 @@ fill_kproc2(struct proc *p, struct kinfo_proc2 *ki)
 		if (p->p_cpu != NULL)
 			ki->p_cpuid = CPU_INFO_UNIT(p->p_cpu);
 #endif
-		PRELE(p);
 	}
 }
 
@@ -1583,7 +1563,7 @@ sysctl_diskinit(int update, struct proc *p)
 	struct disk *dk;
 	int i, tlen, l;
 
-	if ((i = lockmgr(&sysctl_disklock, LK_EXCLUSIVE, NULL)) != 0)
+	if ((i = rw_enter(&sysctl_disklock, RW_WRITE|RW_INTR)) != 0)
 		return i;
 
 	if (disk_change) {
@@ -1644,7 +1624,7 @@ sysctl_diskinit(int update, struct proc *p)
 			sdk->ds_time = dk->dk_time;
 		}
 	}
-	lockmgr(&sysctl_disklock, LK_RELEASE, NULL);
+	rw_exit_write(&sysctl_disklock);
 	return 0;
 }
 
@@ -1717,7 +1697,7 @@ sysctl_sysvipc(int *name, u_int namelen, void *where, size_t *sizep)
 	buf = malloc(min(tsize, buflen), M_TEMP, M_WAITOK);
 	bzero(buf, min(tsize, buflen));
 
-	switch (*name) { 
+	switch (*name) {
 #ifdef SYSVMSG
 	case KERN_SYSVIPC_MSG_INFO:
 		msgsi = (struct msg_sysctl_info *)buf;
@@ -1747,7 +1727,7 @@ sysctl_sysvipc(int *name, u_int namelen, void *where, size_t *sizep)
 				ret = ENOMEM;
 				break;
 			}
-			switch (*name) { 
+			switch (*name) {
 #ifdef SYSVMSG
 			case KERN_SYSVIPC_MSG_INFO:
 				bcopy(&msqids[i], &msgsi->msgids[i], dssize);
@@ -1797,14 +1777,28 @@ sysctl_sensors(int *name, u_int namelen, void *oldp, size_t *oldlenp,
     void *newp, size_t newlen)
 {
 	struct sensor *s;
-	int num;
+	struct sensordev *sd;
+	int dev;
+	enum sensor_type type;
+	int numt;
 
-	if (namelen != 1)
+	if (namelen != 1 && namelen != 3)
 		return (ENOTDIR);
 
-	num = name[0];
+	dev = name[0];
+	if (namelen == 1) {
+		sd = sensordev_get(dev);
+		if (sd == NULL)
+			return (ENOENT);
 
-	s = sensor_get(num);
+		return (sysctl_rdstruct(oldp, oldlenp, newp, sd,
+		    sizeof(struct sensordev)));
+	}
+
+	type = name[1];
+	numt = name[2];
+
+	s = sensor_find(dev, type, numt);
 	if (s == NULL)
 		return (ENOENT);
 

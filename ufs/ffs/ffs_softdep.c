@@ -1,4 +1,4 @@
-/*	$OpenBSD: ffs_softdep.c,v 1.77 2006/10/19 14:37:54 mickey Exp $	*/
+/*	$OpenBSD: ffs_softdep.c,v 1.81 2007/01/15 11:18:17 pedro Exp $	*/
 
 /*
  * Copyright 1998, 2000 Marshall Kirk McKusick. All Rights Reserved.
@@ -129,7 +129,7 @@ STATIC	void handle_allocindir_partdone(struct allocindir *);
 STATIC	void initiate_write_filepage(struct pagedep *, struct buf *);
 STATIC	void handle_written_mkdir(struct mkdir *, int);
 STATIC	void initiate_write_inodeblock_ufs1(struct inodedep *, struct buf *);
-#ifdef UFS2
+#ifdef FFS2
 STATIC	void initiate_write_inodeblock_ufs2(struct inodedep *, struct buf *);
 #endif
 STATIC	void handle_workitem_freefile(struct freefile *);
@@ -3318,7 +3318,7 @@ softdep_disk_io_initiation(bp)
 			inodedep = WK_INODEDEP(wk);
 			if (inodedep->id_fs->fs_magic == FS_UFS1_MAGIC)
 				initiate_write_inodeblock_ufs1(inodedep, bp);
-#ifdef UFS2
+#ifdef FFS2
 			else
 				initiate_write_inodeblock_ufs2(inodedep, bp);
 #endif
@@ -3570,9 +3570,9 @@ initiate_write_inodeblock_ufs1(inodedep, bp)
 		dp->di_ib[adp->ad_lbn - NDADDR] = 0;
 }
 
-#ifdef UFS2
+#ifdef FFS2
 /*
- * Version of initiate_write_inodeblock that handles UFS2 dinodes.
+ * Version of initiate_write_inodeblock that handles FFS2 dinodes.
  */
 STATIC void
 initiate_write_inodeblock_ufs2(inodedep, bp)
@@ -3612,7 +3612,6 @@ initiate_write_inodeblock_ufs2(inodedep, bp)
 	inodedep->id_savedsize = dp->di_size;
 	if (TAILQ_FIRST(&inodedep->id_inoupdt) == NULL)
 		return;
-	ACQUIRE_LOCK(&lk);
 
 #ifdef notyet
 	inodedep->id_savedextsize = dp->di_extsize;
@@ -3622,7 +3621,6 @@ initiate_write_inodeblock_ufs2(inodedep, bp)
 	/*
 	 * Set the ext data dependencies to busy.
 	 */
-	ACQUIRE_LOCK(&lk);
 	for (deplist = 0, adp = TAILQ_FIRST(&inodedep->id_extupdt); adp;
 	     adp = TAILQ_NEXT(adp, ad_next)) {
 #ifdef DIAGNOSTIC
@@ -3756,7 +3754,6 @@ initiate_write_inodeblock_ufs2(inodedep, bp)
 #endif /* DIAGNOSTIC */
 			dp->di_ib[i] = 0;
 		}
-		FREE_LOCK(&lk);
 		return;
 	}
 	/*
@@ -3785,9 +3782,8 @@ initiate_write_inodeblock_ufs2(inodedep, bp)
 	 */
 	for (; adp; adp = TAILQ_NEXT(adp, ad_next))
 		dp->di_ib[adp->ad_lbn - NDADDR] = 0;
-	FREE_LOCK(&lk);
 }
-#endif /* UFS2 */
+#endif /* FFS2 */
 
 /*
  * This routine is called during the completion interrupt
@@ -5085,6 +5081,7 @@ flush_pagedep_deps(pvp, mp, diraddhdp)
 	struct diraddhd *diraddhdp;
 {
 	struct proc *p = CURPROC;	/* XXX */
+	struct worklist *wk;
 	struct inodedep *inodedep;
 	struct ufsmount *ump;
 	struct diradd *dap;
@@ -5139,7 +5136,34 @@ flush_pagedep_deps(pvp, mp, diraddhdp)
 				break;
 			}
 			drain_output(vp, 0);
+			/*
+			 * If first block is still dirty with a D_MKDIR
+			 * dependency then it needs to be written now.
+			 */
+			for (;;) {
+				error = 0;
+				ACQUIRE_LOCK(&lk);
+				bp = incore(vp, 0);
+				if (bp == NULL) {
+					FREE_LOCK(&lk);
+					break;
+				}
+				LIST_FOREACH(wk, &bp->b_dep, wk_list)
+					if (wk->wk_type == D_MKDIR)
+						break;
+				if (wk) {
+					gotit = getdirtybuf(bp, MNT_WAIT);
+					FREE_LOCK(&lk);
+					if (gotit && (error = bwrite(bp)) != 0)
+						break;
+				} else
+					FREE_LOCK(&lk);
+				break;
+			}
 			vput(vp);
+			/* Flushing of first block failed */
+			if (error)
+				break;
 			ACQUIRE_LOCK(&lk);
 			/*
 			 * If that cleared dependencies, go on to next.

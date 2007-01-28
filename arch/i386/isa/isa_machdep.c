@@ -1,4 +1,4 @@
-/*	$OpenBSD: isa_machdep.c,v 1.54 2005/11/24 08:37:08 mickey Exp $	*/
+/*	$OpenBSD: isa_machdep.c,v 1.56 2006/11/11 21:47:52 kettenis Exp $	*/
 /*	$NetBSD: isa_machdep.c,v 1.22 1997/06/12 23:57:32 thorpej Exp $	*/
 
 #define ISA_DMA_STATS
@@ -520,19 +520,21 @@ isa_intr_establish(isa_chipset_tag_t ic, int irq, int type, int level,
 
  	if (mp_busses != NULL) {
  		int mpspec_pin = irq;
- 		int bus = mp_isa_bus;
  		int airq;
 
- 		for (mip = mp_busses[bus].mb_intrs; mip != NULL; 
+		if (mp_isa_bus == NULL)
+			panic("no isa bus");
+
+ 		for (mip = mp_isa_bus->mb_intrs; mip != NULL;
  		    mip = mip->next) {
  			if (mip->bus_pin == mpspec_pin) {
  				airq = mip->ioapic_ih | irq;
  				break;
  			}
  		}
-		if (mip == NULL && mp_eisa_bus != -1) {
-			for (mip = mp_busses[mp_eisa_bus].mb_intrs;
-			    mip != NULL; mip=mip->next) {
+		if (mip == NULL && mp_eisa_bus) {
+			for (mip = mp_eisa_bus->mb_intrs; mip != NULL;
+			    mip = mip->next) {
 				if (mip->bus_pin == mpspec_pin) {
 					airq = mip->ioapic_ih | irq;
 					break;
@@ -542,7 +544,7 @@ isa_intr_establish(isa_chipset_tag_t ic, int irq, int type, int level,
 
 		/* no MP mapping found -- invent! */
  		if (mip == NULL)
-			airq = mpbios_invent(irq, type, mp_isa_bus);
+			airq = mpbios_invent(irq, type, mp_isa_bus->mb_idx);
 
 		return (apic_intr_establish(airq, type, level, ih_fun,
 		    ih_arg, ih_what));
@@ -949,7 +951,7 @@ _isa_bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t map, bus_addr_t offset,
 		 * caller's buffer to the bounce buffer.
 		 */
 		if (cookie->id_flags & ID_IS_BOUNCING)
-			bcopy(cookie->id_origbuf + offset,
+			bcopy((char *)cookie->id_origbuf + offset,
 			    cookie->id_bouncebuf + offset,
 			    len);
 		break;
@@ -960,7 +962,7 @@ _isa_bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t map, bus_addr_t offset,
 		 * bounce buffer to the caller's buffer.
 		 */
 		if (cookie->id_flags & ID_IS_BOUNCING)
-			bcopy(cookie->id_bouncebuf + offset,
+			bcopy((char *)cookie->id_bouncebuf + offset,
 			    cookie->id_origbuf + offset,
 			    len);
 		break;

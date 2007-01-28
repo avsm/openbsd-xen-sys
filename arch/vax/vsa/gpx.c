@@ -1,4 +1,4 @@
-/*	$OpenBSD: gpx.c,v 1.13 2006/10/29 20:34:56 miod Exp $	*/
+/*	$OpenBSD: gpx.c,v 1.15 2006/11/29 12:13:54 miod Exp $	*/
 /*
  * Copyright (c) 2006 Miodrag Vallat.
  *
@@ -357,6 +357,7 @@ gpx_attach(struct device *parent, struct device *self, void *aux)
 	aa.scrdata = &gpx_screenlist;
 	aa.accessops = &gpx_accessops;
 	aa.accesscookie = sc;
+	aa.defaultscreens = 0;
 
 	config_found(self, &aa, wsemuldisplaydevprint);
 
@@ -502,7 +503,7 @@ gpx_putchar(void *v, int row, int col, u_int uc, long attr)
 	struct wsdisplay_font *font = ri->ri_font;
 	int dx, dy, sx, sy, fg, bg, ul;
 
-	rasops_unpack_attr(attr, &fg, &bg, &ul);
+	ri->ri_ops.unpack_attr(v, attr, &fg, &bg, &ul);
 
 	/* find where to output the glyph... */
 	dx = col * font->fontwidth + ri->ri_xorigin;
@@ -1062,9 +1063,10 @@ void
 gpx_fillrect(struct gpx_screen *ss, int x, int y, int dx, int dy, long attr,
     u_int function)
 {
+	struct rasops_info *ri = &ss->ss_ri;
 	int fg, bg;
 
-	rasops_unpack_attr(attr, &fg, &bg, NULL);
+	ri->ri_ops.unpack_attr(ri, attr, &fg, &bg, NULL);
 
 	while (gpx_viper_write(ss, CS_UPDATE_MASK, 0x00ff));
 	gpx_viper_write(ss, MASK_1, 0xffff);

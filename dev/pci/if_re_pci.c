@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_re_pci.c,v 1.16 2006/08/06 01:01:21 brad Exp $	*/
+/*	$OpenBSD: if_re_pci.c,v 1.18 2006/11/06 20:10:58 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2005 Peter Valchev <pvalchev@openbsd.org>
@@ -145,9 +145,11 @@ re_pci_attach(struct device *parent, struct device *self, void *aux)
 		membase = pci_conf_read(pc, pa->pa_tag, RL_PCI_LOMEM);
 		irq = pci_conf_read(pc, pa->pa_tag, RL_PCI_INTLINE);
 
+#if 0
 		/* Reset the power state. */
 		printf(": chip is in D%d power mode "
 		    "-- setting to D0", command & RL_PSTATE_MASK);
+#endif
 		command &= 0xFFFFFFFC;
 
 		/* Restore PCI config data. */
@@ -182,7 +184,6 @@ re_pci_attach(struct device *parent, struct device *self, void *aux)
 			printf(" at %s", intrstr);
 		return;
 	}
-	printf(": %s", intrstr);
 
 	sc->sc_dmat = pa->pa_dmat;
 	sc->sc_flags |= RL_ENABLED;
@@ -199,5 +200,5 @@ re_pci_attach(struct device *parent, struct device *self, void *aux)
 		sc->rl_type = RL_8169;
 
 	/* Call bus-independent attach routine */
-	re_attach(sc);
+	re_attach(sc, intrstr);
 }

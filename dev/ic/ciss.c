@@ -1,4 +1,4 @@
-/*	$OpenBSD: ciss.c,v 1.20 2006/08/31 23:19:35 krw Exp $	*/
+/*	$OpenBSD: ciss.c,v 1.23 2006/12/23 17:46:39 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2005,2006 Michael Shalayeff
@@ -139,6 +139,7 @@ ciss_put_ccb(struct ciss_ccb *ccb)
 int
 ciss_attach(struct ciss_softc *sc)
 {
+	struct scsibus_attach_args saa;
 	struct scsibus_softc *scsibus;
 	struct ciss_ccb *ccb;
 	struct ciss_cmd *cmd;
@@ -352,6 +353,7 @@ ciss_attach(struct ciss_softc *sc)
 		bus_dmamap_destroy(sc->dmat, sc->cmdmap);
 		return -1;
 	}
+	bzero(sc->sc_lds, sc->maxunits * sizeof(*sc->sc_lds));
 
 	sc->sc_flush = CISS_FLUSH_ENABLE;
 	if (!(sc->sc_sh = shutdownhook_establish(ciss_shutdown, sc))) {
@@ -382,8 +384,10 @@ ciss_attach(struct ciss_softc *sc)
 	sc->sc_link.adapter = &ciss_switch;
 	sc->sc_link.adapter_target = sc->maxunits;
 	sc->sc_link.adapter_buswidth = sc->maxunits;
+	bzero(&saa, sizeof(saa));
+	saa.saa_sc_link = &sc->sc_link;
 	scsibus = (struct scsibus_softc *)config_found_sm(&sc->sc_dev,
-	    &sc->sc_link, scsiprint, NULL);
+	    &saa, scsiprint, NULL);
 
 #if 0
 	sc->sc_link_raw.device = &ciss_raw_dev;
@@ -392,8 +396,10 @@ ciss_attach(struct ciss_softc *sc)
 	sc->sc_link_raw.adapter = &ciss_raw_switch;
 	sc->sc_link_raw.adapter_target = sc->ndrives;
 	sc->sc_link_raw.adapter_buswidth = sc->ndrives;
+	bzero(&saa, sizeof(saa));
+	saa.saa_sc_link = &sc->sc_link_raw;
 	rawbus = (struct scsibus_softc *)config_found_sm(&sc->sc_dev,
-	    &sc->sc_link_raw, scsiprint, NULL);
+	    &saa, scsiprint, NULL);
 #endif
 
 #if NBIO > 0
@@ -404,12 +410,8 @@ ciss_attach(struct ciss_softc *sc)
 	/* now map all the physdevs into their lds */
 	/* XXX currently we assign all pf 'em into ld#0 */
 	for (i = 0; i < sc->maxunits; i++)
-		if (!(sc->sc_lds[i] = ciss_pdscan(sc, i))) {
-			shutdownhook_disestablish(sc->sc_sh);
-			bus_dmamem_free(sc->dmat, sc->cmdseg, 1);
-			bus_dmamap_destroy(sc->dmat, sc->cmdmap);
-			return -1;
-		}
+		if (!(sc->sc_lds[i] = ciss_pdscan(sc, i)))
+			return 0;
 
 	if (bio_register(&sc->sc_dev, ciss_ioctl) != 0)
 		printf("%s: controller registration failed",
@@ -420,11 +422,12 @@ ciss_attach(struct ciss_softc *sc)
 	    M_DEVBUF, M_NOWAIT);
 	if (sc->sensors) {
 		bzero(sc->sensors, sizeof(struct sensor) * sc->maxunits);
-		for (i = 0; i < sc->maxunits; sensor_add(&sc->sensors[i++])) {
+		strlcpy(sc->sensordev.xname, sc->sc_dev.dv_xname,
+		    sizeof(sc->sensordev.xname));
+		for (i = 0; i < sc->maxunits;
+		    sensor_attach(&sc->sensordev, &sc->sensors[i++])) {
 			sc->sensors[i].type = SENSOR_DRIVE;
 			sc->sensors[i].status = SENSOR_S_UNKNOWN;
-			strlcpy(sc->sensors[i].device, sc->sc_dev.dv_xname,
-			    sizeof(sc->sensors[i].device));
 			strlcpy(sc->sensors[i].desc, ((struct device *)
 			    scsibus->sc_link[i][0]->device_softc)->dv_xname,
 			    sizeof(sc->sensors[i].desc));
@@ -432,11 +435,10 @@ ciss_attach(struct ciss_softc *sc)
 			    scsibus->sc_link[i][0]->device_softc)->dv_xname,
 			    sizeof(sc->sc_lds[i]->xname));
 		}
-		if (sensor_task_register(sc, ciss_sensors, 10)) {
-			for (i = sc->maxunits; i--; )
-				sensor_del(&sc->sensors[i]);
+		if (sensor_task_register(sc, ciss_sensors, 10))
 			free(sc->sensors, M_DEVBUF);
-		}
+		else
+			sensordev_install(&sc->sensordev);
 	}
 #endif
 
@@ -1055,6 +1057,8 @@ ciss_ioctl(struct device *dev, u_long cmd, caddr_t addr)
 			break;
 		}
 		ldp = sc->sc_lds[bv->bv_volid];
+		if (!ldp)
+			return EINVAL;
 		ldid = sc->scratch;
 		if ((error = ciss_ldid(sc, bv->bv_volid, ldid)))
 			break;
@@ -1091,7 +1095,7 @@ ciss_ioctl(struct device *dev, u_long cmd, caddr_t addr)
 			break;
 		}
 		ldp = sc->sc_lds[bd->bd_volid];
-		if ((pd = bd->bd_diskid) > ldp->ndrives) {
+		if (!ldp || (pd = bd->bd_diskid) > ldp->ndrives) {
 			error = EINVAL;
 			break;
 		}
@@ -1145,6 +1149,8 @@ ciss_ioctl(struct device *dev, u_long cmd, caddr_t addr)
 		/* XXX workaround completely dumb scsi addressing */
 		for (ld = 0; ld < sc->maxunits; ld++) {
 			ldp = sc->sc_lds[ld];
+			if (!ldp)
+				continue;
 			for (pd = 0; pd < ldp->ndrives; pd++)
 				if (ldp->tgts[pd] == (CISS_BIGBIT +
 				    bb->bb_channel * sc->ndrives +
@@ -1342,7 +1348,7 @@ ciss_blink(struct ciss_softc *sc, int ld, int pd, int stat,
 		return EINVAL;
 
 	ldp = sc->sc_lds[ld];
-	if (pd > ldp->ndrives)
+	if (!ldp || pd > ldp->ndrives)
 		return EINVAL;
 
 	ldp->bling.pdtab[ldp->tgts[pd]] = stat == BIOC_SBUNBLINK? 0 :

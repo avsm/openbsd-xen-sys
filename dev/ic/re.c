@@ -1,4 +1,4 @@
-/*	$OpenBSD: re.c,v 1.51 2006/10/31 22:45:15 brad Exp $	*/
+/*	$OpenBSD: re.c,v 1.62 2007/01/23 13:42:47 mglocker Exp $	*/
 /*	$FreeBSD: if_re.c,v 1.31 2004/09/04 07:54:05 ru Exp $	*/
 /*
  * Copyright (c) 1997, 1998-2003
@@ -154,14 +154,13 @@
 int redebug = 0;
 #define DPRINTF(x)	if (redebug) printf x
 
+inline void re_set_bufaddr(struct rl_desc *, bus_addr_t);
+
 int	re_encap(struct rl_softc *, struct mbuf *, int *);
 
 int	re_newbuf(struct rl_softc *, int, struct mbuf *);
 int	re_rx_list_init(struct rl_softc *);
 int	re_tx_list_init(struct rl_softc *);
-#ifdef __STRICT_ALIGNMENT
-void	re_fixup_rx(struct mbuf *);
-#endif
 void	re_rxeof(struct rl_softc *);
 void	re_txeof(struct rl_softc *);
 void	re_tick(void *);
@@ -201,6 +200,38 @@ struct cfdriver re_cd = {
 #define EE_CLR(x)					\
 	CSR_WRITE_1(sc, RL_EECMD,			\
 		CSR_READ_1(sc, RL_EECMD) & ~x)
+
+static const struct re_revision {
+	u_int32_t		re_chipid;
+	const char		*re_name;
+} re_revisions[] = {
+	{ RL_HWREV_8169,	"RTL8169" },
+	{ RL_HWREV_8110S,	"RTL8110S" },
+	{ RL_HWREV_8169S,	"RTL8169S" },
+	{ RL_HWREV_8169_8110SB,	"RTL8169/8110SB" },
+	{ RL_HWREV_8169_8110SC,	"RTL8169/8110SC" },
+	{ RL_HWREV_8168_SPIN1,	"RTL8168 1" },
+	{ RL_HWREV_8100E_SPIN1,	"RTL8100E 1" },
+	{ RL_HWREV_8101E,	"RTL8101E" },
+	{ RL_HWREV_8168_SPIN2,	"RTL8168 2" },
+	{ RL_HWREV_8100E_SPIN2, "RTL8100E 2" },
+	{ RL_HWREV_8139CPLUS,	"RTL8139C+" },
+	{ RL_HWREV_8101,	"RTL8101" },
+	{ RL_HWREV_8100,	"RTL8100" },
+
+	{ 0, NULL }
+};
+
+
+inline void
+re_set_bufaddr(struct rl_desc *d, bus_addr_t addr)
+{
+	d->rl_bufaddr_lo = htole32((uint32_t)addr);
+	if (sizeof(bus_addr_t) == sizeof(uint64_t))
+		d->rl_bufaddr_hi = htole32((uint64_t)addr >> 32);
+	else
+		d->rl_bufaddr_hi = 0;
+}
 
 /*
  * Send a read command and address to the EEPROM, check for ACK.
@@ -760,13 +791,16 @@ int boot_eaddr_valid;
  * setup and ethernet/BPF attach.
  */
 int
-re_attach(struct rl_softc *sc)
+re_attach(struct rl_softc *sc, const char *intrstr)
 {
 	u_char		eaddr[ETHER_ADDR_LEN];
 	u_int16_t	as[ETHER_ADDR_LEN / 2];
 	struct ifnet	*ifp;
 	u_int16_t	re_did = 0;
 	int		error = 0, i;
+	u_int32_t	hwrev;
+	const struct re_revision *rr;
+	const char	*re_name = NULL;
 
 	/* Reset the adapter. */
 	re_reset(sc);
@@ -820,7 +854,18 @@ re_attach(struct rl_softc *sc)
 
 	bcopy(eaddr, (char *)&sc->sc_arpcom.ac_enaddr, ETHER_ADDR_LEN);
 
-	printf(", address %s\n",
+	hwrev = CSR_READ_4(sc, RL_TXCFG) & RL_TXCFG_HWREV;
+	for (rr = re_revisions; rr->re_name != NULL; rr++) {
+		if (rr->re_chipid == hwrev)
+			re_name = rr->re_name;
+	}
+
+	if (re_name == NULL)
+		printf(", unknown ASIC (0x%04x)", hwrev >> 16);
+	else
+		printf(", %s (0x%04x)", re_name, hwrev >> 16);
+
+	printf(": %s, address %s\n", intrstr,
 	    ether_sprintf(sc->sc_arpcom.ac_enaddr));
 
 	if (sc->rl_ldata.rl_tx_desc_cnt >
@@ -869,9 +914,8 @@ re_attach(struct rl_softc *sc)
 	for (i = 0; i < RL_TX_QLEN; i++) {
 		error = bus_dmamap_create(sc->sc_dmat,
 		    RL_JUMBO_FRAMELEN,
-		    RL_TX_DESC_CNT(sc) - 4, RL_TDESC_CMD_FRAGLEN,
-		    0, 0,
-		    &sc->rl_ldata.rl_txq[i].txq_dmamap);
+		    RL_TX_DESC_CNT(sc) - RL_NTXDESC_RSVD, RL_TDESC_CMD_FRAGLEN,
+		    0, 0, &sc->rl_ldata.rl_txq[i].txq_dmamap);
 		if (error) {
 			printf("%s: can't create DMA map for TX\n",
 			    sc->sc_dev.dv_xname);
@@ -880,7 +924,7 @@ re_attach(struct rl_softc *sc)
 	}
 
         /* Allocate DMA'able memory for the RX ring */
-	if ((error = bus_dmamem_alloc(sc->sc_dmat, RL_RX_LIST_SZ,
+	if ((error = bus_dmamem_alloc(sc->sc_dmat, RL_RX_DMAMEM_SZ,
 		    RL_RING_ALIGN, 0, &sc->rl_ldata.rl_rx_listseg, 1,
 		    &sc->rl_ldata.rl_rx_listnseg, BUS_DMA_NOWAIT)) != 0) {
 		printf("%s: can't allocate rx listnseg, error = %d\n",
@@ -890,7 +934,7 @@ re_attach(struct rl_softc *sc)
 
         /* Load the map for the RX ring. */
 	if ((error = bus_dmamem_map(sc->sc_dmat, &sc->rl_ldata.rl_rx_listseg,
-		    sc->rl_ldata.rl_rx_listnseg, RL_RX_LIST_SZ,
+		    sc->rl_ldata.rl_rx_listnseg, RL_RX_DMAMEM_SZ,
 		    (caddr_t *)&sc->rl_ldata.rl_rx_list,
 		    BUS_DMA_COHERENT | BUS_DMA_NOWAIT)) != 0) {
 		printf("%s: can't map rx list, error = %d\n",
@@ -898,10 +942,10 @@ re_attach(struct rl_softc *sc)
 		goto fail_5;
 
 	}
-	memset(sc->rl_ldata.rl_rx_list, 0, RL_RX_LIST_SZ);
+	memset(sc->rl_ldata.rl_rx_list, 0, RL_RX_DMAMEM_SZ);
 
-	if ((error = bus_dmamap_create(sc->sc_dmat, RL_RX_LIST_SZ, 1,
-		    RL_RX_LIST_SZ, 0, 0,
+	if ((error = bus_dmamap_create(sc->sc_dmat, RL_RX_DMAMEM_SZ, 1,
+		    RL_RX_DMAMEM_SZ, 0, 0,
 		    &sc->rl_ldata.rl_rx_list_map)) != 0) {
 		printf("%s: can't create rx list map, error = %d\n",
 		    sc->sc_dev.dv_xname, error);
@@ -910,7 +954,7 @@ re_attach(struct rl_softc *sc)
 
 	if ((error = bus_dmamap_load(sc->sc_dmat,
 		    sc->rl_ldata.rl_rx_list_map, sc->rl_ldata.rl_rx_list,
-		    RL_RX_LIST_SZ, NULL, BUS_DMA_NOWAIT)) != 0) {
+		    RL_RX_DMAMEM_SZ, NULL, BUS_DMA_NOWAIT)) != 0) {
 		printf("%s: can't load rx list, error = %d\n",
 		    sc->sc_dev.dv_xname, error);
 		goto fail_7;
@@ -940,12 +984,8 @@ re_attach(struct rl_softc *sc)
 	IFQ_SET_MAXLEN(&ifp->if_snd, RL_TX_QLEN);
 	IFQ_SET_READY(&ifp->if_snd);
 
-	ifp->if_capabilities = IFCAP_VLAN_MTU;
-
-#ifdef RE_CSUM_OFFLOAD
-	ifp->if_capabilities |= IFCAP_CSUM_IPv4|IFCAP_CSUM_TCPv4|
-				IFCAP_CSUM_UDPv4;
-#endif
+	ifp->if_capabilities = IFCAP_VLAN_MTU | IFCAP_CSUM_IPv4 |
+			       IFCAP_CSUM_TCPv4 | IFCAP_CSUM_UDPv4;
 
 #ifdef RE_VLAN
 	ifp->if_capabilities |= IFCAP_VLAN_HWTAGGING;
@@ -961,7 +1001,7 @@ re_attach(struct rl_softc *sc)
 	ifmedia_init(&sc->sc_mii.mii_media, IFM_IMASK, re_ifmedia_upd,
 	    re_ifmedia_sts);
 	mii_attach(&sc->sc_dev, &sc->sc_mii, 0xffffffff, MII_PHY_ANY,
-	    MII_OFFSET_ANY, 0);
+	    MII_OFFSET_ANY, MIIF_DOPAUSE);
 	if (LIST_FIRST(&sc->sc_mii.mii_phys) == NULL) {
 		printf("%s: no PHY found!\n", sc->sc_dev.dv_xname);
 		ifmedia_add(&sc->sc_mii.mii_media,
@@ -1011,7 +1051,7 @@ fail_7:
 	bus_dmamap_destroy(sc->sc_dmat, sc->rl_ldata.rl_rx_list_map);
 fail_6:
 	bus_dmamem_unmap(sc->sc_dmat,
-	    (caddr_t)sc->rl_ldata.rl_rx_list, RL_RX_LIST_SZ);
+	    (caddr_t)sc->rl_ldata.rl_rx_list, RL_RX_DMAMEM_SZ);
 fail_5:
 	bus_dmamem_free(sc->sc_dmat,
 	    &sc->rl_ldata.rl_rx_listseg, sc->rl_ldata.rl_rx_listnseg);
@@ -1063,21 +1103,13 @@ re_newbuf(struct rl_softc *sc, int idx, struct mbuf *m)
 	} else
 		m->m_data = m->m_ext.ext_buf;
 
-	m->m_len = m->m_pkthdr.len = MCLBYTES;
-#ifdef __STRICT_ALIGNMENT
 	/*
-	 * This is part of an evil trick to deal with strict alignment
-	 * architectures. The RealTek chip requires RX buffers to be
-	 * aligned on 64-bit boundaries, but that will hose strict
-	 * alignment architectures. To get around this, we leave some
-	 * empty space at the start of each buffer and for strict
-	 * alignment architectures, we copy the buffer back six
-	 * bytes to achieve word alignment. This is slightly more
-	 * efficient than allocating a new buffer, copying the
-	 * contents, and discarding the old buffer.
+	 * Initialize mbuf length fields and fixup
+	 * alignment so that the frame payload is
+	 * longword aligned on strict alignment archs.
 	 */
-	m_adj(m, RE_ETHER_ALIGN);
-#endif
+	m->m_len = m->m_pkthdr.len = RE_RX_DESC_BUFLEN;
+	m->m_data += RE_ETHER_ALIGN;
 
 	rxs = &sc->rl_ldata.rl_rxsoft[idx];
 	map = rxs->rxs_dmamap;
@@ -1105,8 +1137,7 @@ re_newbuf(struct rl_softc *sc, int idx, struct mbuf *m)
 	cmdstat = map->dm_segs[0].ds_len;
 	if (idx == (RL_RX_DESC_CNT - 1))
 		cmdstat |= RL_RDESC_CMD_EOR;
-	d->rl_bufaddr_lo = htole32(RL_ADDR_LO(map->dm_segs[0].ds_addr));
-	d->rl_bufaddr_hi = htole32(RL_ADDR_HI(map->dm_segs[0].ds_addr));
+	re_set_bufaddr(d, map->dm_segs[0].ds_addr);
 	d->rl_cmdstat = htole32(cmdstat);
 	RL_RXDESCSYNC(sc, idx, BUS_DMASYNC_PREREAD|BUS_DMASYNC_PREWRITE);
 	cmdstat |= RL_RDESC_CMD_OWN;
@@ -1120,22 +1151,6 @@ re_newbuf(struct rl_softc *sc, int idx, struct mbuf *m)
 	return (ENOMEM);
 }
 
-#ifdef __STRICT_ALIGNMENT
-void
-re_fixup_rx(struct mbuf *m)
-{
-	int		i;
-	uint16_t	*src, *dst;
-
-	src = mtod(m, uint16_t *);
-	dst = src - (RE_ETHER_ALIGN - ETHER_ALIGN) / sizeof *src;
-
-	for (i = 0; i < (m->m_len / sizeof(uint16_t) + 1); i++)
-		*dst++ = *src++;
-
-	m->m_data -= RE_ETHER_ALIGN - ETHER_ALIGN;
-}
-#endif
 
 int
 re_tx_list_init(struct rl_softc *sc)
@@ -1305,9 +1320,6 @@ re_rxeof(struct rl_softc *sc)
 			m->m_pkthdr.len = m->m_len =
 			    (total_len - ETHER_CRC_LEN);
 
-#ifdef __STRICT_ALIGNMENT
-		re_fixup_rx(m);
-#endif
 		ifp->if_ipackets++;
 		m->m_pkthdr.rcvif = ifp;
 
@@ -1339,15 +1351,14 @@ void
 re_txeof(struct rl_softc *sc)
 {
 	struct ifnet	*ifp;
-	int		idx;
+	struct rl_txq	*txq;
+	uint32_t	txstat;
+	int		idx, descidx;
 
 	ifp = &sc->sc_arpcom.ac_if;
-	idx = sc->rl_ldata.rl_txq_considx;
 
-	for (;;) {
-		struct rl_txq *txq = &sc->rl_ldata.rl_txq[idx];
-		int descidx;
-		u_int32_t txstat;
+	for (idx = sc->rl_ldata.rl_txq_considx;; idx = RL_NEXT_TXQ(sc, idx)) {
+		txq = &sc->rl_ldata.rl_txq[idx];
 
 		if (txq->txq_mbuf == NULL) {
 			KASSERT(idx == sc->rl_ldata.rl_txq_prodidx);
@@ -1364,7 +1375,7 @@ re_txeof(struct rl_softc *sc)
 		if (txstat & RL_TDESC_CMD_OWN)
 			break;
 
-		sc->rl_ldata.rl_tx_free += txq->txq_dmamap->dm_nsegs;
+		sc->rl_ldata.rl_tx_free += txq->txq_nsegs;
 		KASSERT(sc->rl_ldata.rl_tx_free <= RL_TX_DESC_CNT(sc));
 		bus_dmamap_sync(sc->sc_dmat, txq->txq_dmamap,
 		    0, txq->txq_dmamap->dm_mapsize, BUS_DMASYNC_POSTWRITE);
@@ -1378,36 +1389,32 @@ re_txeof(struct rl_softc *sc)
 			ifp->if_oerrors++;
 		else
 			ifp->if_opackets++;
-
-		idx = RL_NEXT_TXQ(sc, idx);
 	}
-
-	/* No changes made to the TX ring, so no flush needed */
 
 	if (sc->rl_ldata.rl_tx_free) {
 		sc->rl_ldata.rl_txq_considx = idx;
 		ifp->if_flags &= ~IFF_OACTIVE;
-		ifp->if_timer = 0;
 	}
 
-	/*
-	 * Some chips will ignore a second TX request issued while an
-	 * existing transmission is in progress. If the transmitter goes
-	 * idle but there are still packets waiting to be sent, we need
-	 * to restart the channel here to flush them out. This only seems
-	 * to be required with the PCIe devices.
-	 */
-	if (sc->rl_ldata.rl_tx_free < RL_TX_DESC_CNT(sc))
-	    CSR_WRITE_1(sc, sc->rl_txstart, RL_TXSTART_START);
+	if (sc->rl_ldata.rl_tx_free < RL_TX_DESC_CNT(sc)) {
+		/*
+		 * Some chips will ignore a second TX request issued while an
+		 * existing transmission is in progress. If the transmitter goes
+		 * idle but there are still packets waiting to be sent, we need
+		 * to restart the channel here to flush them out. This only
+		 * seems to be required with the PCIe devices.
+		 */
+		CSR_WRITE_1(sc, sc->rl_txstart, RL_TXSTART_START);
 
-	/*
-	 * If not all descriptors have been released reaped yet,
-	 * reload the timer so that we will eventually get another
-	 * interrupt that will cause us to re-enter this routine.
-	 * This is done in case the transmitter has gone idle.
-	 */
-	if (sc->rl_ldata.rl_tx_free != RL_TX_DESC_CNT(sc))
-                CSR_WRITE_4(sc, RL_TIMERCNT, 1);
+		/*
+		 * If not all descriptors have been released reaped yet,
+		 * reload the timer so that we will eventually get another
+		 * interrupt that will cause us to re-enter this routine.
+		 * This is done in case the transmitter has gone idle.
+		 */
+		CSR_WRITE_4(sc, RL_TIMERCNT, 1);
+	} else
+		ifp->if_timer = 0;
 }
 
 void
@@ -1465,15 +1472,13 @@ re_intr(void *arg)
 		if ((status & RL_INTRS_CPLUS) == 0)
 			break;
 
-		if ((status & RL_ISR_RX_OK) ||
-		    (status & RL_ISR_RX_ERR)) {
+		if (status & (RL_ISR_RX_OK | RL_ISR_RX_ERR)) {
 			re_rxeof(sc);
 			claimed = 1;
 		}
 
-		if ((status & RL_ISR_TIMEOUT_EXPIRED) ||
-		    (status & RL_ISR_TX_ERR) ||
-		    (status & RL_ISR_TX_DESC_UNAVAIL)) {
+		if (status & (RL_ISR_TIMEOUT_EXPIRED | RL_ISR_TX_ERR |
+		    RL_ISR_TX_DESC_UNAVAIL)) {
 			re_txeof(sc);
 			claimed = 1;
 		}
@@ -1491,7 +1496,7 @@ re_intr(void *arg)
 		}
 	}
 
-	if (ifp->if_flags & IFF_RUNNING && !IFQ_IS_EMPTY(&ifp->if_snd))
+	if (claimed && !IFQ_IS_EMPTY(&ifp->if_snd))
 		re_start(ifp);
 
 	return (claimed);
@@ -1501,7 +1506,7 @@ int
 re_encap(struct rl_softc *sc, struct mbuf *m, int *idx)
 {
 	bus_dmamap_t	map;
-	int		error, seg, uidx, startidx, curidx, lastidx;
+	int		error, seg, nsegs, uidx, startidx, curidx, lastidx, pad;
 #ifdef RE_VLAN
 	struct m_tag	*mtag;
 #endif
@@ -1509,10 +1514,9 @@ re_encap(struct rl_softc *sc, struct mbuf *m, int *idx)
 	u_int32_t	cmdstat, rl_flags = 0;
 	struct rl_txq	*txq;
 
-	if (sc->rl_ldata.rl_tx_free <= 4)
+	if (sc->rl_ldata.rl_tx_free <= RL_NTXDESC_RSVD)
 		return (EFBIG);
 
-#ifdef RE_CSUM_OFFLOAD
 	/*
 	 * Set up checksum offload. Note: checksum offload bits must
 	 * appear in all descriptors of a multi-descriptor transmit
@@ -1534,7 +1538,6 @@ re_encap(struct rl_softc *sc, struct mbuf *m, int *idx)
 		if (m->m_pkthdr.csum_flags & M_UDPV4_CSUM_OUT)
 			rl_flags |= RL_TDESC_CMD_UDPCSUM;
 	}
-#endif
 
 	txq = &sc->rl_ldata.rl_txq[*idx];
 	map = txq->txq_dmamap;
@@ -1547,7 +1550,15 @@ re_encap(struct rl_softc *sc, struct mbuf *m, int *idx)
 		return (error);
 	}
 
-	if (map->dm_nsegs > sc->rl_ldata.rl_tx_free - 4) {
+	nsegs = map->dm_nsegs;
+	pad = 0;
+	if (m->m_pkthdr.len <= RL_IP4CSUMTX_PADLEN &&
+	    (rl_flags & RL_TDESC_CMD_IPCSUM) != 0) {
+		pad = 1;
+		nsegs++;
+	}
+
+	if (nsegs > sc->rl_ldata.rl_tx_free - RL_NTXDESC_RSVD) {
 		error = EFBIG;
 		goto fail_unload;
 	}
@@ -1593,24 +1604,38 @@ re_encap(struct rl_softc *sc, struct mbuf *m, int *idx)
 			goto fail_unload;
 		}
 
-		cmdstat = map->dm_segs[seg].ds_len;
+		re_set_bufaddr(d, map->dm_segs[seg].ds_addr);
+		cmdstat = rl_flags | map->dm_segs[seg].ds_len;
 		if (seg == 0)
 			cmdstat |= RL_TDESC_CMD_SOF;
 		else
 			cmdstat |= RL_TDESC_CMD_OWN;
-		if (seg == map->dm_nsegs - 1) {
+		if (curidx == (RL_TX_DESC_CNT(sc) - 1))
+			cmdstat |= RL_TDESC_CMD_EOR;
+		if (seg == nsegs - 1) {
 			cmdstat |= RL_TDESC_CMD_EOF;
 			lastidx = curidx;
 		}
-		if (curidx == (RL_TX_DESC_CNT(sc) - 1))
-			cmdstat |= RL_TDESC_CMD_EOR;
-		d->rl_cmdstat = htole32(cmdstat | rl_flags);
-		d->rl_bufaddr_lo =
-		    htole32(RL_ADDR_LO(map->dm_segs[seg].ds_addr));
-		d->rl_bufaddr_hi =
-		    htole32(RL_ADDR_HI(map->dm_segs[seg].ds_addr));
+		d->rl_cmdstat = htole32(cmdstat);
 		RL_TXDESCSYNC(sc, curidx,
 		    BUS_DMASYNC_PREREAD|BUS_DMASYNC_PREWRITE);
+	}
+	if (pad) {
+		bus_addr_t paddaddr;
+
+		d = &sc->rl_ldata.rl_tx_list[curidx];
+		paddaddr = RL_TXPADDADDR(sc);
+		re_set_bufaddr(d, paddaddr);
+		cmdstat = rl_flags |
+		    RL_TDESC_CMD_OWN | RL_TDESC_CMD_EOF |
+		    (RL_IP4CSUMTX_PADLEN + 1 - m->m_pkthdr.len);
+		if (curidx == (RL_TX_DESC_CNT(sc) - 1))
+			cmdstat |= RL_TDESC_CMD_EOR;
+		d->rl_cmdstat = htole32(cmdstat);
+		RL_TXDESCSYNC(sc, curidx,
+		    BUS_DMASYNC_PREREAD|BUS_DMASYNC_PREWRITE);
+		lastidx = curidx;
+		curidx = RL_NEXT_TX_DESC(sc, curidx);
 	}
 	KASSERT(lastidx != -1);
 
@@ -1637,8 +1662,9 @@ re_encap(struct rl_softc *sc, struct mbuf *m, int *idx)
 	/* update info of TX queue and descriptors */
 	txq->txq_mbuf = m;
 	txq->txq_descidx = lastidx;
+	txq->txq_nsegs = nsegs;
 
-	sc->rl_ldata.rl_tx_free -= map->dm_nsegs;
+	sc->rl_ldata.rl_tx_free -= nsegs;
 	sc->rl_ldata.rl_tx_nextfree = curidx;
 
 	*idx = RL_NEXT_TXQ(sc, *idx);
@@ -1779,6 +1805,19 @@ re_init(struct ifnet *ifp)
 	re_tx_list_init(sc);
 
 	/*
+	 * Load the addresses of the RX and TX lists into the chip.
+	 */
+	CSR_WRITE_4(sc, RL_RXLIST_ADDR_HI,
+	    RL_ADDR_HI(sc->rl_ldata.rl_rx_list_map->dm_segs[0].ds_addr));
+	CSR_WRITE_4(sc, RL_RXLIST_ADDR_LO,
+	    RL_ADDR_LO(sc->rl_ldata.rl_rx_list_map->dm_segs[0].ds_addr));
+
+	CSR_WRITE_4(sc, RL_TXLIST_ADDR_HI,
+	    RL_ADDR_HI(sc->rl_ldata.rl_tx_list_map->dm_segs[0].ds_addr));
+	CSR_WRITE_4(sc, RL_TXLIST_ADDR_LO,
+	    RL_ADDR_LO(sc->rl_ldata.rl_tx_list_map->dm_segs[0].ds_addr));
+
+	/*
 	 * Enable transmit and receive.
 	 */
 	CSR_WRITE_1(sc, RL_COMMAND, RL_CMD_TX_ENB|RL_CMD_RX_ENB);
@@ -1795,6 +1834,9 @@ re_init(struct ifnet *ifp)
 			    RL_TXCFG_CONFIG|RL_LOOPTEST_ON_CPLUS);
 	} else
 		CSR_WRITE_4(sc, RL_TXCFG, RL_TXCFG_CONFIG);
+
+	CSR_WRITE_1(sc, RL_EARLY_TX_THRESH, 16);
+
 	CSR_WRITE_4(sc, RL_RXCFG, RL_RXCFG_CONFIG);
 
 	/* Set the individual bit to receive frames for this host only. */
@@ -1834,21 +1876,6 @@ re_init(struct ifnet *ifp)
 	/* Enable receiver and transmitter. */
 	CSR_WRITE_1(sc, RL_COMMAND, RL_CMD_TX_ENB|RL_CMD_RX_ENB);
 #endif
-	/*
-	 * Load the addresses of the RX and TX lists into the chip.
-	 */
-
-	CSR_WRITE_4(sc, RL_RXLIST_ADDR_HI,
-	    RL_ADDR_HI(sc->rl_ldata.rl_rx_list_map->dm_segs[0].ds_addr));
-	CSR_WRITE_4(sc, RL_RXLIST_ADDR_LO,
-	    RL_ADDR_LO(sc->rl_ldata.rl_rx_list_map->dm_segs[0].ds_addr));
-
-	CSR_WRITE_4(sc, RL_TXLIST_ADDR_HI,
-	    RL_ADDR_HI(sc->rl_ldata.rl_tx_list_map->dm_segs[0].ds_addr));
-	CSR_WRITE_4(sc, RL_TXLIST_ADDR_LO,
-	    RL_ADDR_LO(sc->rl_ldata.rl_tx_list_map->dm_segs[0].ds_addr));
-
-	CSR_WRITE_1(sc, RL_EARLY_TX_THRESH, 16);
 
 	/*
 	 * Initialize the timer interrupt register so that

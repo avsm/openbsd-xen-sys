@@ -1,4 +1,4 @@
-#	$OpenBSD: RAMDISK,v 1.69 2006/06/26 22:16:23 miod Exp $
+#	$OpenBSD: RAMDISK,v 1.71 2006/11/07 20:53:35 kettenis Exp $
 #
 # PPC GENERIC config file
 #
@@ -111,6 +111,7 @@ tqphy*		at mii?		# TDK Semiconductor PHYs
 brgphy*		at mii?		# Broadcom 10/100/1000 PHYs
 bmtphy*		at mii?		# Broadcom 10/100 PHYs
 eephy*		at mii?		# Marvell 88E1000 Gigabit PHYs
+xmphy*		at mii?		# XaQti XMAC-II PHYs
 urlphy*		at mii?		# Realtek RTL8150L internal PHY
 rgephy*		at mii?		# Realtek 8169S/8110S PHY
 rlphy*		at mii?		# Realtek 8139 internal PHYs
@@ -120,9 +121,9 @@ ukphy*		at mii?		# generic unknown PHYs
 macintr0	at macobio?	# old interrupt controller
 openpic*	at macobio?	# openpic interrupt controller
 bm*		at macobio?	# bmac ethernet
-#mc*		at macobio?	# MACE ethernet
+mc*		at macobio?	# MACE ethernet
 #esp*		at macobio? flags 0x0000ffff# 53c9x SCSI
-#mesh*		at macobio? flags 0xffff# MESH SCSI
+mesh*		at macobio? flags 0xffff# MESH SCSI
 #nvram*		at macobio?	# nvram
 adb*		at macobio?	# Apple Desktop Bus
 wi*		at macobio?	# Apple Airport 802.11DS
@@ -141,7 +142,7 @@ scsibus*	at siop?
 scsibus*	at ahc?
 #scsibus*	at bha?
 #scsibus*	at esp?
-#scsibus*	at mesh?
+scsibus*	at mesh?
 scsibus*	at ioprbs?
 scsibus*	at iopsp?
 scsibus*	at pcscp?

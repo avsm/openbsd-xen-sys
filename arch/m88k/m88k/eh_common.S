@@ -1,4 +1,4 @@
-/*   $OpenBSD: eh_common.S,v 1.18 2006/05/08 14:34:01 miod Exp $	*/
+/*   $OpenBSD: eh_common.S,v 1.20 2006/11/18 22:53:07 miod Exp $	*/
 /*
  * Mach Operating System
  * Copyright (c) 1993-1991 Carnegie Mellon University
@@ -1076,7 +1076,7 @@ ASLOCAL(m88100_have_pcb)
 	 * Save Pbus fault status register from data and inst CMMU.
 	 * We can afford calling a function since r1 is safe to use here.
 	 */
-ASLOCAL(pfsr_save)
+GLOBAL(pfsr_save)
 	PFSR_SAVE
 ASLOCAL(pfsr_done)
 	
@@ -1698,9 +1698,9 @@ ASLOCAL(no_softint)
 
 	ldcr	r2,  CPU
 	ld	r3,  r2, CI_CURPROC
-	bcnd.n	eq0, r3, _ASM_LABEL(no_ast)	/* no AST if no process! */
-	 ld	r2,  r3, P_ASTPENDING
-	bcnd.n	eq0, r3, _ASM_LABEL(no_ast)	/* .n safe since the first
+	bcnd	eq0, r3, _ASM_LABEL(no_ast)	/* no AST if no process! */
+	ld	r2,  r3, P_ASTPENDING
+	bcnd.n	eq0, r2, _ASM_LABEL(no_ast)	/* .n safe since the first
 						   instruction of CALL() is
 						   safe in a delay slot. */
 	/*

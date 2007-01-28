@@ -1,4 +1,4 @@
-/*	$OpenBSD: in6_src.c,v 1.18 2006/06/16 16:49:40 henning Exp $	*/
+/*	$OpenBSD: in6_src.c,v 1.21 2006/12/09 01:12:28 itojun Exp $	*/
 /*	$KAME: in6_src.c,v 1.36 2001/02/06 04:08:17 itojun Exp $	*/
 
 /*
@@ -86,6 +86,10 @@
 #include <netinet6/ip6_var.h>
 #include <netinet6/nd6.h>
 
+static int selectroute(struct sockaddr_in6 *, struct ip6_pktopts *,
+	struct ip6_moptions *, struct route_in6 *, struct ifnet **,
+	struct rtentry **, int);
+
 /*
  * Return an IPv6 address, which is the most appropriate for a given
  * destination and user specified options.
@@ -141,15 +145,15 @@ in6_selectsrc(dstsock, opts, mopts, ro, laddr, errorp)
 
 	/*
 	 * If the destination address is a link-local unicast address or
-	 * a multicast address, and if the outgoing interface is specified
-	 * by the sin6_scope_id filed, use an address associated with the
-	 * interface.
+	 * a link/interface-local multicast address, and if the outgoing
+	 * interface is specified by the sin6_scope_id filed, use an address
+	 * associated with the interface.
 	 * XXX: We're now trying to define more specific semantics of
 	 *      sin6_scope_id field, so this part will be rewritten in
 	 *      the near future.
 	 */
-	if ((IN6_IS_ADDR_LINKLOCAL(dst) || IN6_IS_ADDR_MC_LINKLOCAL(dst)) &&
-	    dstsock->sin6_scope_id) {
+	if ((IN6_IS_ADDR_LINKLOCAL(dst) || IN6_IS_ADDR_MC_LINKLOCAL(dst) ||
+	     IN6_IS_ADDR_MC_INTFACELOCAL(dst)) && dstsock->sin6_scope_id) {
 		/*
 		 * I'm not sure if boundary check for scope_id is done
 		 * somewhere...
@@ -173,17 +177,14 @@ in6_selectsrc(dstsock, opts, mopts, ro, laddr, errorp)
 	 * If the destination address is a multicast address and
 	 * the outgoing interface for the address is specified
 	 * by the caller, use an address associated with the interface.
-	 * There is a sanity check here; if the destination has node-local
-	 * scope, the outgoing interfacde should be a loopback address.
 	 * Even if the outgoing interface is not specified, we also
 	 * choose a loopback interface as the outgoing interface.
 	 */
 	if (IN6_IS_ADDR_MULTICAST(dst)) {
 		struct ifnet *ifp = mopts ? mopts->im6o_multicast_ifp : NULL;
 
-		if (ifp == NULL && IN6_IS_ADDR_MC_NODELOCAL(dst)) {
-			ifp = lo0ifp;
-		}
+		if (!ifp && dstsock->sin6_scope_id)
+			ifp = ifindex2ifnet[htons(dstsock->sin6_scope_id)];
 
 		if (ifp) {
 			ia6 = in6_ifawithscope(ifp, dst);
@@ -291,6 +292,218 @@ in6_selectsrc(dstsock, opts, mopts, ro, laddr, errorp)
 	return (0);
 }
 
+static int
+selectroute(dstsock, opts, mopts, ro, retifp, retrt, norouteok)
+	struct sockaddr_in6 *dstsock;
+	struct ip6_pktopts *opts;
+	struct ip6_moptions *mopts;
+	struct route_in6 *ro;
+	struct ifnet **retifp;
+	struct rtentry **retrt;
+	int norouteok;
+{
+	int error = 0;
+	struct ifnet *ifp = NULL;
+	struct rtentry *rt = NULL;
+	struct sockaddr_in6 *sin6_next;
+	struct in6_pktinfo *pi = NULL;
+	struct in6_addr *dst;
+
+	dst = &dstsock->sin6_addr;
+
+#if 0
+	if (dstsock->sin6_addr.s6_addr32[0] == 0 &&
+	    dstsock->sin6_addr.s6_addr32[1] == 0 &&
+	    !IN6_IS_ADDR_LOOPBACK(&dstsock->sin6_addr)) {
+		printf("in6_selectroute: strange destination %s\n",
+		       ip6_sprintf(&dstsock->sin6_addr));
+	} else {
+		printf("in6_selectroute: destination = %s%%%d\n",
+		       ip6_sprintf(&dstsock->sin6_addr),
+		       dstsock->sin6_scope_id); /* for debug */
+	}
+#endif
+
+	/* If the caller specify the outgoing interface explicitly, use it. */
+	if (opts && (pi = opts->ip6po_pktinfo) != NULL && pi->ipi6_ifindex) {
+		/* XXX boundary check is assumed to be already done. */
+		ifp = ifindex2ifnet[pi->ipi6_ifindex];
+		if (ifp != NULL &&
+		    (norouteok || retrt == NULL ||
+		     IN6_IS_ADDR_MULTICAST(dst))) {
+			/*
+			 * we do not have to check or get the route for
+			 * multicast.
+			 */
+			goto done;
+		} else
+			goto getroute;
+	}
+
+	/*
+	 * If the destination address is a multicast address and the outgoing
+	 * interface for the address is specified by the caller, use it.
+	 */
+	if (IN6_IS_ADDR_MULTICAST(dst) &&
+	    mopts != NULL && (ifp = mopts->im6o_multicast_ifp) != NULL) {
+		goto done; /* we do not need a route for multicast. */
+	}
+
+  getroute:
+	/*
+	 * If the next hop address for the packet is specified by the caller,
+	 * use it as the gateway.
+	 */
+	if (opts && opts->ip6po_nexthop) {
+		struct route_in6 *ron;
+
+		sin6_next = satosin6(opts->ip6po_nexthop);
+
+		/* at this moment, we only support AF_INET6 next hops */
+		if (sin6_next->sin6_family != AF_INET6) {
+			error = EAFNOSUPPORT; /* or should we proceed? */
+			goto done;
+		}
+
+		/*
+		 * If the next hop is an IPv6 address, then the node identified
+		 * by that address must be a neighbor of the sending host.
+		 */
+		ron = &opts->ip6po_nextroute;
+		if ((ron->ro_rt &&
+		    (ron->ro_rt->rt_flags & (RTF_UP | RTF_GATEWAY)) !=
+		    RTF_UP) ||
+		    !IN6_ARE_ADDR_EQUAL(&satosin6(&ron->ro_dst)->sin6_addr,
+		    &sin6_next->sin6_addr)) {
+			if (ron->ro_rt) {
+				RTFREE(ron->ro_rt);
+				ron->ro_rt = NULL;
+			}
+			*satosin6(&ron->ro_dst) = *sin6_next;
+		}
+		if (ron->ro_rt == NULL) {
+			rtalloc((struct route *)ron); /* multi path case? */
+			if (ron->ro_rt == NULL ||
+			    (ron->ro_rt->rt_flags & RTF_GATEWAY)) {
+				if (ron->ro_rt) {
+					RTFREE(ron->ro_rt);
+					ron->ro_rt = NULL;
+				}
+				error = EHOSTUNREACH;
+				goto done;
+			}
+		}
+		if (!nd6_is_addr_neighbor(sin6_next, ron->ro_rt->rt_ifp)) {
+			RTFREE(ron->ro_rt);
+			ron->ro_rt = NULL;
+			error = EHOSTUNREACH;
+			goto done;
+		}
+		rt = ron->ro_rt;
+		ifp = rt->rt_ifp;
+
+		/*
+		 * When cloning is required, try to allocate a route to the
+		 * destination so that the caller can store path MTU
+		 * information.
+		 */
+		goto done;
+	}
+
+	/*
+	 * Use a cached route if it exists and is valid, else try to allocate
+	 * a new one.  Note that we should check the address family of the
+	 * cached destination, in case of sharing the cache with IPv4.
+	 */
+	if (ro) {
+		if (ro->ro_rt &&
+		    (!(ro->ro_rt->rt_flags & RTF_UP) ||
+		     ((struct sockaddr *)(&ro->ro_dst))->sa_family != AF_INET6 ||
+		     !IN6_ARE_ADDR_EQUAL(&satosin6(&ro->ro_dst)->sin6_addr,
+		     dst))) {
+			RTFREE(ro->ro_rt);
+			ro->ro_rt = (struct rtentry *)NULL;
+		}
+		if (ro->ro_rt == (struct rtentry *)NULL) {
+			struct sockaddr_in6 *sa6;
+
+			/* No route yet, so try to acquire one */
+			bzero(&ro->ro_dst, sizeof(struct sockaddr_in6));
+			sa6 = (struct sockaddr_in6 *)&ro->ro_dst;
+			*sa6 = *dstsock;
+			sa6->sin6_scope_id = 0;
+			rtalloc_mpath((struct route *)ro, NULL, 0);
+		}
+
+		/*
+		 * do not care about the result if we have the nexthop
+		 * explicitly specified.
+		 */
+		if (opts && opts->ip6po_nexthop)
+			goto done;
+
+		if (ro->ro_rt) {
+			ifp = ro->ro_rt->rt_ifp;
+
+			if (ifp == NULL) { /* can this really happen? */
+				RTFREE(ro->ro_rt);
+				ro->ro_rt = NULL;
+			}
+		}
+		if (ro->ro_rt == NULL)
+			error = EHOSTUNREACH;
+		rt = ro->ro_rt;
+
+		/*
+		 * Check if the outgoing interface conflicts with
+		 * the interface specified by ipi6_ifindex (if specified).
+		 * Note that loopback interface is always okay.
+		 * (this may happen when we are sending a packet to one of
+		 *  our own addresses.)
+		 */
+		if (opts && opts->ip6po_pktinfo &&
+		    opts->ip6po_pktinfo->ipi6_ifindex) {
+			if (!(ifp->if_flags & IFF_LOOPBACK) &&
+			    ifp->if_index !=
+			    opts->ip6po_pktinfo->ipi6_ifindex) {
+				error = EHOSTUNREACH;
+				goto done;
+			}
+		}
+	}
+
+  done:
+	if (ifp == NULL && rt == NULL) {
+		/*
+		 * This can happen if the caller did not pass a cached route
+		 * nor any other hints.  We treat this case an error.
+		 */
+		error = EHOSTUNREACH;
+	}
+	if (error == EHOSTUNREACH)
+		ip6stat.ip6s_noroute++;
+
+	if (retifp != NULL)
+		*retifp = ifp;
+	if (retrt != NULL)
+		*retrt = rt;	/* rt may be NULL */
+
+	return (error);
+}
+
+int
+in6_selectroute(dstsock, opts, mopts, ro, retifp, retrt)
+	struct sockaddr_in6 *dstsock;
+	struct ip6_pktopts *opts;
+	struct ip6_moptions *mopts;
+	struct route_in6 *ro;
+	struct ifnet **retifp;
+	struct rtentry **retrt;
+{
+
+	return (selectroute(dstsock, opts, mopts, ro, retifp, retrt, 0));
+}
+
 /*
  * Default hop limit selection. The precedence is as follows:
  * 1. Hoplimit value specified via ioctl.
@@ -352,7 +565,7 @@ in6_embedscope(in6, sin6, in6p, ifpp)
 	 * ask us to overwrite existing sockaddr_in6
 	 */
 
-	if (IN6_IS_SCOPE_LINKLOCAL(in6)) {
+	if (IN6_IS_SCOPE_EMBED(in6)) {
 		struct in6_pktinfo *pi;
 
 		/*
@@ -411,7 +624,7 @@ in6_recoverscope(sin6, in6, ifp)
 	 */
 
 	sin6->sin6_scope_id = 0;
-	if (IN6_IS_SCOPE_LINKLOCAL(in6)) {
+	if (IN6_IS_SCOPE_EMBED(in6)) {
 		/*
 		 * KAME assumption: link id == interface id
 		 */
@@ -438,6 +651,6 @@ void
 in6_clearscope(addr)
 	struct in6_addr *addr;
 {
-	if (IN6_IS_SCOPE_LINKLOCAL(addr))
+	if (IN6_IS_SCOPE_EMBED(addr))
 		addr->s6_addr16[1] = 0;
 }

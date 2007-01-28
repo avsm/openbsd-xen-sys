@@ -1,4 +1,4 @@
-/*	$OpenBSD: schizoreg.h,v 1.14 2006/06/02 01:22:03 jason Exp $	*/
+/*	$OpenBSD: schizoreg.h,v 1.17 2007/01/14 16:18:56 kettenis Exp $	*/
 
 /*
  * Copyright (c) 2002 Jason L. Wright (jason@thought.net)
@@ -100,6 +100,7 @@ struct schizo_regs {
 #define	SCZ_PCI_IOMMU_TSBBASE		0x00208
 #define	SCZ_PCI_IOMMU_FLUSH		0x00210
 #define	SCZ_PCI_IOMMU_CTXFLUSH		0x00218
+#define	TOM_PCI_IOMMU_TFAR		0x00220
 #define	SCZ_PCI_IMAP_BASE		0x01000
 #define	SCZ_PCI_ICLR_BASE		0x01400
 #define	SCZ_PCI_INTR_RETRY		0x01a00	/* interrupt retry */
@@ -182,22 +183,24 @@ struct schizo_regs {
 #define	SCZ_CEAFAR_MEMADDR		0x000007fffffffff0UL	/* memory address */
 
 #define	SCZ_PCICTRL_BUS_UNUS		(1UL << 63UL)		/* bus unusable */
+#define	TOM_PCICTRL_DTO_ERR		(1UL << 62UL)		/* pci discard timeout */
+#define	TOM_PCICTRL_DTO_INT		(1UL << 61UL)		/* discard intr en */
 #define	SCZ_PCICTRL_ESLCK		(1UL << 51UL)		/* error slot locked */
 #define	SCZ_PCICTRL_ERRSLOT		(7UL << 48UL)		/* error slot */
 #define	SCZ_PCICTRL_TTO_ERR		(1UL << 38UL)		/* pci trdy# timeout */
 #define	SCZ_PCICTRL_RTRY_ERR		(1UL << 37UL)		/* pci rtry# timeout */
-#define	SCZ_PCICTRL_DTO_ERR		(1UL << 36UL)		/* pci discard timeout */
+#define	SCZ_PCICTRL_MMU_ERR		(1UL << 36UL)		/* pci mmu error */
 #define	SCZ_PCICTRL_SBH_ERR		(1UL << 35UL)		/* pci strm hole */
 #define	SCZ_PCICTRL_SERR		(1UL << 34UL)		/* pci serr# sampled */
 #define	SCZ_PCICTRL_PCISPD		(1UL << 33UL)		/* speed (0=clk/2,1=clk) */
 #define	SCZ_PCICTRL_PTO			(3UL << 24UL)		/* pci timeout interval */
-#define	SCZ_PCICTRL_DTO_INT		(1UL << 19UL)		/* discard intr en */
+#define	SCZ_PCICTRL_MMU_INT		(1UL << 19UL)		/* mmu intr en */
 #define	SCZ_PCICTRL_SBH_INT		(1UL << 18UL)		/* strm byte hole intr en */
 #define	SCZ_PCICTRL_EEN			(1UL << 17UL)		/* error intr en */
 #define	SCZ_PCICTRL_PARK		(1UL << 16UL)		/* bus parked */
 #define	SCZ_PCICTRL_PCIRST		(1UL <<  8UL)		/* pci reset */
 #define	SCZ_PCICTRL_ARB			(0x3fUL << 0UL)		/* dma arb enables */
-#define SCZ_PCICTRL_BITS "\20\277UNUS\263ESLCK\246TTO\245RTRY\244DTO\243SBH\242SERR\241SPD\223DTO_INT\222SBH_INT\221EEN\220PARK\210PCIRST"
+#define SCZ_PCICTRL_BITS "\20\277UNUS\276DTO\275DTO_INT\263ESLCK\246TTO\245RTRY\244MMU\243SBH\242SERR\241SPD\223MMU_INT\222SBH_INT\221EEN\220PARK\210PCIRST"
 
 #define	SCZ_PCIAFSR_PMA			0x8000000000000000UL
 #define	SCZ_PCIAFSR_PTA			0x4000000000000000UL
@@ -228,6 +231,15 @@ struct schizo_regs {
 #define	SCZ_PCIDIAG_I_DMADPAR		(1UL <<  3UL)	/* invert dma parity */
 #define	SCZ_PCIDIAG_I_PIODPAR		(1UL <<  2UL)	/* invert pio data parity */
 #define	SCZ_PCIDIAG_I_PIOAPAR		(1UL <<  1UL)	/* invert pio addr parity */
+
+#define	TOM_IOMMU_ERR			(1UL << 24)
+#define	TOM_IOMMU_ERR_MASK		(3UL << 25)
+#define	TOM_IOMMU_PROT_ERR		(0UL << 25)
+#define	TOM_IOMMU_INV_ERR		(1UL << 25)
+#define	TOM_IOMMU_TO_ERR		(2UL << 25)
+#define	TOM_IOMMU_ECC_ERR		(3UL << 25)
+#define	TOM_IOMMU_ILLTSBTBW_ERR		(1UL << 27)
+#define	TOM_IOMMU_BADVA_ERR		(1UL << 28)
 
 #define	SCZ_PBM_A_REGS			(0x600000UL - 0x400000UL)
 #define	SCZ_PBM_B_REGS			(0x700000UL - 0x400000UL)

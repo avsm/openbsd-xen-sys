@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.c,v 1.35 2005/12/09 22:54:15 kettenis Exp $ */
+/*	$OpenBSD: cpu.c,v 1.37 2006/11/27 18:43:30 gwk Exp $ */
 
 /*
  * Copyright (c) 1997 Per Fogelstrom
@@ -91,15 +91,12 @@ struct cfdriver cpu_cd = {
 
 void ppc64_scale_frequency(u_int);
 void (*ppc64_slew_voltage)(u_int);
-int ppc64_setperf(int);
+void ppc64_setperf(int);
 
 void config_l2cr(int);
 
 int
-cpumatch(parent, cfdata, aux)
-	struct device *parent;
-	void *cfdata;
-	void *aux;
+cpumatch(struct device *parent, void *cfdata, void *aux)
 {
 	struct confargs *ca = aux;
 
@@ -163,28 +160,24 @@ ppc64_scale_frequency(u_int freq_scale)
 
 extern int perflevel;
 
-int
+void
 ppc64_setperf(int speed)
 {
 	if (speed <= 50) {
 		if (ppc_curfreq == ppc_maxfreq / 2)
-			return (0);
+			return;
 
 		ppc64_scale_frequency(FREQ_HALF);
 		if (ppc64_slew_voltage)
 			ppc64_slew_voltage(FREQ_HALF);
-		perflevel = 50;
 	} else {
 		if (ppc_curfreq == ppc_maxfreq)
-			return (0);
+			return;
 
 		if (ppc64_slew_voltage)
 			ppc64_slew_voltage(FREQ_FULL);
 		ppc64_scale_frequency(FREQ_FULL);
-		perflevel = 100;
 	}
-
-	return (0);
 }
 
 int ppc_proc_is_64b;

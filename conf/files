@@ -1,4 +1,4 @@
-#	$OpenBSD: files,v 1.386 2006/10/15 19:55:47 claudio Exp $
+#	$OpenBSD: files,v 1.391 2006/12/02 15:55:18 miod Exp $
 #	$NetBSD: files,v 1.87 1996/05/19 17:17:50 jonathan Exp $
 
 #	@(#)files.newconf	7.5 (Berkeley) 5/10/93
@@ -48,6 +48,7 @@ define	rasops15
 define	rasops16
 define	rasops24
 define	rasops32
+define	rasops_bswap
 define	rasops_rotation
 
 # net device attributes - we have generic code for ether(net),
@@ -377,9 +378,17 @@ file	dev/ic/acx100.c			acx
 device	pgt: ether, ifnet, ifmedia, firmload, wlan
 file	dev/ic/pgt.c			pgt
 
+# Adaptec AIC-6915 Ethernet interface
+device sf: ether, ifnet, ifmedia, mii
+file	dev/ic/aic6915.c		sf
+
 # Marvell Libertas Open
 device	malo: ether, ifnet, ifmedia, firmload, wlan
 file	dev/ic/malo.c			malo
+
+# Broadcom BCM43xx
+device	bcw: ether, ifnet, ifmedia, wlan
+file	dev/ic/bcw.c			bcw
 
 # Attributes which machine-independent bus support can be attached to.
 # These should be defined here, because some of these busses can have
@@ -390,6 +399,7 @@ define	eisabus {}			# EISA attachment
 define	pcibus {[bus = -1]}		# PCI attachment
 define	tcbus {}			# TurboChannel attachment
 define	usbus {}			# USB attachment
+define	usbdev {}			# USB function attachment
 define	pcmciabus {[controller = -1], [socket = -1]}	# PCMCIA attachment
 define	cbbus {[slot = -1]}		# CardBus attachment
 define	pcmciaslot {[slot = -1]}	# PCMCIA slot itself
@@ -514,6 +524,7 @@ file dev/audio.c			audio			needs-flag
 file dev/ccd.c				ccd			needs-flag
 file dev/cons.c
 file dev/firmload.c			firmload
+file dev/flash.c			flash			needs-flag
 file dev/ic/ncr5380sbc.c		ncr5380sbc
 file dev/ic/ncr53c7xx.c			ncr53c7xx
 file dev/ic/pdq.c			pdq

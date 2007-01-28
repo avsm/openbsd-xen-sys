@@ -1,4 +1,4 @@
-/*	$OpenBSD: acpivar.h,v 1.27 2006/10/15 15:22:17 jordan Exp $	*/
+/*	$OpenBSD: acpivar.h,v 1.32 2006/12/21 19:59:02 deraadt Exp $	*/
 /*
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>
  *
@@ -19,12 +19,13 @@
 #define _DEV_ACPI_ACPIVAR_H_
 
 #include <sys/timeout.h>
+#include <sys/rwlock.h>
 
 /* #define ACPI_DEBUG */
 #ifdef ACPI_DEBUG
 extern int acpi_debug;
-#define dprintf(x...)	  do { if (acpi_debug) printf(x); } while(0)
-#define dnprintf(n,x...)  do { if (acpi_debug > (n)) printf(x); } while(0)
+#define dprintf(x...)	  do { if (acpi_debug) printf(x); } while (0)
+#define dnprintf(n,x...)  do { if (acpi_debug > (n)) printf(x); } while (0)
 #else
 #define dprintf(x...)
 #define dnprintf(n,x...)
@@ -99,6 +100,15 @@ struct acpi_thread {
 	volatile int	    running;
 };
 
+struct acpi_mutex {
+	struct rwlock		amt_lock;
+#define ACPI_MTX_MAXNAME	5
+	char			amt_name[ACPI_MTX_MAXNAME + 3]; /* only 4 used */
+	int			amt_ref_count;
+	int			amt_timeout;
+	int			amt_synclevel;
+};
+
 struct gpe_block {
 	int  (*handler)(struct acpi_softc *, int, void *);
 	void *arg;
@@ -143,7 +153,7 @@ struct acpi_softc {
 	struct klist		*sc_note;
 	struct acpi_reg_map	sc_pmregs[ACPIREG_MAXREG];
 	bus_space_handle_t	sc_ioh_pm1a_evt;
-  
+
 	void			*sc_interrupt;
 #ifdef __HAVE_GENERIC_SOFT_INTERRUPTS
 	void			*sc_softih;
@@ -167,17 +177,20 @@ struct acpi_softc {
 	u_int32_t		sc_gpe_sts;
 	u_int32_t		sc_gpe_en;
 	struct acpi_thread	*sc_thread;
-	
+
 	struct aml_node		*sc_tts;
 	struct aml_node		*sc_pts;
 	struct aml_node		*sc_bfs;
 	struct aml_node		*sc_gts;
 	struct aml_node		*sc_wak;
-	int 			sc_state;
+	int			sc_state;
 	struct acpiec_softc	*sc_ec;		/* XXX assume single EC */
 
 	struct acpi_ac_head	sc_ac;
 	struct acpi_bat_head	sc_bat;
+
+	struct timeout		sc_dev_timeout;
+	int			sc_poll;
 };
 
 #define GPE_NONE  0x00
@@ -230,6 +243,8 @@ void	acpiec_handle_events(struct acpiec_softc *);
 
 int	acpi_read_pmreg(struct acpi_softc *, int, int);
 void	acpi_write_pmreg(struct acpi_softc *, int, int, int);
+
+void	acpi_poll(void *);
 #endif
 
 #endif	/* !_DEV_ACPI_ACPIVAR_H_ */

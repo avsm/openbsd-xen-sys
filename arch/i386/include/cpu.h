@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.h,v 1.79 2006/06/12 13:18:18 dim Exp $	*/
+/*	$OpenBSD: cpu.h,v 1.85 2006/12/20 17:50:40 gwk Exp $	*/
 /*	$NetBSD: cpu.h,v 1.35 1996/05/05 19:29:26 christos Exp $	*/
 
 /*-
@@ -54,12 +54,6 @@
 #define NLAPIC 1
 
 #endif
-
-/*
- * definitions of cpu-dependent requirements
- * referenced in generic code
- */
-#define	cpu_swapin(p)			/* nothing */
 
 /*
  * Arguments to hardclock, softclock and statclock
@@ -203,12 +197,6 @@ extern void cpu_init_idle_pcbs(void);
 
 #define CPU_IS_PRIMARY(ci)	1
 
-/*
- * definitions of cpu-dependent requirements
- * referenced in generic code
- */
-#define	cpu_swapin(p)			/* nothing */
-
 #endif
 
 #define curpcb			curcpu()->ci_curpcb
@@ -225,6 +213,11 @@ extern void need_resched(struct cpu_info *);
 #define	CLKF_USERMODE(frame)	USERMODE((frame)->if_cs, (frame)->if_eflags)
 #define	CLKF_PC(frame)		((frame)->if_eip)
 #define	CLKF_INTR(frame)	(IDXSEL((frame)->if_cs) == GICODE_SEL)
+
+/*
+ * This is used during profiling to integrate system time.
+ */
+#define	PROC_PC(p)		((p)->p_md.md_regs->tf_eip)
 
 /*
  * Give a profiling tick to the current process when the user profiling
@@ -259,7 +252,7 @@ void	calibrate_cyclecounter(void);
 extern u_quad_t pentium_base_tsc;
 #define CPU_CLOCKUPDATE()						\
 	do {								\
-		if (pentium_mhz) {					\
+		if (cpuspeed) {						\
 			__asm __volatile("cli\n"			\
 					 "rdtsc\n"			\
 					 : "=A" (pentium_base_tsc)	\
@@ -300,18 +293,30 @@ struct cpu_cpuid_feature {
 };
 
 #ifdef _KERNEL
+/* locore.s */
 extern int cpu;
-extern int cpu_class;
+extern int cpu_id;
+extern char cpu_vendor[]; /* note: NOT nul-terminated */
+extern char cpu_brandstr[];
+extern int cpuid_level;
+extern int cpu_miscinfo;
 extern int cpu_feature;
 extern int cpu_ecxfeature;
-extern int cpu_apmwarn;
+extern int cpu_cache_eax;
+extern int cpu_cache_ebx;
+extern int cpu_cache_ecx;
+extern int cpu_cache_edx;
+/* machdep.c */
 extern int cpu_apmhalt;
-extern int cpuid_level;
+extern int cpu_class;
+extern char cpu_model[];
 extern const struct cpu_nocpuid_nameclass i386_nocpuid_cpus[];
 extern const struct cpu_cpuid_nameclass i386_cpuid_cpus[];
+/* apm.c */
+extern int cpu_apmwarn;
 
 #if defined(I586_CPU) || defined(I686_CPU)
-extern int pentium_mhz;
+extern int cpuspeed;
 extern int bus_clock;
 #endif
 
@@ -358,33 +363,33 @@ void	i8254_initclocks(void);
 /* est.c */
 #if !defined(SMALL_KERNEL) && defined(I686_CPU)
 void	est_init(const char *, int);
-int     est_setperf(int);
+void	est_setperf(int);
 #endif
 
 /* longrun.c */
 #if !defined(SMALL_KERNEL) && defined(I586_CPU)
 void	longrun_init(void);
-int	longrun_setperf(int);
+void	longrun_setperf(int);
 #endif
 
 /* p4tcc.c */
 #if !defined(SMALL_KERNEL) && defined(I686_CPU)
 void	p4tcc_init(int, int);
-int     p4tcc_setperf(int);
+void	p4tcc_setperf(int);
 #endif
 
 #if !defined(SMALL_KERNEL) && defined(I586_CPU)
 /* powernow.c */
 void	k6_powernow_init(void);
-int	k6_powernow_setperf(int);
+void	k6_powernow_setperf(int);
 #endif
 #if !defined(SMALL_KERNEL) && defined(I686_CPU)
 /* powernow-k7.c */
 void	k7_powernow_init(void);
-int	k7_powernow_setperf(int);
+void	k7_powernow_setperf(int);
 /* powernow-k8.c */
 void 	k8_powernow_init(void);
-int 	k8_powernow_setperf(int);
+void 	k8_powernow_setperf(int);
 #endif
 
 /* npx.c */

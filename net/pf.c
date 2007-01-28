@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf.c,v 1.517 2006/10/27 13:56:51 mcbride Exp $ */
+/*	$OpenBSD: pf.c,v 1.522 2006/12/21 12:26:51 dhartmei Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -4514,9 +4514,10 @@ pf_test_state_tcp(struct pf_state **state, int direction, struct pfi_kif *kif,
 			printf("pf: loose state match: ");
 			pf_print_state(*state);
 			pf_print_flags(th->th_flags);
-			printf(" seq=%u ack=%u len=%u ackskew=%d "
-			    "pkts=%llu:%llu\n", seq, ack, pd->p_len, ackskew,
-			    (*state)->packets[0], (*state)->packets[1]);
+			printf(" seq=%u (%u) ack=%u len=%u ackskew=%d "
+			    "pkts=%llu:%llu\n", seq, orig_seq, ack, pd->p_len,
+			    ackskew, (*state)->packets[0],
+			    (*state)->packets[1]);
 		}
 
 		if (dst->scrub || src->scrub) {
@@ -4566,9 +4567,9 @@ pf_test_state_tcp(struct pf_state **state, int direction, struct pfi_kif *kif,
 			printf("pf: BAD state: ");
 			pf_print_state(*state);
 			pf_print_flags(th->th_flags);
-			printf(" seq=%u ack=%u len=%u ackskew=%d "
+			printf(" seq=%u (%u) ack=%u len=%u ackskew=%d "
 			    "pkts=%llu:%llu dir=%s,%s\n",
-			    seq, ack, pd->p_len, ackskew,
+			    seq, orig_seq, ack, pd->p_len, ackskew,
 			    (*state)->packets[0], (*state)->packets[1],
 			    direction == PF_IN ? "in" : "out",
 			    direction == (*state)->direction ? "fwd" : "rev");
@@ -5417,6 +5418,15 @@ pf_routable(struct pf_addr *addr, sa_family_t af, struct pfi_kif *kif)
 		if (kif != NULL && (kif->pfik_ifp == NULL ||
 		    kif->pfik_ifp != ro.ro_rt->rt_ifp))
 			ret = 0;
+		/*
+		 * If the interface is a carp one check if the packet was 
+		 * seen on the underlying interface
+		 */
+		if (kif != NULL && ret == 0) {
+			if (ro.ro_rt->rt_ifp->if_type == IFT_CARP &&
+			    ro.ro_rt->rt_ifp->if_carpdev == kif->pfik_ifp)
+				ret = 1;
+		}
 		RTFREE(ro.ro_rt);
 	} else
 		ret = 0;
@@ -5474,7 +5484,7 @@ pf_route(struct mbuf **m, struct pf_rule *r, int dir, struct ifnet *oifp,
 {
 	struct mbuf		*m0, *m1;
 	struct route		 iproute;
-	struct route		*ro;
+	struct route		*ro = NULL;
 	struct sockaddr_in	*dst;
 	struct ip		*ip;
 	struct ifnet		*ifp = NULL;
@@ -5754,7 +5764,7 @@ pf_route6(struct mbuf **m, struct pf_rule *r, int dir, struct ifnet *oifp,
 	 * If the packet is too large for the outgoing interface,
 	 * send back an icmp6 error.
 	 */
-	if (IN6_IS_ADDR_LINKLOCAL(&dst->sin6_addr))
+	if (IN6_IS_SCOPE_EMBED(&dst->sin6_addr))
 		dst->sin6_addr.s6_addr16[1] = htons(ifp->if_index);
 	if ((u_long)m0->m_pkthdr.len <= ifp->if_mtu) {
 		error = nd6_output(ifp, ifp, m0, dst, NULL);
@@ -6082,8 +6092,8 @@ done:
 		    ("pf: dropping packet with ip options\n"));
 	}
 
-	if (s && s->tag)
-		pf_tag_packet(m, pd.pf_mtag, s->tag, r->rtableid);
+	if ((s && s->tag) || r->rtableid)
+		pf_tag_packet(m, pd.pf_mtag, s ? s->tag : 0, r->rtableid);
 
 #ifdef ALTQ
 	if (action == PF_PASS && r->qid) {
@@ -6428,8 +6438,8 @@ pf_test6(int dir, struct ifnet *ifp, struct mbuf **m0,
 done:
 	/* XXX handle IPv6 options, if not allowed. not implemented. */
 
-	if (s && s->tag)
-		pf_tag_packet(m, pd.pf_mtag, s->tag, r->rtableid);
+	if ((s && s->tag) || r->rtableid)
+		pf_tag_packet(m, pd.pf_mtag, s ? s->tag : 0, r->rtableid);
 
 #ifdef ALTQ
 	if (action == PF_PASS && r->qid) {

@@ -1,4 +1,4 @@
-/*	$OpenBSD: ipgphy.c,v 1.1 2006/07/12 19:05:50 brad Exp $	*/
+/*	$OpenBSD: ipgphy.c,v 1.6 2006/12/30 23:04:39 kettenis Exp $	*/
 
 /*-
  * Copyright (c) 2006, Pyun YongHyeon <yongari@FreeBSD.org>
@@ -217,23 +217,10 @@ ipgphy_service(struct mii_softc *sc, struct mii_data *mii, int cmd)
 		PHY_WRITE(sc, IPGPHY_MII_1000CR, gig);
 		PHY_WRITE(sc, IPGPHY_MII_BMCR, speed);
 
-		/*
-		 * When setting the link manually, one side must
-		 * be the master and the other the slave. However
-		 * ifmedia doesn't give us a good way to specify
-		 * this, so we fake it by using one of the LINK
-		 * flags. If LINK0 is set, we program the PHY to
-		 * be a master, otherwise it's a slave.
-		 */
-		if ((mii->mii_ifp->if_flags & IFF_LINK0))
-			PHY_WRITE(sc, IPGPHY_MII_1000CR, gig |
-			    IPGPHY_1000CR_MASTER |
-			    IPGPHY_1000CR_MMASTER |
-			    IPGPHY_1000CR_MANUAL);
-		else
-			PHY_WRITE(sc, IPGPHY_MII_1000CR, gig |
-			    IPGPHY_1000CR_MASTER |
-			    IPGPHY_1000CR_MANUAL);
+		if (mii->mii_media.ifm_media & IFM_ETH_MASTER)
+			gig |= IPGPHY_1000CR_MASTER | IPGPHY_1000CR_MANUAL;
+
+		PHY_WRITE(sc, IPGPHY_MII_1000CR, gig);
 
 done:
 		break;
@@ -283,7 +270,7 @@ done:
 	}
 
 	/* Update the media status. */
-	ipgphy_status(sc);
+	mii_phy_status(sc);
 
 	/* Callback if something changed. */
 	mii_phy_update(sc, cmd);
@@ -295,7 +282,6 @@ ipgphy_status(struct mii_softc *sc)
 {
 	struct mii_data *mii = sc->mii_pdata;
 	uint32_t bmsr, bmcr, stat;
-	uint32_t ar, lpar;
 
 	mii->mii_media_status = IFM_AVALID;
 	mii->mii_media_active = IFM_ETHER;
@@ -332,37 +318,16 @@ ipgphy_status(struct mii_softc *sc)
 		mii->mii_media_active |= IFM_1000_T;
 		break;
 	}
+
 	if ((stat & PC_PhyDuplexStatus) != 0)
-		mii->mii_media_active |= IFM_FDX;
+		mii->mii_media_active |= mii_phy_flowstatus(sc) | IFM_FDX;
 	else
 		mii->mii_media_active |= IFM_HDX;
 
-	ar = PHY_READ(sc, IPGPHY_MII_ANAR);
-	lpar = PHY_READ(sc, IPGPHY_MII_ANLPAR);
-
-	/*
-	 * FLAG0 : Rx flow-control
-	 * FLAG1 : Tx flow-control
-	 */
-	if ((ar & IPGPHY_ANAR_PAUSE) && (lpar & IPGPHY_ANLPAR_PAUSE))
-		mii->mii_media_active |= IFM_FLAG0 | IFM_FLAG1;
-	else if (!(ar & IPGPHY_ANAR_PAUSE) && (ar & IPGPHY_ANAR_APAUSE) &&
-	    (lpar & IPGPHY_ANLPAR_PAUSE) && (lpar & IPGPHY_ANLPAR_APAUSE))
-		mii->mii_media_active |= IFM_FLAG1;
-	else if ((ar & IPGPHY_ANAR_PAUSE) && (ar & IPGPHY_ANAR_APAUSE) &&
-	    !(lpar & IPGPHY_ANLPAR_PAUSE) &&
-	    (lpar & IPGPHY_ANLPAR_APAUSE)) {
-		mii->mii_media_active |= IFM_FLAG0;
-	}
-
-	/*
-	 * FLAG2 : local PHY resolved to MASTER
-	 */
-	if ((mii->mii_media_active & IFM_1000_T) != 0) {
-		stat = PHY_READ(sc, IPGPHY_MII_1000SR);
-		if ((stat & IPGPHY_1000SR_MASTER) != 0)
-			mii->mii_media_active |= IFM_FLAG2;
-	}
+	stat = PHY_READ(sc, IPGPHY_MII_1000SR);
+	if ((IFM_SUBTYPE(mii->mii_media_active) == IFM_1000_T) &&
+	    stat & IPGPHY_1000SR_MASTER)
+		mii->mii_media_active |= IFM_ETH_MASTER;
 }
 
 int
@@ -370,10 +335,13 @@ ipgphy_mii_phy_auto(struct mii_softc *mii)
 {
 	uint32_t reg;
 
-	PHY_WRITE(mii, IPGPHY_MII_ANAR,
-	    IPGPHY_ANAR_10T | IPGPHY_ANAR_10T_FDX |
-	    IPGPHY_ANAR_100TX | IPGPHY_ANAR_100TX_FDX |
-	    IPGPHY_ANAR_PAUSE | IPGPHY_ANAR_APAUSE);
+	reg = IPGPHY_ANAR_10T | IPGPHY_ANAR_10T_FDX |
+	      IPGPHY_ANAR_100TX | IPGPHY_ANAR_100TX_FDX;
+
+	if (sc->mii_flags & MIIF_DOPAUSE)
+		reg |= IPGPHY_ANAR_PAUSE | IPGPHY_ANAR_APAUSE;
+
+	PHY_WRITE(mii, IPGPHY_MII_ANAR, reg);
 	reg = IPGPHY_1000CR_1000T | IPGPHY_1000CR_1000T_FDX;
 	reg |= IPGPHY_1000CR_MASTER;
 	PHY_WRITE(mii, IPGPHY_MII_1000CR, reg);

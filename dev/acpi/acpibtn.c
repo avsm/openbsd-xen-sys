@@ -1,4 +1,4 @@
-/* $OpenBSD: acpibtn.c,v 1.10 2006/05/31 10:01:56 canacar Exp $ */
+/* $OpenBSD: acpibtn.c,v 1.14 2006/12/21 11:23:41 deraadt Exp $ */
 /*
  * Copyright (c) 2005 Marco Peereboom <marco@openbsd.org>
  *
@@ -46,6 +46,7 @@ struct acpibtn_softc {
 	struct aml_node		*sc_devnode;
 
 	int			sc_btn_type;
+#define	ACPIBTN_UNKNOWN	-1
 #define ACPIBTN_LID	0
 #define ACPIBTN_POWER	1
 #define ACPIBTN_SLEEP	2
@@ -87,16 +88,19 @@ acpibtn_attach(struct device *parent, struct device *self, void *aux)
 
 	if (!strcmp(aa->aaa_dev, ACPI_DEV_LD))
 		sc->sc_btn_type = ACPIBTN_LID;
-	if (!strcmp(aa->aaa_dev, ACPI_DEV_PBD))
+	else if (!strcmp(aa->aaa_dev, ACPI_DEV_PBD))
 		sc->sc_btn_type = ACPIBTN_POWER;
-	if (!strcmp(aa->aaa_dev, ACPI_DEV_SBD))
+	else if (!strcmp(aa->aaa_dev, ACPI_DEV_SBD))
 		sc->sc_btn_type = ACPIBTN_SLEEP;
+	else
+		sc->sc_btn_type = ACPIBTN_UNKNOWN;
 
-	acpibtn_getsta(sc); 
+	acpibtn_getsta(sc);
 
 	printf(": %s\n", sc->sc_devnode->parent->name);
 
-	aml_register_notify(sc->sc_devnode->parent, aa->aaa_dev, acpibtn_notify, sc);
+	aml_register_notify(sc->sc_devnode->parent, aa->aaa_dev, acpibtn_notify,
+	    sc, ACPIDEV_NOPOLL);
 }
 
 int
@@ -127,7 +131,6 @@ acpibtn_notify(struct aml_node *node, int notify_type, void *arg)
 		if (notify_type == 0x80) {
 			acpi_s5 = 1;
 			psignal(initproc, SIGUSR1);
-			/* NOTREACHED */
 		}
 		break;
 	default:

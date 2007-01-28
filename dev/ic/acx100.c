@@ -1,4 +1,4 @@
-/*	$OpenBSD: acx100.c,v 1.11 2006/08/19 23:17:12 mglocker Exp $ */
+/*	$OpenBSD: acx100.c,v 1.16 2006/12/13 11:03:54 mglocker Exp $ */
 
 /*
  * Copyright (c) 2006 Jonathan Gray <jsg@openbsd.org>
@@ -69,7 +69,6 @@
 #include <netinet/if_ether.h>
 #endif
 
-#include <net80211/ieee80211.h>
 #include <net80211/ieee80211_var.h>
 #include <net80211/ieee80211_amrr.h>
 #include <net80211/ieee80211_radiotap.h>
@@ -217,9 +216,6 @@ ACX100_CONF_FUNC(get, ed_thresh);
 ACX100_CONF_FUNC(set, ed_thresh);
 ACX100_CONF_FUNC(set, wepkey);
 
-#define ACXCMD_init_mem			ACXCMD_INIT_MEM
-ACX_NOARG_FUNC(init_mem);
-
 static const uint16_t	acx100_reg[ACXREG_MAX] = {
 	ACXREG(SOFT_RESET,		0x0000),
 
@@ -297,7 +293,7 @@ acx100_set_param(struct acx_softc *sc)
 	sc->chip_phymode = IEEE80211_MODE_11B;
 	sc->chip_chan_flags = IEEE80211_CHAN_B;
 	sc->sc_ic.ic_phytype = IEEE80211_T_DS;
-	sc->sc_ic.ic_sup_rates[IEEE80211_MODE_11B] = acx_rates_11b;
+	sc->sc_ic.ic_sup_rates[IEEE80211_MODE_11B] = ieee80211_std_rateset_11b;
 
 	sc->chip_init = acx100_init;
 	sc->chip_set_wepkey = acx100_set_wepkey;
@@ -384,7 +380,6 @@ int
 acx100_init_tmplt(struct acx_softc *sc)
 {
 	struct acx_conf_mmap mem_map;
-	struct acx_tmplt_tim tim;
 	struct ifnet *ifp = &sc->sc_ic.ic_if;
 
 	/* Set templates start address */
@@ -402,16 +397,6 @@ acx100_init_tmplt(struct acx_softc *sc)
 	/* Initialize various packet templates */
 	if (acx_init_tmplt_ordered(sc) != 0) {
 		printf("%s: can't init tmplt\n", ifp->if_xname);
-		return (1);
-	}
-
-	/* Setup TIM template */
-	bzero(&tim, sizeof(tim));
-	tim.tim_eid = IEEE80211_ELEMID_TIM;
-	tim.tim_len = ACX_TIM_LEN(ACX_TIM_BITMAP_LEN);
-	if (_acx_set_tim_tmplt(sc, &tim,
-	    ACX_TMPLT_TIM_SIZ(ACX_TIM_BITMAP_LEN)) != 0) {
-		printf("%s: can't set tim tmplt\n", ifp->if_xname);
 		return (1);
 	}
 
@@ -538,7 +523,7 @@ acx100_init_memory(struct acx_softc *sc)
 	}
 
 	/* Initialize memory */
-	if (acx_init_mem(sc) != 0) {
+	if (acx_exec_command(sc, ACXCMD_INIT_MEM, NULL, 0, NULL, 0) != 0) {
 		printf("%s: can't init mem\n", ifp->if_xname);
 		return (1);
 	}

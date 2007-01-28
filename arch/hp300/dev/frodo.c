@@ -1,4 +1,4 @@
-/*	$OpenBSD: frodo.c,v 1.7 2005/11/16 21:37:02 miod Exp $	*/
+/*	$OpenBSD: frodo.c,v 1.10 2007/01/06 20:17:43 miod Exp $	*/
 /*	$NetBSD: frodo.c,v 1.5 1999/07/31 21:15:20 thorpej Exp $	*/
 
 /*-
@@ -73,6 +73,7 @@
 #include <sys/syslog.h>
 #include <sys/device.h>
 
+#include <machine/bus.h>
 #include <machine/cpu.h>
 #include <machine/intr.h>
 #include <machine/hp300spu.h>
@@ -82,12 +83,21 @@
 #include <hp300/dev/frodoreg.h>
 #include <hp300/dev/frodovar.h>
 
+#include "isabr.h"
+
+#if NISABR > 0
+#include <uvm/uvm_extern.h>
+
+#include <dev/isa/isareg.h>
+#include <hp300/dev/isabrreg.h>
+#endif
+
 struct frodo_softc {
 	struct device	sc_dev;		/* generic device glue */
 	volatile u_int8_t *sc_regs;	/* register base */
 	struct isr	*sc_intr[FRODO_NINTR]; /* interrupt handlers */
 	struct isr	sc_isr;		/* main interrupt handler */
-	int		sc_refcnt;	/* number of interrupt refs */
+	u_int		sc_refcnt;	/* number of interrupt refs */
 };
 
 int	frodomatch(struct device *, void *, void *);
@@ -97,8 +107,9 @@ int	frodoprint(void *, const char *);
 int	frodosubmatch(struct device *, void *, void *);
 
 int	frodointr(void *);
-
 void	frodo_imask(struct frodo_softc *, u_int16_t, u_int16_t);
+int	frodo_isa_exists(void);
+void	frodo_state(struct frodo_softc *);
 
 struct cfattach frodo_ca = {
 	sizeof(struct frodo_softc), frodomatch, frodoattach
@@ -109,11 +120,11 @@ struct cfdriver frodo_cd = {
 };
 
 struct frodo_attach_args frodo_subdevs[] = {
-	{ "dnkbd",	FRODO_APCI_OFFSET(0),	FRODO_INTR_APCI0 },
-	{ "apci",	FRODO_APCI_OFFSET(1),	FRODO_INTR_APCI1 },
-	{ "apci",	FRODO_APCI_OFFSET(2),	FRODO_INTR_APCI2 },
-	{ "apci",	FRODO_APCI_OFFSET(3),	FRODO_INTR_APCI3 },
-	{ NULL,		0,			0 },
+	{ "dnkbd",	NULL,	FRODO_APCI_OFFSET(0),	FRODO_INTR_APCI0 },
+	{ "apci",	NULL,	FRODO_APCI_OFFSET(1),	FRODO_INTR_APCI1 },
+	{ "apci",	NULL,	FRODO_APCI_OFFSET(2),	FRODO_INTR_APCI2 },
+	{ "apci",	NULL,	FRODO_APCI_OFFSET(3),	FRODO_INTR_APCI3 },
+	{ NULL,		NULL,	0,			0 },
 };
 
 #define	FRODO_IPL	5
@@ -131,7 +142,7 @@ frodomatch(parent, match, aux)
 	if (frodo_matched)
 		return (0);
 
-	/* only 4xx workstations can have this */
+	/* only specific workstations can have this */
 	switch (machineid) {
 	case HP_362:
 	case HP_382:
@@ -183,11 +194,17 @@ frodoattach(parent, self, aux)
 	FRODO_WRITE(sc, FRODO_PIC_PU, 0xff);
 	FRODO_WRITE(sc, FRODO_PIC_PL, 0xff);
 
-	/* Set interrupt polarities. */
+	/* Set interrupt polarities... */
 	FRODO_WRITE(sc, FRODO_PIO_IPR, 0x10);
 
-	/* ...and configure for edge triggering. */
-	FRODO_WRITE(sc, FRODO_PIO_IELR, 0xcf);
+	/* ...and configure 1-5 for edge triggering. */
+	FRODO_WRITE(sc, FRODO_PIO_IELR, 0xc1);
+
+	/* Initialize IVR high half to zero so we don't need to mask it later */
+	FRODO_WRITE(sc, FRODO_PIC_IVR, 0x00);
+
+	/* Mask ISA interrupts until an ISA interrupt handler is registered. */
+	FRODO_WRITE(sc, FRODO_PIO_ISA_CONTROL, 0x80);
 
 	/*
 	 * We defer hooking up our interrupt handler until
@@ -205,9 +222,25 @@ frodoattach(parent, self, aux)
 		if (frodo_subdevs[i].fa_offset == FRODO_APCI_OFFSET(1) &&
 		    mmuid != MMUID_425_E)
 			continue;
+		frodo_subdevs[i].fa_tag = ia->ia_tag;
 		config_found_sm(self, &frodo_subdevs[i],
 		    frodoprint, frodosubmatch);
 	}
+
+#if NISABR > 0
+	/*
+	 * Only attempt to attach the isa bridge if it exists on this
+	 * machine.
+	 */
+	if (frodo_isa_exists()) {
+		struct frodo_attach_args fa;
+
+		fa.fa_name = "isabr";
+		fa.fa_tag = ia->ia_tag;
+		fa.fa_offset = fa.fa_line = 0;
+		config_found_sm(self, &fa, frodoprint, frodosubmatch);
+	}
+#endif
 }
 
 int
@@ -238,7 +271,7 @@ frodoprint(aux, pnp)
 	return (UNCONF);
 }
 
-void
+int
 frodo_intr_establish(struct device *frdev, int line, struct isr *isr,
     const char *name)
 {
@@ -250,8 +283,11 @@ frodo_intr_establish(struct device *frdev, int line, struct isr *isr,
 		    sc->sc_dev.dv_xname, line);
 	}
 	if (sc->sc_intr[line] != NULL) {
-		panic("%s: interrupt line %d already used",
+#ifdef DEBUG
+		printf("%s: interrupt line %d already used\n",
 		    sc->sc_dev.dv_xname, line);
+#endif
+		return (EPERM);
 	}
 
 	/*
@@ -277,7 +313,15 @@ frodo_intr_establish(struct device *frdev, int line, struct isr *isr,
 	sc->sc_intr[line] = isr;
 
 	/* Enable the interrupt line. */
-	frodo_imask(sc, (1 << line), 0);
+	frodo_imask(sc, FRODO_INTR_BIT(line), 0);
+
+#if NISABR > 0
+	/* Unmask ISA interrupts if necessary. */
+	if (FRODO_INTR_ISA(line))
+		FRODO_WRITE(sc, FRODO_PIO_ISA_CONTROL, 0x00);
+#endif
+
+	return (0);
 }
 
 void
@@ -288,13 +332,26 @@ frodo_intr_disestablish(frdev, line)
 	struct frodo_softc *sc = (struct frodo_softc *)frdev;
 	int newpri;
 
+#ifdef DIAGNOSTIC
 	if (sc->sc_intr[line] == NULL) {
-		panic("%s: no handler for line %d",
-		    sc->sc_dev.dv_xname, line);
+		printf("%s(%s): no handler for line %d",
+		    sc->sc_dev.dv_xname, __func__, line);
+		return;
 	}
+#endif
 
 	sc->sc_intr[line] = NULL;
-	frodo_imask(sc, 0, (1 << line));
+	frodo_imask(sc, 0, FRODO_INTR_BIT(line));
+
+#if NISABR > 0
+	/* Mask ISA interrupts if necessary. */
+	if (FRODO_INTR_ISA(line)) {
+		if (sc->sc_intr[FRODO_INTR_ILOW] == NULL &&
+		    sc->sc_intr[FRODO_INTR_IMID] == NULL &&
+		    sc->sc_intr[FRODO_INTR_IHI] == NULL)
+			FRODO_WRITE(sc, FRODO_PIO_ISA_CONTROL, 0x80);
+	}
+#endif
 
 	/* If this was the last, unhook ourselves. */
 	if (sc->sc_refcnt-- == 1) {
@@ -324,21 +381,29 @@ frodointr(arg)
 {
 	struct frodo_softc *sc = arg;
 	struct isr *fisr;
-	int line, taken = 0;
+	int pending, line, rc = 0;
+
+#ifdef DEBUG
+	frodo_state(sc);
+#endif
 
 	/* Any interrupts pending? */
-	if (FRODO_GETPEND(sc) == 0)
-		return (0);
+	while ((pending = FRODO_GETPEND(sc)) != 0) {
+		rc++;
 
-	do {
 		/*
 		 * Get pending interrupt; this also clears it for us.
 		 */
-		line = FRODO_IPEND(sc);
+		line = FRODO_READ(sc, FRODO_PIC_ACK) /* & 0x0f */;
+
 		fisr = sc->sc_intr[line];
 		if (fisr == NULL) {
 			printf("%s: unhandled interrupt on line %d\n",
 			    sc->sc_dev.dv_xname, line);
+#ifdef DEBUG
+			/* Disable interrupt source */
+			frodo_imask(sc, 0, FRODO_INTR_BIT(line));
+#endif
 		} else {
 			if ((*fisr->isr_func)(fisr->isr_arg) != 0) {
 				fisr->isr_count.ec_count++;
@@ -347,11 +412,17 @@ frodointr(arg)
 				    sc->sc_dev.dv_xname, line);
 			}
 		}
-		if (taken++ > 100)
-			panic("frodointr: looping, line %d fisr %p", line, fisr);
-	} while (FRODO_GETPEND(sc) != 0);
 
-	return (1);
+		if (rc > 100)
+			panic("frodointr: looping, pending %x line %d fisr %p",
+			    pending, line, fisr);
+
+#ifdef DEBUG
+		frodo_state(sc);
+#endif
+	}
+
+	return (rc);
 }
 
 void
@@ -368,3 +439,54 @@ frodo_imask(sc, set, clear)
 
 	FRODO_SETMASK(sc, imask);
 }
+
+#ifdef DEBUG
+void
+frodo_state(struct frodo_softc *sc)
+{
+	int i;
+
+	printf("%s state:", sc->sc_dev.dv_xname);
+	for (i = 0xc0; i < 0x100; i += 4) {
+		printf(" %02x", FRODO_READ(sc, i));
+		if (i == 0xcc || i == 0xdc || i == 0xec)
+			printf(" /");
+	}
+	printf("\n");
+}
+#endif
+
+#if NISABR > 0
+int
+frodo_isa_exists()
+{
+	vaddr_t va;
+	int rv;
+
+	va = uvm_km_valloc(kernel_map, PAGE_SIZE);
+	if (va == NULL)
+		return (0);
+
+	/*
+	 * Check that the iomem space answers probes
+	 */
+	pmap_kenter_cache(va, ISABR_IOMEM_BASE, PG_RW | PG_CI);
+	pmap_update(pmap_kernel());
+	rv = badbaddr((caddr_t)va);
+	pmap_kremove(va, PAGE_SIZE);
+	pmap_update(pmap_kernel());
+
+	/*
+	 * Check that the ioport space answers probes
+	 */
+	pmap_kenter_cache(va, ISABR_IOPORT_BASE, PG_RW | PG_CI);
+	pmap_update(pmap_kernel());
+	rv |= badbaddr((caddr_t)va);
+	pmap_kremove(va, PAGE_SIZE);
+	pmap_update(pmap_kernel());
+
+	uvm_km_free(kernel_map, va, PAGE_SIZE);
+
+	return (!rv);
+}
+#endif

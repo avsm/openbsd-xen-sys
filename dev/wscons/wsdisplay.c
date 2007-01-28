@@ -1,4 +1,4 @@
-/* $OpenBSD: wsdisplay.c,v 1.69 2006/08/05 16:59:57 miod Exp $ */
+/* $OpenBSD: wsdisplay.c,v 1.74 2006/12/02 18:16:14 miod Exp $ */
 /* $NetBSD: wsdisplay.c,v 1.82 2005/02/27 00:27:52 perry Exp $ */
 
 /*
@@ -61,8 +61,6 @@
 #include <dev/wscons/wsemulvar.h>
 #include <dev/wscons/wscons_callbacks.h>
 #include <dev/cons.h>
-
-#include <dev/ic/pcdisplay.h>
 
 #include "wsdisplay.h"
 #include "wskbd.h"
@@ -233,7 +231,7 @@ int	wsdisplayparam(struct tty *, struct termios *);
 void	wsdisplay_common_attach(struct wsdisplay_softc *sc,
 	    int console, int mux, const struct wsscreen_list *,
 	    const struct wsdisplay_accessops *accessops,
-	    void *accesscookie);
+	    void *accesscookie, u_int defaultscreens);
 int	wsdisplay_common_detach(struct wsdisplay_softc *, int);
 
 #ifdef WSDISPLAY_COMPAT_RAWKBD
@@ -290,26 +288,21 @@ wsscreen_attach(struct wsdisplay_softc *sc, int console, const char *emul,
 		 * Tell the emulation about the callback argument.
 		 * The other stuff is already there.
 		 */
-		(*dconf->wsemul->attach)(1, 0, 0, 0, 0, scr, 0);
+		(void)(*dconf->wsemul->attach)(1, 0, 0, 0, 0, scr, 0);
 	} else { /* not console */
 		dconf = malloc(sizeof(struct wsscreen_internal),
 		    M_DEVBUF, M_NOWAIT);
-		if (dconf == NULL) {
-			free(scr, M_DEVBUF);
-			return (NULL);
-		}
+		if (dconf == NULL)
+			goto fail;
 		dconf->emulops = type->textops;
 		dconf->emulcookie = cookie;
-		if (dconf->emulops != NULL &&
-		    (dconf->wsemul = wsemul_pick(emul)) != NULL) {
-			dconf->wsemulcookie =
-			    (*dconf->wsemul->attach)(0, type, cookie,
-				ccol, crow, scr, defattr);
-		} else {
-			free(dconf, M_DEVBUF);
-			free(scr, M_DEVBUF);
-			return (NULL);
-		}
+		if (dconf->emulops == NULL ||
+		    (dconf->wsemul = wsemul_pick(emul)) == NULL)
+			goto fail;
+		dconf->wsemulcookie = (*dconf->wsemul->attach)(0, type, cookie,
+		    ccol, crow, scr, defattr);
+		if (dconf->wsemulcookie == NULL)
+			goto fail;
 		dconf->scrdata = type;
 	}
 
@@ -331,6 +324,12 @@ wsscreen_attach(struct wsdisplay_softc *sc, int console, const char *emul,
 	scr->scr_rawkbd = 0;
 #endif
 	return (scr);
+
+fail:
+	if (dconf != NULL)
+		free(dconf, M_DEVBUF);
+	free(scr, M_DEVBUF);
+	return (NULL);
 }
 
 void
@@ -571,7 +570,7 @@ wsdisplay_emul_attach(struct device *parent, struct device *self, void *aux)
 
 	wsdisplay_common_attach(sc, ap->console,
 	    sc->sc_dv.dv_cfdata->wsemuldisplaydevcf_mux, ap->scrdata,
-	    ap->accessops, ap->accesscookie);
+	    ap->accessops, ap->accesscookie, ap->defaultscreens);
 
 	if (ap->console && cn_tab == &wsdisplay_cons) {
 		int maj;
@@ -659,7 +658,8 @@ wsemuldisplaydevprint(void *aux, const char *pnp)
 void
 wsdisplay_common_attach(struct wsdisplay_softc *sc, int console, int kbdmux,
     const struct wsscreen_list *scrdata,
-    const struct wsdisplay_accessops *accessops, void *accesscookie)
+    const struct wsdisplay_accessops *accessops, void *accesscookie,
+    u_int defaultscreens)
 {
 	static int hookset = 0;
 	int i, start = 0;
@@ -728,9 +728,12 @@ wsdisplay_common_attach(struct wsdisplay_softc *sc, int console, int kbdmux,
 	/*
 	 * Set up a number of virtual screens if wanted. The
 	 * WSDISPLAYIO_ADDSCREEN ioctl is more flexible, so this code
-	 * is for special cases like installation kernels.
+	 * is for special cases like installation kernels, as well as
+	 * sane multihead defaults.
 	 */
-	for (i = start; i < wsdisplay_defaultscreens; i++) {
+	if (defaultscreens == 0)
+		defaultscreens = wsdisplay_defaultscreens;
+	for (i = start; i < defaultscreens; i++) {
 		if (wsdisplay_addscreen(sc, i, 0, 0))
 			break;
 	}
@@ -2399,18 +2402,39 @@ mouse_moverel(char dx, char dy)
 void
 inverse_char(unsigned short pos)
 {
-	u_int16_t uc;
-	u_int16_t attr;
+	struct wsscreen_internal *dconf;
+	struct wsdisplay_charcell cell;
+	int fg, bg, ul;
+	int flags;
+	int tmp;
+	long attr;
 
-	uc = GET_FULLCHAR(pos);
-	attr = uc;
+	dconf = sc->sc_focus->scr_dconf;
 
-	if ((attr >> 8) == 0)
-		attr = (FG_LIGHTGREY << 8);
+	GETCHAR(pos, &cell);
 
-	attr = (((attr >> 8) & 0x88) | ((((attr >> 8) >> 4) |
-		((attr >> 8) << 4)) & 0x77)) ;
-	PUTCHAR(pos, (u_int) (uc & 0x00FF), (long) attr);
+	(*dconf->emulops->unpack_attr)(dconf->emulcookie, cell.attr, &fg,
+	    &bg, &ul);
+
+	/*
+	 * Display the mouse cursor as a color inverted cell whenever
+	 * possible. If this is not possible, ask for the video reverse
+	 * attribute.
+	 */
+	flags = 0;
+	if (dconf->scrdata->capabilities & WSSCREEN_WSCOLORS) {
+		flags |= WSATTR_WSCOLORS;
+		tmp = fg;
+		fg = bg;
+		bg = tmp;
+	} else if (dconf->scrdata->capabilities & WSSCREEN_REVERSE) {
+		flags |= WSATTR_REVERSE;
+	}
+	if ((*dconf->emulops->alloc_attr)(dconf->emulcookie, fg, bg, flags |
+	    (ul ? WSATTR_UNDERLINE : 0), &attr) == 0) {
+		cell.attr = attr;
+		PUTCHAR(pos, cell.uc, cell.attr);
+	}
 }
 
 void
@@ -2436,12 +2460,14 @@ inverse_region(unsigned short start, unsigned short end)
 unsigned char
 skip_spc_right(char border)
 {
+	struct wsdisplay_charcell cell;
 	unsigned short current = CPY_END;
 	unsigned short mouse_col = (CPY_END % N_COLS);
 	unsigned short limit = current + (N_COLS - mouse_col - 1);
 	unsigned char res = 0;
 
-	while ((GETCHAR(current) == ' ') && (current <= limit)) {
+	while (GETCHAR(current, &cell) == 0 && cell.uc == ' ' &&
+	    current <= limit) {
 		current++;
 		res++;
 	}
@@ -2465,12 +2491,14 @@ skip_spc_right(char border)
 unsigned char
 skip_spc_left(void)
 {
+	struct wsdisplay_charcell cell;
 	short current = CPY_START;
 	unsigned short mouse_col = (MOUSE % N_COLS);
 	unsigned short limit = current - mouse_col;
 	unsigned char res = 0;
 
-	while ((GETCHAR(current) == ' ') && (current >= limit)) {
+	while (GETCHAR(current, &cell) == 0 && cell.uc == ' ' &&
+	    current >= limit) {
 		current--;
 		res++;
 	}
@@ -2557,13 +2585,16 @@ static const int charClass[256] = {
 unsigned char
 skip_char_right(unsigned short offset)
 {
+	struct wsdisplay_charcell cell;
 	unsigned short current = offset;
 	unsigned short limit = current + (N_COLS - (MOUSE % N_COLS) - 1);
-	unsigned char class = charClass[GETCHAR(current)];
+	unsigned char class;
 	unsigned char res = 0;
 
-	while ((charClass[GETCHAR(current)] == class)
-		&& (current <= limit)) {
+	GETCHAR(current, &cell);
+	class = charClass[cell.uc & 0xff];
+	while (GETCHAR(current, &cell) == 0 &&
+	    charClass[cell.uc & 0xff] == class && current <= limit) {
 		current++;
 		res++;
 	}
@@ -2578,12 +2609,16 @@ skip_char_right(unsigned short offset)
 unsigned char
 skip_char_left(unsigned short offset)
 {
+	struct wsdisplay_charcell cell;
 	short current = offset;
 	unsigned short limit = current - (MOUSE % N_COLS);
-	unsigned char class = charClass[GETCHAR(current)];
+	unsigned char class;
 	unsigned char res = 0;
 
-	while ((charClass[GETCHAR(current)] == class) && (current >= limit)) {
+	GETCHAR(current, &cell);
+	class = charClass[cell.uc & 0xff];
+	while (GETCHAR(current, &cell) == 0 &&
+	    charClass[cell.uc & 0xff] == class && current >= limit) {
 		current--;
 		res++;
 	}
@@ -2598,11 +2633,16 @@ skip_char_left(unsigned short offset)
 unsigned char
 class_cmp(unsigned short first, unsigned short second)
 {
+	struct wsdisplay_charcell cell;
 	unsigned char first_class;
 	unsigned char second_class;
 
-	first_class = charClass[GETCHAR(first)];
-	second_class = charClass[GETCHAR(second)];
+	if (GETCHAR(first, &cell) != 0)
+		return (1);
+	first_class = charClass[cell.uc & 0xff];
+	if (GETCHAR(second, &cell) != 0)
+		return (1);
+	second_class = charClass[cell.uc & 0xff];
 
 	if (first_class != second_class)
 		return (1);
@@ -2655,6 +2695,7 @@ mouse_copy_start(void)
 void
 mouse_copy_word()
 {
+	struct wsdisplay_charcell cell;
 	unsigned char right;
 	unsigned char left;
 
@@ -2667,7 +2708,7 @@ mouse_copy_word()
 	CPY_START = MOUSE;
 	CPY_END = MOUSE;
 
-	if (IS_ALPHANUM(MOUSE)) {
+	if (GETCHAR(MOUSE, &cell) == 0 && IS_ALPHANUM(cell.uc)) {
 		right = skip_char_right(CPY_END);
 		left = skip_char_left(CPY_START);
 	} else {
@@ -3070,6 +3111,7 @@ remove_selection(struct wsdisplay_softc *sc)
 void
 mouse_copy_selection(void)
 {
+	struct wsdisplay_charcell cell;
 	unsigned short current = 0;
 	unsigned short blank = current;
 	unsigned short buf_end = ((N_COLS + 1) * N_ROWS);
@@ -3080,7 +3122,9 @@ mouse_copy_selection(void)
 	sel_end = CPY_END;
 
 	while (sel_cur <= sel_end && current < buf_end - 1) {
-		Copybuffer[current] = (GETCHAR(sel_cur));
+		if (GETCHAR(sel_cur, &cell) != 0)
+			break;
+		Copybuffer[current] = cell.uc;
 		if (!IS_SPACE(Copybuffer[current]))
 			blank = current + 1; /* first blank after non-blank */
 		current++;

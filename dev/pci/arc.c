@@ -1,4 +1,4 @@
-/*	$OpenBSD: arc.c,v 1.53 2006/11/01 12:21:51 dlg Exp $ */
+/*	$OpenBSD: arc.c,v 1.56 2006/12/22 22:55:36 deraadt Exp $ */
 
 /*
  * Copyright (c) 2006 David Gwynne <dlg@openbsd.org>
@@ -36,9 +36,9 @@
 #include <scsi/scsi_all.h>
 #include <scsi/scsiconf.h>
 
+#include <sys/sensors.h>
 #if NBIO > 0
 #include <sys/ioctl.h>
-#include <sys/sensors.h>
 #include <dev/biovar.h>
 #endif
 
@@ -385,6 +385,7 @@ struct arc_softc {
 	volatile int		sc_talking;
 
 	struct sensor		*sc_sensors;
+	struct sensordev	sc_sensordev;
 	int			sc_nsensors;
 };
 #define DEVNAME(_s)		((_s)->sc_dev.dv_xname)
@@ -508,6 +509,7 @@ arc_attach(struct device *parent, struct device *self, void *aux)
 {
 	struct arc_softc		*sc = (struct arc_softc *)self;
 	struct pci_attach_args		*pa = aux;
+	struct scsibus_attach_args	saa;
 	struct device			*child;
 
 	sc->sc_talking = 0;
@@ -539,7 +541,10 @@ arc_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_link.adapter_buswidth = ARC_MAX_TARGET;
 	sc->sc_link.openings = sc->sc_req_count / ARC_MAX_TARGET;
 
-	child = config_found(self, &sc->sc_link, scsiprint);
+	bzero(&saa, sizeof(saa));
+	saa.saa_sc_link = &sc->sc_link;
+
+	child = config_found(self, &saa, scsiprint);
 	sc->sc_scsibus = (struct scsibus_softc *)child;
 
 	/* enable interrupts */
@@ -1569,6 +1574,9 @@ arc_create_sensors(void *xsc, void *arg)
 		return;
 	bzero(sc->sc_sensors, sizeof(struct sensor) * sc->sc_nsensors);
 
+	strlcpy(sc->sc_sensordev.xname, DEVNAME(sc),
+	    sizeof(sc->sc_sensordev.xname));
+
 	for (i = 0; i < sc->sc_nsensors; i++) {
 		bzero(&bv, sizeof(bv));
 		bv.bv_volid = i;
@@ -1578,22 +1586,20 @@ arc_create_sensors(void *xsc, void *arg)
 		sc->sc_sensors[i].type = SENSOR_DRIVE;
 		sc->sc_sensors[i].status = SENSOR_S_UNKNOWN;
 
-		strlcpy(sc->sc_sensors[i].device, DEVNAME(sc),
-		    sizeof(sc->sc_sensors[i].device));
 		strlcpy(sc->sc_sensors[i].desc, bv.bv_dev,
 		    sizeof(sc->sc_sensors[i].desc));
 
-		sensor_add(&sc->sc_sensors[i]);
+		sensor_attach(&sc->sc_sensordev, &sc->sc_sensors[i]);
 	}
 
 	if (sensor_task_register(sc, arc_refresh_sensors, 120) != 0)
 		goto bad;
 
+	sensordev_install(&sc->sc_sensordev);
+
 	return;
 
 bad:
-	while (--i >= 0)
-		sensor_del(&sc->sc_sensors[i]);
 	free(sc->sc_sensors, M_DEVBUF);
 }
 

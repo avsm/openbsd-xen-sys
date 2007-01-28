@@ -1,4 +1,4 @@
-/*	$OpenBSD: gscpm.c,v 1.3 2004/10/05 19:02:33 grange Exp $	*/
+/*	$OpenBSD: gscpm.c,v 1.5 2006/12/11 20:57:40 deraadt Exp $	*/
 /*
  * Copyright (c) 2004 Alexander Yurchenko <grange@openbsd.org>
  *
@@ -48,7 +48,7 @@ struct gscpm_softc {
 int	gscpm_match(struct device *, void *, void *);
 void	gscpm_attach(struct device *, struct device *, void *);
 
-int	gscpm_setperf(int);
+void	gscpm_setperf(int);
 
 #ifdef __HAVE_TIMECOUNTER
 u_int	gscpm_get_timecount(struct timecounter *tc);
@@ -107,7 +107,8 @@ gscpm_attach(struct device *parent, struct device *self, void *aux)
 
 	/* Map ACPI registers */
 	acpibase = pci_conf_read(sc->sc_pc, sc->sc_tag, GSCPM_ACPIBASE);
-	if (bus_space_map(sc->sc_iot, PCI_MAPREG_IO_ADDR(acpibase),
+	if (PCI_MAPREG_IO_ADDR(acpibase) == 0 ||
+	    bus_space_map(sc->sc_iot, PCI_MAPREG_IO_ADDR(acpibase),
 	    GSCPM_ACPISIZE, 0, &sc->sc_acpi_ioh)) {
 		printf(": failed to map ACPI registers\n");
 		return;
@@ -141,7 +142,7 @@ gscpm_get_timecount(struct timecounter *tc)
 #endif	/* __HAVE_TIMECOUNTER */
 
 #if 0
-int
+void
 gscpm_setperf(int level)
 {
 	struct gscpm_softc *sc = gscpm_cookie;
@@ -163,7 +164,5 @@ gscpm_setperf(int level)
 
 	/* Update processor control register */
 	bus_space_write_4(sc->sc_iot, sc->sc_acpi_ioh, GSCPM_P_CNT, pctl);
-
-	return (0);
 }
 #endif

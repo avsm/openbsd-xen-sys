@@ -1,4 +1,4 @@
-/*	$OpenBSD: vm_machdep.c,v 1.1 2005/04/01 10:40:47 mickey Exp $	*/
+/*	$OpenBSD: vm_machdep.c,v 1.3 2006/11/29 12:26:13 miod Exp $	*/
 
 /*
  * Copyright (c) 2005 Michael Shalayeff
@@ -105,38 +105,6 @@ pagemove(from, to, size)
 }
 
 void
-cpu_swapin(p)
-	struct proc *p;
-{
-	struct trapframe *tf = p->p_md.md_regs;
-	paddr_t pa;
-
-	/*
-	 * Stash the physical for the pcb of U for later perusal
-	 */
-	if (!pmap_extract(pmap_kernel(), (vaddr_t)p->p_addr, &pa))
-		panic("pmap_extract(%p) failed", p->p_addr);
-
-	tf->tf_cr30 = pa;
-}
-
-void
-cpu_swapout(p)
-	struct proc *p;
-{
-	extern paddr_t fpu_curpcb;	/* from locore.S */
-	extern u_int fpu_enable;
-	struct trapframe *tf = p->p_md.md_regs;
-
-	if (tf->tf_cr30 == fpu_curpcb) {
-		mtctl(fpu_enable, CR_CCR);
-		fpu_save(fpu_curpcb);
-		fpu_curpcb = 0;
-		mtctl(0, CR_CCR);
-	}
-}
-
-void
 cpu_fork(p1, p2, stack, stacksize, func, arg)
 	struct proc *p1, *p2;
 	void *stack;
@@ -151,6 +119,7 @@ cpu_fork(p1, p2, stack, stacksize, func, arg)
 	struct pcb *pcbp;
 	struct trapframe *tf;
 	register_t sp, osp;
+	paddr_t pa;
 
 #ifdef DIAGNOSTIC
 	if (round_page(sizeof(struct user) + sizeof(*tf)) > PAGE_SIZE)
@@ -180,10 +149,12 @@ cpu_fork(p1, p2, stack, stacksize, func, arg)
 	bcopy(p1->p_md.md_regs, tf, sizeof(*tf));
 
 	/*
-	 * cpu_swapin() is supposed to fill out all the PAs
-	 * we gonna need in locore
+	 * Stash the physical for the pcb of U for later perusal
 	 */
-	cpu_swapin(p2);
+	if (!pmap_extract(pmap_kernel(), (vaddr_t)p2->p_addr, &pa))
+		panic("pmap_extract(%p) failed", p2->p_addr);
+
+	tf->tf_cr30 = pa;
 
 	tf->tf_sr0 = tf->tf_sr1 = tf->tf_sr2 = tf->tf_sr3 =
 	tf->tf_sr4 = tf->tf_sr5 = tf->tf_sr6 =

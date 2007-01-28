@@ -1,4 +1,4 @@
-/*	$OpenBSD: pci_machdep.c,v 1.7 2005/09/04 19:19:40 brad Exp $	*/
+/*	$OpenBSD: pci_machdep.c,v 1.10 2006/12/14 17:14:01 kettenis Exp $	*/
 /*	$NetBSD: pci_machdep.c,v 1.3 2003/05/07 21:33:58 fvdl Exp $	*/
 
 /*-
@@ -181,9 +181,8 @@ struct x86_bus_dma_tag pci_bus_dma_tag = {
 extern void amdgart_probe(struct pcibus_attach_args *);
 
 void
-pci_attach_hook(parent, self, pba)
-	struct device *parent, *self;
-	struct pcibus_attach_args *pba;
+pci_attach_hook(struct device *parent, struct device *self,
+    struct pcibus_attach_args *pba)
 {
 	if (pba->pba_bus == 0) {
 		printf(": configuration mode %d", pci_mode);
@@ -192,9 +191,7 @@ pci_attach_hook(parent, self, pba)
 }
 
 int
-pci_bus_maxdevs(pc, busno)
-	pci_chipset_tag_t pc;
-	int busno;
+pci_bus_maxdevs(pci_chipset_tag_t pc, int busno)
 {
 
 	/*
@@ -210,9 +207,7 @@ pci_bus_maxdevs(pc, busno)
 }
 
 pcitag_t
-pci_make_tag(pc, bus, device, function)
-	pci_chipset_tag_t pc;
-	int bus, device, function;
+pci_make_tag(pci_chipset_tag_t pc, int bus, int device, int function)
 {
 	pcitag_t tag;
 
@@ -240,10 +235,7 @@ pci_make_tag(pc, bus, device, function)
 }
 
 void
-pci_decompose_tag(pc, tag, bp, dp, fp)
-	pci_chipset_tag_t pc;
-	pcitag_t tag;
-	int *bp, *dp, *fp;
+pci_decompose_tag(pci_chipset_tag_t pc, pcitag_t tag, int *bp, int *dp, int *fp)
 {
 
 	switch (pci_mode) {
@@ -269,10 +261,7 @@ pci_decompose_tag(pc, tag, bp, dp, fp)
 }
 
 pcireg_t
-pci_conf_read(pc, tag, reg)
-	pci_chipset_tag_t pc;
-	pcitag_t tag;
-	int reg;
+pci_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int reg)
 {
 	pcireg_t data;
 	int s;
@@ -299,11 +288,7 @@ pci_conf_read(pc, tag, reg)
 }
 
 void
-pci_conf_write(pc, tag, reg, data)
-	pci_chipset_tag_t pc;
-	pcitag_t tag;
-	int reg;
-	pcireg_t data;
+pci_conf_write(pci_chipset_tag_t pc, pcitag_t tag, int reg, pcireg_t data)
 {
 	int s;
 
@@ -327,7 +312,7 @@ pci_conf_write(pc, tag, reg, data)
 }
 
 int
-pci_mode_detect()
+pci_mode_detect(void)
 {
 
 #ifdef PCI_CONF_MODE
@@ -415,9 +400,7 @@ not2:
 }
 
 int
-pci_intr_map(pa, ihp)
-	struct pci_attach_args *pa;
-	pci_intr_handle_t *ihp;
+pci_intr_map(struct pci_attach_args *pa, pci_intr_handle_t *ihp)
 {
 	int pin = pa->pa_intrpin;
 	int line = pa->pa_intrline;
@@ -425,6 +408,7 @@ pci_intr_map(pa, ihp)
 	int rawpin = pa->pa_rawintrpin;
 	pci_chipset_tag_t pc = pa->pa_pc;
 	int bus, dev, func;
+	int mppin;
 #endif
 
 	if (pin == 0) {
@@ -440,9 +424,21 @@ pci_intr_map(pa, ihp)
 #if NIOAPIC > 0
 	pci_decompose_tag(pc, pa->pa_tag, &bus, &dev, &func);
 	if (mp_busses != NULL) {
-		if (intr_find_mpmapping(bus, (dev<<2)|(rawpin-1), ihp) == 0) {
+		mppin = (dev << 2)|(rawpin - 1);
+		if (intr_find_mpmapping(bus, mppin, ihp) == 0) {
 			*ihp |= line;
 			return 0;
+		}
+		if (pa->pa_bridgetag) {
+			int bridgebus, bridgedev;
+
+			pci_decompose_tag(pc, *pa->pa_bridgetag,
+			    &bridgebus, &bridgedev, NULL);
+			mppin = (bridgedev << 2)|((rawpin + dev - 1) & 0x3);
+			if (intr_find_mpmapping(bridgebus, mppin, ihp) == 0) {
+				*ihp |= line;
+				return 0;
+			}
 		}
 		/*
 		 * No explicit PCI mapping found. This is not fatal,
@@ -481,12 +477,12 @@ pci_intr_map(pa, ihp)
 	}
 #if NIOAPIC > 0
 	if (mp_busses != NULL) {
-		if (intr_find_mpmapping(mp_isa_bus, line, ihp) == 0) {
+		if (intr_find_mpmapping(mp_isa_bus->mb_idx, line, ihp) == 0) {
 			*ihp |= line;
 			return 0;
 		}
 #if NEISA > 0
-		if (intr_find_mpmapping(mp_eisa_bus, line, ihp) == 0) {
+		if (intr_find_mpmapping(mp_eisa_bus->mb_idx, line, ihp) == 0) {
 			*ihp |= line;
 			return 0;
 		}
@@ -506,9 +502,7 @@ bad:
 }
 
 const char *
-pci_intr_string(pc, ih)
-	pci_chipset_tag_t pc;
-	pci_intr_handle_t ih;
+pci_intr_string(pci_chipset_tag_t pc, pci_intr_handle_t ih)
 {
 	static char irqstr[64];
 
@@ -533,12 +527,8 @@ pci_intr_string(pc, ih)
 }
 
 void *
-pci_intr_establish(pc, ih, level, func, arg, what)
-	pci_chipset_tag_t pc;
-	pci_intr_handle_t ih;
-	int level, (*func)(void *);
-	void *arg;
-	char *what;
+pci_intr_establish(pci_chipset_tag_t pc, pci_intr_handle_t ih, int level,
+    int (*func)(void *), void *arg, char *what)
 {
 	int pin, irq;
 	struct pic *pic;
@@ -565,11 +555,8 @@ pci_intr_establish(pc, ih, level, func, arg, what)
 }
 
 void
-pci_intr_disestablish(pc, cookie)
-	pci_chipset_tag_t pc;
-	void *cookie;
+pci_intr_disestablish(pci_chipset_tag_t pc, void *cookie)
 {
-
 	intr_disestablish(cookie);
 }
 
@@ -579,7 +566,7 @@ pci_intr_disestablish(pc, cookie)
  * which cannot safely use memory-mapped device access.
  */
 int
-pci_bus_flags()
+pci_bus_flags(void)
 {
 	int rval = PCI_FLAGS_IO_ENABLED | PCI_FLAGS_MEM_ENABLED;
 	int device, maxndevs;

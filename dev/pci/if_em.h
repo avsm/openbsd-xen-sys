@@ -32,7 +32,7 @@ POSSIBILITY OF SUCH DAMAGE.
 ***************************************************************************/
 
 /* $FreeBSD: if_em.h,v 1.26 2004/09/01 23:22:41 pdeuskar Exp $ */
-/* $OpenBSD: if_em.h,v 1.29 2006/09/17 20:26:14 brad Exp $ */
+/* $OpenBSD: if_em.h,v 1.33 2006/11/17 02:03:32 brad Exp $ */
 
 #ifndef _EM_H_DEFINED_
 #define _EM_H_DEFINED_
@@ -180,10 +180,11 @@ POSSIBILITY OF SUCH DAMAGE.
 #define EM_TX_TIMEOUT			5	/* set to 5 seconds */
 
 /*
- * This parameter controls when the driver calls the routine to reclaim
+ * These parameters control when the driver calls the routine to reclaim
  * transmit descriptors.
  */
 #define EM_TX_CLEANUP_THRESHOLD		(sc->num_tx_desc / 8)
+#define EM_TX_OP_THRESHOLD		(sc->num_tx_desc / 32)
 
 /*
  * This parameter controls whether or not autonegotation is enabled.
@@ -262,11 +263,8 @@ POSSIBILITY OF SUCH DAMAGE.
 #define EM_TSO_SIZE		65535
 
 struct em_buffer {
+	int		next_eop;	/* Index of the desc to watch */
 	struct mbuf	*m_head;
-	bus_dmamap_t	map;		/* bus_dma map for packet */
-};
-
-struct em_q {
 	bus_dmamap_t	map;		/* bus_dma map for packet */
 };
 
@@ -353,7 +351,7 @@ struct em_softc {
 	struct em_dma_alloc	txdma;		/* bus_dma glue for tx desc */
 	struct em_tx_desc	*tx_desc_base;
 	u_int32_t		next_avail_tx_desc;
-	u_int32_t		oldest_used_tx_desc;
+	u_int32_t		next_tx_to_clean;
 	volatile u_int16_t	num_tx_desc_avail;
 	u_int16_t		num_tx_desc;
 	u_int32_t		txd_cmd;

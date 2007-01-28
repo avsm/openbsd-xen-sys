@@ -1,4 +1,4 @@
-#	$OpenBSD: files.usb,v 1.64 2006/09/27 08:54:44 grange Exp $
+#	$OpenBSD: files.usb,v 1.67 2006/11/27 11:38:43 deraadt Exp $
 #	$NetBSD: files.usb,v 1.16 2000/02/14 20:29:54 augustss Exp $
 #
 # Config file and device description for machine-independent USB code.
@@ -10,7 +10,7 @@ attach	usb at usbus
 file	dev/usb/usb.c			usb			needs-flag
 file	dev/usb/usbdi.c			usb
 file	dev/usb/usbdi_util.c		usb
-file	dev/usb/usb_mem.c		usb
+file	dev/usb/usb_mem.c		usb | usbf
 file	dev/usb/usb_subr.c		usb
 file	dev/usb/usb_quirks.c		usb
 
@@ -272,6 +272,19 @@ device	ueagle: atm, ifnet, ezload, firmload
 attach	ueagle at uhub
 file	dev/usb/ueagle.c		ueagle
 
+
+# USB logical device
+device	usbf {}
+attach	usbf at usbdev
+file	dev/usb/usbf.c			usbf			needs-flag
+file	dev/usb/usbf_subr.c		usbf
+
+# Communication Device Class Ethernet function
+device	cdcef {}
+attach	cdcef at usbf
+file	dev/usb/if_cdcef.c		cdcef
+
+
 # Atheros AR5005UG/AR5005UX
 device	uath: ether, ifnet, ifmedia, wlan, firmload
 attach	uath at uhub
@@ -281,3 +294,8 @@ file	dev/usb/if_uath.c		uath
 device	uow: onewirebus
 attach	uow at uhub
 file	dev/usb/uow.c			uow
+
+# Research In Motion Blackberry
+device	uberry {}
+attach	uberry at uhub
+file	dev/usb/uberry.c		uberry

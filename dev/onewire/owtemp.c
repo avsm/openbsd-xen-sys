@@ -1,4 +1,4 @@
-/*	$OpenBSD: owtemp.c,v 1.3 2006/10/01 08:09:04 grange Exp $	*/
+/*	$OpenBSD: owtemp.c,v 1.5 2006/12/20 14:46:59 grange Exp $	*/
 
 /*
  * Copyright (c) 2006 Alexander Yurchenko <grange@openbsd.org>
@@ -32,8 +32,18 @@
 #include <dev/onewire/onewirereg.h>
 #include <dev/onewire/onewirevar.h>
 
+/* Commands */
 #define DS1920_CMD_CONVERT		0x44
 #define DS1920_CMD_READ_SCRATCHPAD	0xbe
+
+/* Scratchpad layout */
+#define DS1920_SP_TEMP_LSB		0
+#define DS1920_SP_TEMP_MSB		1
+#define DS1920_SP_TH			2
+#define DS1920_SP_TL			3
+#define DS1920_SP_COUNT_REMAIN		6
+#define DS1920_SP_COUNT_PERC		7
+#define DS1920_SP_CRC			8
 
 struct owtemp_softc {
 	struct device		sc_dev;
@@ -42,6 +52,7 @@ struct owtemp_softc {
 	u_int64_t		sc_rom;
 
 	struct sensor		sc_sensor;
+	struct sensordev	sc_sensordev;
 	struct rwlock		sc_lock;
 };
 
@@ -85,16 +96,16 @@ owtemp_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_rom = oa->oa_rom;
 
 	/* Initialize sensor */
-	strlcpy(sc->sc_sensor.device, sc->sc_dev.dv_xname,
-	    sizeof(sc->sc_sensor.device));
+	strlcpy(sc->sc_sensordev.xname, sc->sc_dev.dv_xname,
+	    sizeof(sc->sc_sensordev.xname));
 	sc->sc_sensor.type = SENSOR_TEMP;
-	strlcpy(sc->sc_sensor.desc, "Temp", sizeof(sc->sc_sensor.desc));
 
 	if (sensor_task_register(sc, owtemp_update, 5)) {
 		printf(": unable to register update task\n");
 		return;
 	}
-	sensor_add(&sc->sc_sensor);
+	sensor_attach(&sc->sc_sensordev, &sc->sc_sensor);
+	sensordev_install(&sc->sc_sensordev);
 
 	rw_init(&sc->sc_lock, sc->sc_dev.dv_xname);
 	printf("\n");
@@ -106,7 +117,7 @@ owtemp_detach(struct device *self, int flags)
 	struct owtemp_softc *sc = (struct owtemp_softc *)self;
 
 	rw_enter_write(&sc->sc_lock);
-	sensor_del(&sc->sc_sensor);
+	sensordev_deinstall(&sc->sc_sensordev);
 	sensor_task_unregister(sc);
 	rw_exit_write(&sc->sc_lock);
 
@@ -124,6 +135,8 @@ owtemp_update(void *arg)
 {
 	struct owtemp_softc *sc = arg;
 	u_int8_t data[9];
+	u_int16_t temp;
+	int count_perc, count_remain, val;
 
 	rw_enter_write(&sc->sc_lock);
 	onewire_lock(sc->sc_onewire, 0);
@@ -151,9 +164,22 @@ owtemp_update(void *arg)
 	 */
 	onewire_write_byte(sc->sc_onewire, DS1920_CMD_READ_SCRATCHPAD);
 	onewire_read_block(sc->sc_onewire, data, 9);
-	if (onewire_crc(data, 8) == data[8]) {
-		sc->sc_sensor.value = 273150000 +
-		    (int)((u_int16_t)data[1] << 8 | data[0]) * 500000;
+	if (onewire_crc(data, 8) == data[DS1920_SP_CRC]) {
+		temp = data[DS1920_SP_TEMP_MSB] << 8 |
+		    data[DS1920_SP_TEMP_LSB];
+		count_perc = data[DS1920_SP_COUNT_PERC];
+		count_remain = data[DS1920_SP_COUNT_REMAIN];
+
+		if (count_perc != 0) {
+			/* High resolution algorithm */
+			temp &= ~0x0001;
+			val = temp * 500000 - 250000 +
+			    ((count_perc - count_remain) * 1000000) /
+			    count_perc;
+		} else {
+			val = temp * 500000;
+		}
+		sc->sc_sensor.value = 273150000 + val;
 	}
 
 done:

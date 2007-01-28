@@ -1,4 +1,4 @@
-/*	$OpenBSD: mpcpcibus.c,v 1.33 2006/10/23 02:05:26 gwk Exp $ */
+/*	$OpenBSD: mpcpcibus.c,v 1.35 2006/12/05 20:48:23 gwk Exp $ */
 
 /*
  * Copyright (c) 1997 Per Fogelstrom
@@ -435,7 +435,8 @@ mpcpcibrattach(struct device *parent, struct device *self, void *aux)
 	printf(": %s, Revision 0x%x\n", compat, 
 	    mpc_cfg_read_1(lcp, MPC106_PCI_REVID));
 
-	pci_addr_fixup(sc, &lcp->lc_pc, 32);
+	if ((strcmp(compat, "bandit")) != 0)
+		pci_addr_fixup(sc, &lcp->lc_pc, 32);
 
 	pba.pba_dmat = &pci_bus_dma_tag;
 
@@ -443,6 +444,7 @@ mpcpcibrattach(struct device *parent, struct device *self, void *aux)
 	pba.pba_iot = &sc->sc_iobus_space;
 	pba.pba_memt = &sc->sc_membus_space;
 	pba.pba_pc = &lcp->lc_pc;
+	pba.pba_domain = pci_ndomains++;
 	pba.pba_bus = 0;
 	pba.pba_bridgetag = NULL;
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD$	*/
+/*	$OpenBSD: if_mc.c,v 1.6 2006/12/31 20:53:04 gwk Exp $	*/
 /*	$NetBSD: if_mc.c,v 1.9.16.1 2006/06/21 14:53:13 yamt Exp $	*/
 
 /*-
@@ -81,7 +81,7 @@
 
 #define MC_RXDMABUFS		4
 
-#define MACE_BUFSZ        	((MACE_RXBUFS + MACE_TXBUFS + 2) * MACE_BUFLEN)
+#define MACE_BUFSZ       	((MACE_RXBUFS + MACE_TXBUFS + 2) * MACE_BUFLEN)
 
 #define NIC_GET(sc, reg)	(in8rb(sc->sc_reg + MACE_REG(reg)))
 
@@ -315,7 +315,7 @@ struct cfdriver mc_cd = {
 	NULL, "mc", DV_IFNET
 };
 
-int	mc_init(struct mc_softc *sc);
+void	mc_init(struct mc_softc *sc);
 void	mc_put(struct mc_softc *sc, u_int len);
 int	mc_dmaintr(void *arg);
 void	mc_reset_rxdma(struct mc_softc *sc);
@@ -332,52 +332,8 @@ void	mc_watchdog(struct ifnet *ifp);
 u_int   maceput(struct mc_softc *sc, struct mbuf *);
 void    mace_read(struct mc_softc *, caddr_t, int);
 struct mbuf *mace_get(struct mc_softc *, caddr_t, int);
-static void mace_calcladrf(struct arpcom *, u_int8_t *);
+static void mace_calcladrf(struct mc_softc *, u_int8_t *);
 void	mc_putpacket(struct mc_softc *, u_int);
-
-/*
- * Compare two Ether/802 addresses for equality, inlined and
- * unrolled for speed.  Use this like bcmp().
- *
- * XXX: Add <machine/inlines.h> for stuff like this?
- * XXX: or maybe add it to libkern.h instead?
- *
- * "I'd love to have an inline assembler version of this."
- * XXX: Who wanted that? mycroft?  I wrote one, but this
- * version in C is as good as hand-coded assembly. -gwr
- *
- * Please do NOT tweak this without looking at the actual
- * assembly code generated before and after your tweaks!
- */
-static inline u_int16_t
-ether_cmp(void *one, void *two)
-{
-	u_int16_t *a = (u_short *) one;
-	u_int16_t *b = (u_short *) two;
-	u_int16_t diff;
-
-#ifdef  m68k
-	/*
-	 * The post-increment-pointer form produces the best
-	 * machine code for m68k.  This was carefully tuned
-	 * so it compiles to just 8 short (2-byte) op-codes!
-	 */
-	diff  = *a++ - *b++;
-	diff |= *a++ - *b++;
-	diff |= *a++ - *b++;
-#else
-	/*
-	 * Most modern CPUs do better with a single expresion.
-	 * Note that short-cut evaluation is NOT helpful here,
-	 * because it just makes the code longer, not faster!
-	 */
-	diff = (a[0] - b[0]) | (a[1] - b[1]) | (a[2] - b[2]);
-#endif
-
-	return (diff);
-}
-
-#define ETHER_CMP       ether_cmp
 
 int
 mc_match(struct device *parent, void *arg, void *aux)
@@ -406,7 +362,7 @@ mc_attach(struct device *parent, struct device *self, void *aux)
 	struct ifnet *ifp = &sc->sc_arpcom.ac_if;
 	u_int8_t lladdr[ETHER_ADDR_LEN];
 	int nseg, error;
-	
+
 	if (OF_getprop(ca->ca_node, "local-mac-address", lladdr, ETHER_ADDR_LEN)
 	     != ETHER_ADDR_LEN) {
 		printf(": failed to get MAC address.\n");
@@ -414,14 +370,14 @@ mc_attach(struct device *parent, struct device *self, void *aux)
 	}
 
 	ca->ca_reg[0] += ca->ca_baseaddr;
-        ca->ca_reg[2] += ca->ca_baseaddr;
-        ca->ca_reg[4] += ca->ca_baseaddr;
-	
-	sc->sc_reg = mapiodev(ca->ca_reg[0], ca->ca_reg[1]);	
+	ca->ca_reg[2] += ca->ca_baseaddr;
+	ca->ca_reg[4] += ca->ca_baseaddr;
+
+	sc->sc_reg = mapiodev(ca->ca_reg[0], ca->ca_reg[1]);
 	sc->sc_dmat = ca->ca_dmat;
 	sc->sc_txdma = mapiodev(ca->ca_reg[2], ca->ca_reg[3]);
 	sc->sc_rxdma = mapiodev(ca->ca_reg[4], ca->ca_reg[5]);
-	
+
 	sc->sc_txdbdma = dbdma_alloc(sc->sc_dmat, 2);
 	sc->sc_tail = 0;
 	sc->sc_txdmacmd = sc->sc_txdbdma->d_addr;
@@ -429,43 +385,43 @@ mc_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_rxdmacmd = sc->sc_rxdbdma->d_addr;
 
 	error = bus_dmamem_alloc(sc->sc_dmat, MACE_BUFSZ,
-            PAGE_SIZE, 0, sc->sc_bufseg, 1, &nseg, BUS_DMA_NOWAIT);
-        if (error) {
-                printf(": cannot allocate buffers (%d)\n", error);
-                return;
-        }
+	    PAGE_SIZE, 0, sc->sc_bufseg, 1, &nseg, BUS_DMA_NOWAIT);
+	if (error) {
+		printf(": cannot allocate buffers (%d)\n", error);
+		return;
+	}
 
-        error = bus_dmamem_map(sc->sc_dmat, sc->sc_bufseg, nseg,
-            MACE_BUFSZ, &sc->sc_txbuf, BUS_DMA_NOWAIT);
-        if (error) {
-                printf(": cannot map buffers (%d)\n", error);
-                bus_dmamem_free(sc->sc_dmat, sc->sc_bufseg, 1);
-                return;
-        }
+	error = bus_dmamem_map(sc->sc_dmat, sc->sc_bufseg, nseg,
+	    MACE_BUFSZ, &sc->sc_txbuf, BUS_DMA_NOWAIT);
+	if (error) {
+		printf(": cannot map buffers (%d)\n", error);
+		bus_dmamem_free(sc->sc_dmat, sc->sc_bufseg, 1);
+		return;
+	}
 
-        error = bus_dmamap_create(sc->sc_dmat, MACE_BUFSZ, 1, MACE_BUFSZ, 0,
-            BUS_DMA_NOWAIT | BUS_DMA_ALLOCNOW, &sc->sc_bufmap);
-        if (error) {
-                printf(": cannot create buffer dmamap (%d)\n", error);
-                bus_dmamem_unmap(sc->sc_dmat, sc->sc_txbuf, MACE_BUFSZ);
-                bus_dmamem_free(sc->sc_dmat, sc->sc_bufseg, 1);
-                return;
-        }
+	error = bus_dmamap_create(sc->sc_dmat, MACE_BUFSZ, 1, MACE_BUFSZ, 0,
+	    BUS_DMA_NOWAIT | BUS_DMA_ALLOCNOW, &sc->sc_bufmap);
+	if (error) {
+		printf(": cannot create buffer dmamap (%d)\n", error);
+		bus_dmamem_unmap(sc->sc_dmat, sc->sc_txbuf, MACE_BUFSZ);
+		bus_dmamem_free(sc->sc_dmat, sc->sc_bufseg, 1);
+		return;
+	}
 
-        error = bus_dmamap_load(sc->sc_dmat, sc->sc_bufmap, sc->sc_txbuf,
-            MACE_BUFSZ, NULL, BUS_DMA_NOWAIT);
-        if (error) {
-                printf(": cannot load buffers dmamap (%d)\n", error);
-                bus_dmamap_destroy(sc->sc_dmat, sc->sc_bufmap);
-                bus_dmamem_unmap(sc->sc_dmat, sc->sc_txbuf, MACE_BUFSZ);
-                bus_dmamem_free(sc->sc_dmat, sc->sc_bufseg, nseg);
-                return;
-        }
+	error = bus_dmamap_load(sc->sc_dmat, sc->sc_bufmap, sc->sc_txbuf,
+	    MACE_BUFSZ, NULL, BUS_DMA_NOWAIT);
+	if (error) {
+		printf(": cannot load buffers dmamap (%d)\n", error);
+		bus_dmamap_destroy(sc->sc_dmat, sc->sc_bufmap);
+		bus_dmamem_unmap(sc->sc_dmat, sc->sc_txbuf, MACE_BUFSZ);
+		bus_dmamem_free(sc->sc_dmat, sc->sc_bufseg, nseg);
+		return;
+	}
 
 	sc->sc_txbuf_pa = sc->sc_bufmap->dm_segs->ds_addr;
-        sc->sc_rxbuf = sc->sc_txbuf + MACE_BUFLEN * MACE_TXBUFS;
-        sc->sc_rxbuf_pa = sc->sc_txbuf_pa + MACE_BUFLEN * MACE_TXBUFS;
-	
+	sc->sc_rxbuf = sc->sc_txbuf + MACE_BUFLEN * MACE_TXBUFS;
+	sc->sc_rxbuf_pa = sc->sc_txbuf_pa + MACE_BUFLEN * MACE_TXBUFS;
+
 	printf(": irq %d,%d,%d",
 		ca->ca_intr[0], ca->ca_intr[1], ca->ca_intr[2]);
 
@@ -489,7 +445,7 @@ mc_attach(struct device *parent, struct device *self, void *aux)
 	/* reset the chip and disable all interrupts */
 	NIC_PUT(sc, MACE_BIUCC, SWRST);
 	DELAY(100);
-	
+
 	NIC_PUT(sc, MACE_IMR, ~0);
 
 	bcopy(lladdr, sc->sc_enaddr, ETHER_ADDR_LEN);
@@ -514,7 +470,7 @@ int
 mc_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 {
 	struct mc_softc *sc = ifp->if_softc;
-	struct ifaddr *ifa;
+	struct ifaddr *ifa = (struct ifaddr *)data;
 	struct ifreq *ifr;
 
 	int s = splnet(), err = 0;
@@ -522,19 +478,13 @@ mc_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	switch (cmd) {
 
 	case SIOCSIFADDR:
-		ifa = (struct ifaddr *)data;
 		ifp->if_flags |= IFF_UP;
-		switch (ifa->ifa_addr->sa_family) {
+		if (!(ifp->if_flags & IFF_RUNNING))
+			mc_init(sc);
 #ifdef INET
-		case AF_INET:
-			mc_init(sc);
+		if (ifa->ifa_addr->sa_family == AF_INET)
 			arp_ifinit(&sc->sc_arpcom, ifa);
-			break;
 #endif
-		default:
-			mc_init(sc);
-			break;
-		}
 		break;
 
 	case SIOCSIFFLAGS:
@@ -545,14 +495,13 @@ mc_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 			 * then stop it.
 			 */
 			mc_stop(sc);
-			ifp->if_flags &= ~IFF_RUNNING;
 		} else if ((ifp->if_flags & IFF_UP) != 0 &&
 		    (ifp->if_flags & IFF_RUNNING) == 0) {
 			/*
 			 * If interface is marked up and it is stopped,
 			 * then start it.
 			 */
-			(void)mc_init(sc);
+			mc_init(sc);
 		} else {
 			/*
 			 * reset the interface to pick up any other changes
@@ -603,8 +552,8 @@ mc_start(struct ifnet *ifp)
 		if (ifp->if_flags & IFF_OACTIVE)
 			return;
 
-		IF_DEQUEUE(&ifp->if_snd, m);
-		if (m == 0)
+		IFQ_DEQUEUE(&ifp->if_snd, m);
+		if (m == NULL)
 			return;
 
 #if NBPFILTER > 0
@@ -637,15 +586,12 @@ mc_reset(struct mc_softc *sc)
 	mc_init(sc);
 }
 
-int
+void
 mc_init(struct mc_softc *sc)
 {
-	int s, i;
+	struct ifnet *ifp = &sc->sc_arpcom.ac_if;
 	u_int8_t maccc, ladrf[8];
-
-	if (sc->sc_arpcom.ac_if.if_flags & IFF_RUNNING)
-		/* already running */
-		return (0);
+	int s, i;
 
 	s = splnet();
 
@@ -662,11 +608,11 @@ mc_init(struct mc_softc *sc)
 		;
 	NIC_PUT(sc, MACE_IAC, PHYADDR);
 	for (i = 0; i < ETHER_ADDR_LEN; i++)
-		out8rb(sc->sc_reg + MACE_REG(MACE_PADR) + i, 
+		out8rb(sc->sc_reg + MACE_REG(MACE_PADR) + i,
 		    sc->sc_enaddr[i]);
 
 	/* set logical address filter */
-	mace_calcladrf(&sc->sc_arpcom, ladrf);
+	mace_calcladrf(sc, ladrf);
 
 	NIC_PUT(sc, MACE_IAC, ADDRCHG);
 	while (NIC_GET(sc, MACE_IAC) & ADDRCHG)
@@ -685,7 +631,7 @@ mc_init(struct mc_softc *sc)
 	NIC_PUT(sc, MACE_RCVFC, 0);
 
 	maccc = ENXMT | ENRCV;
-	if (sc->sc_arpcom.ac_if.if_flags & IFF_PROMISC)
+	if (ifp->if_flags & IFF_PROMISC)
 		maccc |= PROM;
 
 	NIC_PUT(sc, MACE_MACCC, maccc);
@@ -699,11 +645,10 @@ mc_init(struct mc_softc *sc)
 	NIC_PUT(sc, MACE_IMR, RCVINTM);
 
 	/* flag interface as "running" */
-	sc->sc_arpcom.ac_if.if_flags |= IFF_RUNNING;
-	sc->sc_arpcom.ac_if.if_flags &= ~IFF_OACTIVE;
+	ifp->if_flags |= IFF_RUNNING;
+	ifp->if_flags &= ~IFF_OACTIVE;
 
 	splx(s);
-	return (0);
 }
 
 /*
@@ -714,13 +659,16 @@ mc_init(struct mc_softc *sc)
 int
 mc_stop(struct mc_softc *sc)
 {
-	int	s = splnet();
+	struct ifnet *ifp = &sc->sc_arpcom.ac_if;
+	int s;
+
+	s = splnet();
 
 	NIC_PUT(sc, MACE_BIUCC, SWRST);
 	DELAY(100);
 
-	sc->sc_arpcom.ac_if.if_timer = 0;
-	sc->sc_arpcom.ac_if.if_flags &= ~IFF_RUNNING;
+	ifp->if_timer = 0;
+	ifp->if_flags &= ~(IFF_RUNNING | IFF_OACTIVE);
 
 	splx(s);
 	return (0);
@@ -744,48 +692,51 @@ int
 mc_intr(void *arg)
 {
 	struct mc_softc *sc = arg;
-	 u_int8_t ir;
+	struct ifnet *ifp = &sc->sc_arpcom.ac_if;
+	u_int8_t ir;
 
-	 ir = NIC_GET(sc, MACE_IR) & ~NIC_GET(sc, MACE_IMR);
-	 if (ir & JAB) {
+	ir = NIC_GET(sc, MACE_IR) & ~NIC_GET(sc, MACE_IMR);
+
+	if (ir & JAB) {
 #ifdef MCDEBUG
-		  printf("%s: jabber error\n", sc->sc_dev.dv_xname);
+		printf("%s: jabber error\n", sc->sc_dev.dv_xname);
 #endif
-		  sc->sc_arpcom.ac_if.if_oerrors++;
+		ifp->if_oerrors++;
+	}
+
+	if (ir & BABL) {
+#ifdef MCDEBUG
+		printf("%s: babble\n", sc->sc_dev.dv_xname);
+#endif
+		ifp->if_oerrors++;
 	 }
 
-	 if (ir & BABL) {
+	if (ir & CERR) {
 #ifdef MCDEBUG
-		  printf("%s: babble\n", sc->sc_dev.dv_xname);
+		printf("%s: collision error\n", sc->sc_dev.dv_xname);
 #endif
-		  sc->sc_arpcom.ac_if.if_oerrors++;
+		ifp->if_collisions++;
 	 }
 
-	 if (ir & CERR) {
-#ifdef MCDEBUG
-		  printf("%s: collision error\n", sc->sc_dev.dv_xname);
-#endif
-		  sc->sc_arpcom.ac_if.if_collisions++;
-	 }
+	/*
+	 * Pretend we have carrier; if we don't this will be cleared
+	 * shortly.
+	 */
+	sc->sc_havecarrier = 1;
 
-	 /*
-	  * Pretend we have carrier; if we don't this will be cleared
-	  * shortly.
-	  */
-	 sc->sc_havecarrier = 1;
+	if (ir & XMTINT)
+		mc_tint(sc);
 
-	 if (ir & XMTINT)
-		  mc_tint(sc);
+	if (ir & RCVINT)
+		mc_rint(sc);
 
-	 if (ir & RCVINT)
-		  mc_rint(sc);
-	
 	return(1);
 }
 
 void
 mc_tint(struct mc_softc *sc)
 {
+	struct ifnet *ifp = &sc->sc_arpcom.ac_if;
 	u_int8_t xmtrc, xmtfs;
 
 	xmtrc = NIC_GET(sc, MACE_XMTRC);
@@ -802,35 +753,36 @@ mc_tint(struct mc_softc *sc)
 
 	if (xmtfs & LCOL) {
 		printf("%s: late collision\n", sc->sc_dev.dv_xname);
-		sc->sc_arpcom.ac_if.if_oerrors++;
-		sc->sc_arpcom.ac_if.if_collisions++;
+		ifp->if_oerrors++;
+		ifp->if_collisions++;
 	}
 
 	if (xmtfs & MORE)
 		/* Real number is unknown. */
-		sc->sc_arpcom.ac_if.if_collisions += 2;
+		ifp->if_collisions += 2;
 	else if (xmtfs & ONE)
-		sc->sc_arpcom.ac_if.if_collisions++;
+		ifp->if_collisions++;
 	else if (xmtfs & RTRY) {
 		printf("%s: excessive collisions\n", sc->sc_dev.dv_xname);
-		sc->sc_arpcom.ac_if.if_collisions += 16;
-		sc->sc_arpcom.ac_if.if_oerrors++;
+		ifp->if_collisions += 16;
+		ifp->if_oerrors++;
 	}
 
 	if (xmtfs & LCAR) {
 		sc->sc_havecarrier = 0;
 		printf("%s: lost carrier\n", sc->sc_dev.dv_xname);
-		sc->sc_arpcom.ac_if.if_oerrors++;
+		ifp->if_oerrors++;
 	}
 
-	sc->sc_arpcom.ac_if.if_flags &= ~IFF_OACTIVE;
-	sc->sc_arpcom.ac_if.if_timer = 0;
-	mc_start(&sc->sc_arpcom.ac_if);
+	ifp->if_flags &= ~IFF_OACTIVE;
+	ifp->if_timer = 0;
+	mc_start(ifp);
 }
 
 void
 mc_rint(struct mc_softc *sc)
 {
+	struct ifnet *ifp = &sc->sc_arpcom.ac_if;
 #define rxf	sc->sc_rxframe
 	u_int len;
 
@@ -847,18 +799,18 @@ mc_rint(struct mc_softc *sc)
 #ifdef MCDEBUG
 		printf("%s: receive FIFO overflow\n", sc->sc_dev.dv_xname);
 #endif
-		sc->sc_arpcom.ac_if.if_ierrors++;
+		ifp->if_ierrors++;
 		return;
 	}
 
 	if (rxf.rx_rcvsts & CLSN)
-		sc->sc_arpcom.ac_if.if_collisions++;
+		ifp->if_collisions++;
 
 	if (rxf.rx_rcvsts & FRAM) {
 #ifdef MCDEBUG
 		printf("%s: framing error\n", sc->sc_dev.dv_xname);
 #endif
-		sc->sc_arpcom.ac_if.if_ierrors++;
+		ifp->if_ierrors++;
 		return;
 	}
 
@@ -866,7 +818,7 @@ mc_rint(struct mc_softc *sc)
 #ifdef MCDEBUG
 		printf("%s: frame control checksum error\n", sc->sc_dev.dv_xname);
 #endif
-		sc->sc_arpcom.ac_if.if_ierrors++;
+		ifp->if_ierrors++;
 		return;
 	}
 
@@ -879,6 +831,7 @@ mc_rint(struct mc_softc *sc)
 u_int
 maceput(struct mc_softc *sc, struct mbuf *m)
 {
+	struct ifnet *ifp = &sc->sc_arpcom.ac_if;
 	struct mbuf *n;
 	u_int len, totlen = 0;
 	u_char *buff;
@@ -907,7 +860,7 @@ maceput(struct mc_softc *sc, struct mbuf *m)
 
 
 	/* 5 seconds to watch for failing to transmit */
-	sc->sc_arpcom.ac_if.if_timer = 5;
+	ifp->if_timer = 5;
 	mc_putpacket(sc, totlen);
 	return (totlen);
 }
@@ -960,8 +913,9 @@ mace_get(struct mc_softc *sc, caddr_t pkt, int totlen)
 	 int len;
 
 	 MGETHDR(m, M_DONTWAIT, MT_DATA);
-	 if (m == 0)
-		  return (0);
+	 if (m == NULL)
+		  return (NULL);
+
 	 m->m_pkthdr.rcvif = &sc->sc_arpcom.ac_if;
 	 m->m_pkthdr.len = totlen;
 	 len = MHLEN;
@@ -971,9 +925,9 @@ mace_get(struct mc_softc *sc, caddr_t pkt, int totlen)
 	 while (totlen > 0) {
 		  if (top) {
 			   MGET(m, M_DONTWAIT, MT_DATA);
-			   if (m == 0) {
+			   if (m == NULL) {
 				    m_freem(top);
-				    return 0;
+				    return (NULL);
 			   }
 			   len = MLEN;
 		  }
@@ -982,7 +936,7 @@ mace_get(struct mc_softc *sc, caddr_t pkt, int totlen)
 			   if ((m->m_flags & M_EXT) == 0) {
 				    m_free(m);
 				    m_freem(top);
-				    return 0;
+				    return (NULL);
 			   }
 			   len = MCLBYTES;
 		  }
@@ -1003,11 +957,11 @@ mc_putpacket(struct mc_softc *sc, u_int len)
 	dbdma_command_t *cmd = sc->sc_txdmacmd;
 
 	DBDMA_BUILD(cmd, DBDMA_CMD_OUT_LAST, 0, len, sc->sc_txbuf_pa,
-		DBDMA_INT_NEVER, DBDMA_WAIT_NEVER, DBDMA_BRANCH_NEVER);
+	   DBDMA_INT_NEVER, DBDMA_WAIT_NEVER, DBDMA_BRANCH_NEVER);
 	cmd++;
-	DBDMA_BUILD(cmd, DBDMA_CMD_STOP, 0, 0, 0,
-	   DBDMA_INT_ALWAYS, DBDMA_WAIT_NEVER, DBDMA_BRANCH_NEVER);
-	
+	DBDMA_BUILD(cmd, DBDMA_CMD_STOP, 0, 0, 0, DBDMA_INT_ALWAYS,
+	   DBDMA_WAIT_NEVER, DBDMA_BRANCH_NEVER);
+
 	dbdma_start(sc->sc_txdma, sc->sc_txdbdma);
 }
 
@@ -1048,8 +1002,6 @@ mc_dmaintr(void *arg)
 			goto next;
 		}
 		DBDMA_BUILD_CMD(cmd, DBDMA_CMD_STOP, 0, 0, 0, 0);
-		/* XXX: Why? */
-		__asm volatile("eieio");
 
 		offset = i * MACE_BUFLEN;
 		statoff = offset + datalen;
@@ -1064,8 +1016,6 @@ mc_dmaintr(void *arg)
 next:
 		DBDMA_BUILD_CMD(cmd, DBDMA_CMD_IN_LAST, 0, DBDMA_INT_ALWAYS,
 		    DBDMA_WAIT_NEVER, DBDMA_BRANCH_NEVER);
-		/* XXX: Why? */
-		__asm volatile("eieio");
 
 		cmd->d_status = 0;
 		cmd->d_resid = 0;
@@ -1093,13 +1043,13 @@ mc_reset_rxdma(struct mc_softc *sc)
 	bzero(sc->sc_rxdmacmd, 8 * sizeof(dbdma_command_t));
 	for (i = 0; i < MC_RXDMABUFS; i++) {
 		DBDMA_BUILD(cmd, DBDMA_CMD_IN_LAST, 0, MACE_BUFLEN,
-			sc->sc_rxbuf_pa + MACE_BUFLEN * i, DBDMA_INT_ALWAYS,
-			DBDMA_WAIT_NEVER, DBDMA_BRANCH_NEVER);
+		    sc->sc_rxbuf_pa + MACE_BUFLEN * i, DBDMA_INT_ALWAYS,
+		    DBDMA_WAIT_NEVER, DBDMA_BRANCH_NEVER);
 		cmd++;
 	}
 
 	DBDMA_BUILD(cmd, DBDMA_CMD_NOP, 0, 0, 0,
-		DBDMA_INT_NEVER, DBDMA_WAIT_NEVER, DBDMA_BRANCH_ALWAYS);
+	    DBDMA_INT_NEVER, DBDMA_WAIT_NEVER, DBDMA_BRANCH_ALWAYS);
 	dbdma_st32(&cmd->d_cmddep, sc->sc_rxdbdma->d_paddr);
 	cmd++;
 
@@ -1125,10 +1075,10 @@ mc_reset_txdma(struct mc_softc *sc)
 
 	bzero(sc->sc_txdmacmd, 2 * sizeof(dbdma_command_t));
 	DBDMA_BUILD(cmd, DBDMA_CMD_OUT_LAST, 0, 0, sc->sc_txbuf_pa,
-		DBDMA_INT_NEVER, DBDMA_WAIT_NEVER, DBDMA_BRANCH_NEVER);
+	    DBDMA_INT_NEVER, DBDMA_WAIT_NEVER, DBDMA_BRANCH_NEVER);
 	cmd++;
 	DBDMA_BUILD(cmd, DBDMA_CMD_STOP, 0, 0, 0,
-		DBDMA_INT_NEVER, DBDMA_WAIT_NEVER, DBDMA_BRANCH_NEVER);
+	    DBDMA_INT_NEVER, DBDMA_WAIT_NEVER, DBDMA_BRANCH_NEVER);
 
 	out32rb(&dmareg->d_cmdptrhi, 0);
 	out32rb(&dmareg->d_cmdptrlo, sc->sc_txdbdma->d_paddr);
@@ -1142,13 +1092,13 @@ mc_reset_txdma(struct mc_softc *sc)
  * address filter.
  */
 void
-mace_calcladrf(struct arpcom *ac, u_int8_t *af)
+mace_calcladrf(struct mc_softc *sc, u_int8_t *af)
 {
-	struct ifnet *ifp = &ac->ac_if;
 	struct ether_multi *enm;
 	u_int32_t crc;
+	struct ifnet *ifp = &sc->sc_arpcom.ac_if;
+	struct arpcom *ac = &sc->sc_arpcom;
 	struct ether_multistep step;
-
 	/*
 	 * Set up multicast address filter by passing all multicast addresses
 	 * through a crc generator, and then using the high order 6 bits as an
@@ -1160,7 +1110,7 @@ mace_calcladrf(struct arpcom *ac, u_int8_t *af)
 	*((u_int32_t *)af) = *((u_int32_t *)af + 1) = 0;
 	ETHER_FIRST_MULTI(step, ac, enm);
 	while (enm != NULL) {
-		if (ETHER_CMP(enm->enm_addrlo, enm->enm_addrhi)) {
+		if (bcmp(enm->enm_addrlo, enm->enm_addrhi, ETHER_ADDR_LEN)) {
 			/*
 			 * We must listen to a range of multicast addresses.
 			 * For now, just accept all multicasts, rather than

@@ -1,4 +1,4 @@
-/*	$OpenBSD: pfvar.h,v 1.239 2006/10/25 11:26:47 henning Exp $ */
+/*	$OpenBSD: pfvar.h,v 1.241 2006/11/20 14:25:11 mcbride Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -45,6 +45,7 @@
 #include <netinet/tcp_fsm.h>
 
 struct ip;
+struct ip6_hdr;
 
 #define	PF_TCPS_PROXY_SRC	((TCP_NSTATES)+0)
 #define	PF_TCPS_PROXY_DST	((TCP_NSTATES)+1)
@@ -452,6 +453,7 @@ struct pf_os_fingerprint {
 #define PF_OSFP_MSS_DC		0x0800		/* TCP MSS dont-care */
 #define PF_OSFP_DF		0x1000		/* IPv4 don't fragment bit */
 #define PF_OSFP_TS0		0x2000		/* Zero timestamp */
+#define PF_OSFP_INET6		0x4000		/* IPv6 */
 	u_int8_t		fp_optcnt;	/* TCP option count */
 	u_int8_t		fp_wscale;	/* TCP window scaling */
 	u_int8_t		fp_ttl;		/* IPv4 TTL */
@@ -1228,6 +1230,13 @@ struct pfioc_state {
 	struct pf_state	 state;
 };
 
+struct pfioc_src_node_kill {
+	/* XXX returns the number of src nodes killed in psnk_af */
+	sa_family_t psnk_af;
+	struct pf_rule_addr psnk_src;
+	struct pf_rule_addr psnk_dst;
+};
+
 struct pfioc_state_kill {
 	/* XXX returns the number of states killed in psk_af */
 	sa_family_t		psk_af;
@@ -1415,6 +1424,7 @@ struct pfioc_iface {
 #define DIOCIGETIFACES	_IOWR('D', 87, struct pfioc_iface)
 #define DIOCSETIFFLAG	_IOWR('D', 89, struct pfioc_iface)
 #define DIOCCLRIFFLAG	_IOWR('D', 90, struct pfioc_iface)
+#define DIOCKILLSRCNODES	_IOWR('D', 91, struct pfioc_src_node_kill)
 
 #ifdef _KERNEL
 RB_HEAD(pf_src_tree, pf_src_node);
@@ -1635,7 +1645,8 @@ struct pf_osfp_enlist *
 	    const struct tcphdr *);
 #endif /* _KERNEL */
 struct pf_osfp_enlist *
-	pf_osfp_fingerprint_hdr(const struct ip *, const struct tcphdr *);
+	pf_osfp_fingerprint_hdr(const struct ip *, const struct ip6_hdr *,
+	    const struct tcphdr *);
 void	pf_osfp_flush(void);
 int	pf_osfp_get(struct pf_osfp_ioctl *);
 void	pf_osfp_initialize(void);

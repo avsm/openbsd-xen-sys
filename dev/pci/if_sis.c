@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_sis.c,v 1.73 2006/08/10 17:45:16 brad Exp $ */
+/*	$OpenBSD: if_sis.c,v 1.75 2006/12/03 16:12:22 grange Exp $ */
 /*
  * Copyright (c) 1997, 1998, 1999
  *	Bill Paul <wpaul@ctr.columbia.edu>.  All rights reserved.
@@ -899,6 +899,8 @@ sis_attach(struct device *parent, struct device *self, void *aux)
 	struct ifnet		*ifp;
 	bus_size_t		size;
 
+	sc->sis_stopped = 1;
+
 	/*
 	 * Handle power management nonsense.
 	 */
@@ -1505,8 +1507,10 @@ sis_intr(void *arg)
 		if (status & (SIS_ISR_RX_ERR | SIS_ISR_RX_OFLOW))
 			sis_rxeoc(sc);
 
+#if 0
 		if (status & (SIS_ISR_RX_IDLE))
 			SIS_SETBIT(sc, SIS_CSR, SIS_CSR_RX_ENABLE);
+#endif
 
 		if (status & SIS_ISR_SYSERR) {
 			sis_reset(sc);
@@ -1516,6 +1520,12 @@ sis_intr(void *arg)
 
 	/* Re-enable interrupts. */
 	CSR_WRITE_4(sc, SIS_IER, 1);
+
+	/*
+	 * XXX: Re-enable RX engine every time otherwise it occasionally
+	 * stops under unknown circumstances.
+	 */
+	SIS_SETBIT(sc, SIS_CSR, SIS_CSR_RX_ENABLE);
 
 	if (!IFQ_IS_EMPTY(&ifp->if_snd))
 		sis_start(ifp);
@@ -1650,7 +1660,6 @@ sis_init(void *xsc)
 	 * Cancel pending I/O and free all RX/TX buffers.
 	 */
 	sis_stop(sc);
-	sc->sis_stopped = 0;
 
 #if NS_IHR_DELAY > 0
 	/* Configure interrupt holdoff register. */
@@ -1826,6 +1835,7 @@ sis_init(void *xsc)
 	mii_mediachg(mii);
 #endif
 
+	sc->sis_stopped = 0;
 	ifp->if_flags |= IFF_RUNNING;
 	ifp->if_flags &= ~IFF_OACTIVE;
 

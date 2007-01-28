@@ -1,4 +1,4 @@
-/*	$OpenBSD: cache.h,v 1.2 2001/08/20 20:23:53 jason Exp $	*/
+/*	$OpenBSD: cache.h,v 1.4 2006/12/29 00:14:28 kettenis Exp $	*/
 /*	$NetBSD: cache.h,v 1.3 2000/08/01 00:28:02 eeh Exp $ */
 
 /*
@@ -139,9 +139,10 @@ void	cache_enable(void);		/* turn it on */
 int 	cache_flush_page(paddr_t);	/* flush page from E$ */
 int	cache_flush(vaddr_t, vsize_t);	/* flush region */
 
-/* The following two are for I$ and D$ flushes and are in locore.s */
-void 	dcache_flush_page(paddr_t);	/* flush page from D$ */
-void 	blast_vcache(void);		/* Clear entire contents of I$ and D$ */
+/* The following are for D$ flushes and are in locore.s */
+#define dcache_flush_page(pa) cacheinfo.c_dcache_flush_page(pa)
+void 	us_dcache_flush_page(paddr_t);	/* flush page from D$ */
+void 	us3_dcache_flush_page(paddr_t);	/* flush page from D$ */
 
 /* The following flush a range from the D$ and I$ but not E$. */
 void	cache_flush_virt(vaddr_t, vsize_t);
@@ -151,6 +152,8 @@ void	cache_flush_phys(paddr_t, psize_t, int);
  * Cache control information.
  */
 struct cacheinfo {
+	void	(*c_dcache_flush_page)(paddr_t);
+
 	int	c_totalsize;		/* total size, in bytes */
 					/* if split, MAX(icache,dcache) */
 	int	c_enabled;		/* true => cache is enabled */

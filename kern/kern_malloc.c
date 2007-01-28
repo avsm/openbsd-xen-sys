@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_malloc.c,v 1.62 2005/11/28 00:14:28 jsg Exp $	*/
+/*	$OpenBSD: kern_malloc.c,v 1.65 2006/11/28 11:14:52 pedro Exp $	*/
 /*	$NetBSD: kern_malloc.c,v 1.15.4.2 1996/06/13 17:10:56 cgd Exp $	*/
 
 /*
@@ -38,6 +38,8 @@
 #include <sys/malloc.h>
 #include <sys/systm.h>
 #include <sys/sysctl.h>
+#include <sys/time.h>
+#include <sys/rwlock.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -81,7 +83,7 @@ int buckstring_init = 0;
 #if defined(KMEMSTATS) || defined(DIAGNOSTIC) || defined(FFS_SOFTUPDATES)
 char *memname[] = INITKMEMNAMES;
 char *memall = NULL;
-extern struct lock sysctl_kmemlock;
+struct rwlock sysctl_kmemlock = RWLOCK_INITIALIZER;
 #endif
 
 #ifdef DIAGNOSTIC
@@ -122,6 +124,11 @@ struct freelist {
 };
 #endif /* DIAGNOSTIC */
 
+#ifndef SMALL_KERNEL
+struct timeval malloc_errintvl = { 5, 0 };
+struct timeval malloc_lasterr;
+#endif
+
 /*
  * Allocate a block of memory
  */
@@ -151,8 +158,18 @@ malloc(unsigned long size, int type, int flags)
 		return ((void *) va);
 #endif
 
-	if (size > 65535 * PAGE_SIZE)
-		panic("malloc: allocation too large");
+	if (size > 65535 * PAGE_SIZE) {
+		if (flags & M_CANFAIL) {
+#ifndef SMALL_KERNEL
+			if (ratecheck(&malloc_lasterr, &malloc_errintvl))
+				printf("malloc(): allocation too large, "
+				    "type = %d, size = %lu\n", type, size);
+#endif
+			return (NULL);
+		} else
+			panic("malloc: allocation too large");
+	}
+
 	indx = BUCKETINDX(size);
 	kbp = &bucket[indx];
 	s = splvm();
@@ -569,7 +586,7 @@ sysctl_malloc(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 		if (memall == NULL) {
 			int totlen;
 
-			i = lockmgr(&sysctl_kmemlock, LK_EXCLUSIVE, NULL);
+			i = rw_enter(&sysctl_kmemlock, RW_WRITE|RW_INTR);
 			if (i)
 				return (i);
 
@@ -595,7 +612,7 @@ sysctl_malloc(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp,
 			for (i = 0; i < totlen; i++)
 				if (memall[i] == ' ')
 					memall[i] = '_';
-			lockmgr(&sysctl_kmemlock, LK_RELEASE, NULL);
+			rw_exit_write(&sysctl_kmemlock);
 		}
 		return (sysctl_rdstring(oldp, oldlenp, newp, memall));
 #else

@@ -1,4 +1,4 @@
-/*	$OpenBSD: est.c,v 1.21 2006/10/19 10:55:56 tom Exp $ */
+/*	$OpenBSD: est.c,v 1.26 2006/12/21 22:31:07 dim Exp $ */
 /*
  * Copyright (c) 2003 Michael Eriksson.
  * All rights reserved.
@@ -961,8 +961,9 @@ void
 est_init(const char *cpu_device, int vendor)
 {
 	int i, mhz, mv, low, high;
-	u_int16_t idhi, idlo, cur;
 	u_int64_t msr;
+	u_int16_t idhi, idlo, cur;
+	u_int8_t crhi, crlo, crcur;
 	const struct fqlist *fql;
 
 	if (setperf_prio > 3)
@@ -980,9 +981,25 @@ est_init(const char *cpu_device, int vendor)
 	idhi = (msr >> 32) & 0xffff;
 	idlo = (msr >> 48) & 0xffff;
 	cur = msr & 0xffff;
-	if (idhi == 0 || idlo == 0 || cur == 0 ||
-	    ((cur >> 8) & 0xff) < ((idlo >> 8) & 0xff) ||
-	    ((cur >> 8) & 0xff) > ((idhi >> 8) & 0xff)) {
+	crhi = (idhi  >> 8) & 0xff;
+	crlo = (idlo  >> 8) & 0xff;
+	crcur = (cur >> 8) & 0xff;
+	if (crlo == 0 || crhi == crlo) {
+		/*
+		 * Don't complain about these cases, and silently disable EST:
+		 * - A lowest clock ratio of 0, which seems to happen on all
+		 *   Pentium 4's that report EST.
+		 * - An equal highest and lowest clock ratio, which happens on
+		 *   at least the Core 2 Duo X6800, maybe on newer models too.
+		 */
+		return;
+	}
+	if (crhi == 0 || crcur == 0 || crlo > crhi ||
+	    crcur < crlo || crcur > crhi) {
+		/*
+		 * Do complain about other weirdness, because we first want to
+		 * know about it, before we decide what to do with it.
+		 */
 		printf("%s: EST: strange msr value 0x%016llx\n",
 		    cpu_device, msr);
 		return;
@@ -1056,14 +1073,14 @@ est_init(const char *cpu_device, int vendor)
 	setperf_prio = 3;
 }
 
-int
+void
 est_setperf(int level)
 {
 	int low, high, i, fq;
 	uint64_t msr;
 
 	if (est_fqlist == NULL)
-		return (EOPNOTSUPP);
+		return;
 
 	low = MSR2MHZ(est_fqlist->table[est_fqlist->n - 1], bus_clock);
 	high = MSR2MHZ(est_fqlist->table[0], bus_clock);
@@ -1076,7 +1093,5 @@ est_setperf(int level)
 	msr &= ~0xffffULL;
 	msr |= est_fqlist->table[i];
 	wrmsr(MSR_PERF_CTL, msr);
-	pentium_mhz = MSR2MHZ(est_fqlist->table[i], bus_clock);
-
-	return (0);
+	cpuspeed = MSR2MHZ(est_fqlist->table[i], bus_clock);
 }

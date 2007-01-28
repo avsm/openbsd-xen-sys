@@ -1,4 +1,4 @@
-/*	$OpenBSD: p9000.c,v 1.15 2005/07/09 22:22:12 miod Exp $	*/
+/*	$OpenBSD: p9000.c,v 1.17 2006/11/29 19:08:22 miod Exp $	*/
 
 /*
  * Copyright (c) 2003, Miodrag Vallat.
@@ -610,7 +610,7 @@ p9000_ras_erasecols(void *v, int row, int col, int n, long int attr)
 	struct p9000_softc *sc = ri->ri_hw;
 	int fg, bg;
 
-	rasops_unpack_attr(attr, &fg, &bg, NULL);
+	ri->ri_ops.unpack_attr(v, attr, &fg, &bg, NULL);
 
 	n *= ri->ri_font->fontwidth;
 	col *= ri->ri_font->fontwidth;
@@ -642,7 +642,7 @@ p9000_ras_eraserows(void *v, int row, int n, long int attr)
 	struct p9000_softc *sc = ri->ri_hw;
 	int fg, bg;
 
-	rasops_unpack_attr(attr, &fg, &bg, NULL);
+	ri->ri_ops.unpack_attr(v, attr, &fg, &bg, NULL);
 
 	p9000_drain(sc);
 	P9000_SELECT_DE_LOW(sc);
@@ -686,7 +686,7 @@ p9000_ras_do_cursor(struct rasops_info *ri)
 	P9000_SELECT_DE_LOW(sc);
 	P9000_WRITE_CMD(sc, P9000_DE_RASTER,
 	    (P9000_RASTER_PATTERN ^ P9000_RASTER_DST) & P9000_RASTER_MASK);
-	P9000_WRITE_CMD(sc, P9000_DE_FG_COLOR, WSCOL_BLACK);
+	P9000_WRITE_CMD(sc, P9000_DE_FG_COLOR, ri->ri_devcmap[WSCOL_BLACK]);
 
 	P9000_SELECT_COORD(sc, P9000_LC_RECT);
 	P9000_WRITE_CMD(sc, P9000_LC_RECT + P9000_COORD_XY,

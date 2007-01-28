@@ -1,4 +1,4 @@
-/*	$OpenBSD: mpi.c,v 1.76 2006/10/21 07:36:15 dlg Exp $ */
+/*	$OpenBSD: mpi.c,v 1.81 2006/11/28 13:22:56 dlg Exp $ */
 
 /*
  * Copyright (c) 2005, 2006 David Gwynne <dlg@openbsd.org>
@@ -81,7 +81,6 @@ int			mpi_complete(struct mpi_softc *, struct mpi_ccb *, int);
 int			mpi_poll(struct mpi_softc *, struct mpi_ccb *, int);
 int			mpi_reply(struct mpi_softc *, u_int32_t);
 
-void			mpi_fc_print(struct mpi_softc *);
 void			mpi_squash_ppr(struct mpi_softc *);
 void			mpi_run_ppr(struct mpi_softc *);
 int			mpi_ppr(struct mpi_softc *, struct scsi_link *,
@@ -148,6 +147,7 @@ int			mpi_cfg_page(struct mpi_softc *, u_int32_t,
 int
 mpi_attach(struct mpi_softc *sc)
 {
+	struct scsibus_attach_args	saa;
 	struct mpi_ccb			*ccb;
 
 	printf("\n");
@@ -225,9 +225,12 @@ mpi_attach(struct mpi_softc *sc)
 	sc->sc_link.adapter_buswidth = sc->sc_buswidth;
 	sc->sc_link.openings = sc->sc_maxcmds / sc->sc_buswidth;
 
-	/* config_found() returns the scsibus we should attach to */
+	bzero(&saa, sizeof(saa));
+	saa.saa_sc_link = &sc->sc_link;
+
+	/* config_found() returns the scsibus attached to us */
 	sc->sc_scsibus = (struct scsibus_softc *) config_found(&sc->sc_dev,
-	    &sc->sc_link, scsiprint);
+	    &saa, scsiprint);
 
 	/* get raid pages */
 	mpi_get_raid(sc);
@@ -235,8 +238,6 @@ mpi_attach(struct mpi_softc *sc)
 	/* do domain validation */
 	if (sc->sc_porttype == MPI_PORTFACTS_PORTTYPE_SCSI)
 		mpi_run_ppr(sc);
-	if (sc->sc_porttype == MPI_PORTFACTS_PORTTYPE_FC)
-		mpi_fc_print(sc);
 
 	/* enable interrupts */
 	mpi_write(sc, MPI_INTR_MASK, MPI_INTR_MASK_DOORBELL);
@@ -254,77 +255,6 @@ free_ccbs:
 	free(sc->sc_ccbs, M_DEVBUF);
 
 	return(1);
-}
-
-void
-mpi_fc_print(struct mpi_softc *sc)
-{
-	struct mpi_cfg_hdr		hdr;
-	struct mpi_cfg_fc_port_pg0	pg;
-	struct mpi_cfg_fc_device_pg0	dpg;
-	struct device			*dev;
-	struct scsibus_softc		*ssc;
-	struct scsi_link		*link;
-	int				i;
-	u_int32_t			btid;
-
-	if (mpi_cfg_header(sc, MPI_CONFIG_REQ_PAGE_TYPE_FC_PORT, 0, 0,
-	    &hdr) != 0) {
-		DNPRINTF(MPI_D_MISC, "%s: mpi_fc_print unable to fetch "
-		    "FC port header 0\n", DEVNAME(sc));
-		return;
-	}
-
-	if (mpi_cfg_page(sc, 0, &hdr, 1, &pg, sizeof(pg)) != 0) {
-		DNPRINTF(MPI_D_MISC, "%s: mpi_fc_print unable to fetch "
-		    "FC port page 0\n",
-		    DEVNAME(sc));
-		return;
-	}
-
-	DNPRINTF(MPI_D_MISC, "%s: at: %dGHz WWNN: %016llx WWPN: %016llx\n",
-	    DEVNAME(sc), letoh32(pg.current_speed), letoh64(pg.wwnn),
-	    letoh64(pg.wwpn));
-
-	TAILQ_FOREACH(dev, &alldevs, dv_list) {
-		if (dev->dv_parent == &sc->sc_dev)
-			break;
-	}
-
-	/* im too nice to punish idiots who don't configure scsibus */
-	if (dev == NULL)
-		return;
-
-	ssc = (struct scsibus_softc *)dev;
-	for (i = 0; i < sc->sc_link.adapter_buswidth; i++) {
-
-		link = ssc->sc_link[i][0];
-
-		if (link == NULL)
-			continue;
-
-		btid = i | MPI_PAGE_ADDRESS_FC_BTID;
-		if (mpi_cfg_header(sc, MPI_CONFIG_REQ_PAGE_TYPE_FC_DEV, 0,
-		    btid, &hdr) != 0) {
-			DNPRINTF(MPI_D_MISC, "%s: mpi_fc_print unable to fetch "
-			    "device header 0\n", DEVNAME(sc));
-			return;
-		}
-
-		bzero(&dpg, sizeof(dpg));
-		if (mpi_cfg_page(sc, btid, &hdr, 1, &dpg, sizeof(dpg)) != 0) {
-			DNPRINTF(MPI_D_MISC, "%s: mpi_fc_print unable to fetch "
-			    "device page 0\n", DEVNAME(sc));
-			continue;
-		}
-
-		link->port_wwn = letoh64(dpg.wwpn);
-		link->node_wwn = letoh64(dpg.wwnn);
-
-		DNPRINTF(MPI_D_MISC, "%s: target %d WWNN: %016llx "
-		    "WWPN: %016llx\n", DEVNAME(sc), i,
-		    letoh64(dpg.wwnn), letoh64(dpg.wwpn));
-	}
 }
 
 void
@@ -1396,7 +1326,7 @@ mpi_minphys(struct buf *bp)
 int
 mpi_scsi_ioctl(struct scsi_link *a, u_long b, caddr_t c, int d, struct proc *e)
 {
-	return (0);
+	return (ENOTTY);
 }
 
 u_int32_t
@@ -2009,9 +1939,7 @@ mpi_evt_sas(void *xsc, void *arg)
 	struct mpi_rcb				*rcb = arg;
 	struct mpi_msg_event_reply		*enp = rcb->rcb_reply;
 	struct mpi_evt_sas_change		*ch;
-	struct scsi_link			*link;
 	u_int8_t				*data;
-	int					i;
 	int					s;
 
 	data = rcb->rcb_reply;
@@ -2024,20 +1952,11 @@ mpi_evt_sas(void *xsc, void *arg)
 	switch (ch->reason) {
 	case MPI_EVT_SASCH_REASON_ADDED:
 	case MPI_EVT_SASCH_REASON_NO_PERSIST_ADDED:
-		/* XXX what an awful interface */
 		scsi_probe_target(sc->sc_scsibus, ch->target);
 		break;
 
 	case MPI_EVT_SASCH_REASON_NOT_RESPONDING:
-		for (i = 0; i < sc->sc_link.luns; i++) {
-			link = sc->sc_scsibus->sc_link[ch->target][i];
-			if (link == NULL)
-				continue;
-
-			config_detach(link->device_softc, 0x0);
-			free(link, M_DEVBUF); /* XXX bogus */
-			sc->sc_scsibus->sc_link[ch->target][i] = NULL;
-		}
+		scsi_detach_target(sc->sc_scsibus, ch->target, DETACH_FORCE);
 		break;
 
 	case MPI_EVT_SASCH_REASON_SMART_DATA:

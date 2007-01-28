@@ -1,4 +1,4 @@
-/*	$OpenBSD: ioapic.c,v 1.7 2006/03/06 19:10:06 kettenis Exp $	*/
+/*	$OpenBSD: ioapic.c,v 1.9 2007/01/15 23:19:05 jsg Exp $	*/
 /* 	$NetBSD: ioapic.c,v 1.6 2003/05/15 13:30:31 fvdl Exp $	*/
 
 /*-
@@ -379,7 +379,7 @@ ioapic_attach(struct device *parent, struct device *self, void *aux)
 
 void
 apic_set_redir(struct ioapic_softc *sc, int pin, int idt_vec,
-	       struct cpu_info *ci)
+    struct cpu_info *ci)
 {
 	u_int32_t redlo;
 	u_int32_t redhi = 0;
@@ -506,25 +506,23 @@ ioapic_hwunmask(struct pic *pic, int pin)
 
 void
 ioapic_addroute(struct pic *pic, struct cpu_info *ci, int pin,
-		int idtvec, int type)
-
+    int idtvec, int type)
 {
 	struct ioapic_softc *sc = (struct ioapic_softc *)pic;
 	struct ioapic_pin *pp;
 
-	if (ioapic_cold) {
-		pp = &sc->sc_pins[pin];
-		pp->ip_type = type;
-		pp->ip_vector = idtvec;
-		pp->ip_cpu = ci;
+	pp = &sc->sc_pins[pin];
+	pp->ip_type = type;
+	pp->ip_vector = idtvec;
+	pp->ip_cpu = ci;
+	if (ioapic_cold)
 		return;
-	}
 	apic_set_redir(sc, pin, idtvec, ci);
 }
 
 void
 ioapic_delroute(struct pic *pic, struct cpu_info *ci, int pin,
-		int idtvec, int type)
+    int idtvec, int type)
 {
 	struct ioapic_softc *sc = (struct ioapic_softc *)pic;
 	struct ioapic_pin *pp;
