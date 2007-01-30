@@ -263,7 +263,7 @@ void	calibrate_cyclecounter(uint64_t freq);
 extern u_quad_t pentium_base_tsc;
 #define CPU_CLOCKUPDATE()						\
 	do {								\
-		if (pentium_mhz) {					\
+		if (cpuspeed) {					\
 			__asm __volatile("cli\n"			\
 					 "rdtsc\n"			\
 					 : "=A" (pentium_base_tsc)	\
@@ -319,7 +319,7 @@ extern const struct cpu_nocpuid_nameclass i386_nocpuid_cpus[];
 extern const struct cpu_cpuid_nameclass i386_cpuid_cpus[];
 
 #if defined(I586_CPU) || defined(I686_CPU)
-extern uint64_t pentium_mhz;
+extern uint64_t cpuspeed;
 extern int bus_clock;
 #endif
 

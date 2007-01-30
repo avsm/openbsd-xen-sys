@@ -73,7 +73,7 @@ static struct timeout xen_timepush_co;
  * XXX
  * Don't know yet what to do with those, how to get rid of them.
  */
-uint64_t pentium_mhz;
+uint64_t cpuspeed;
 u_quad_t pentium_base_tsc = 0;
 
 #define NS_PER_TICK (1000000000ULL/hz)
@@ -307,7 +307,7 @@ xen_delay(int n)
 		u_int64_t cc, cc2, when;
 
 		cc = cpu_counter();
-		when = cc + (u_int64_t)n * pentium_mhz / 1LL;
+		when = cc + (u_int64_t)n * cpuspeed / 1LL;
 		if (when < cc) {
 			/* wait for counter to wrap */
 			cc2 = cpu_counter();
@@ -350,14 +350,14 @@ xen_microtime(struct timeval *tv)
 	*tv = time;
 	cycles = cpu_counter() - shadow_tsc_stamp;
 	KDASSERT(cycles > 0);
-	cycles += cc_denom * pentium_mhz / 1000LL;
+	cycles += cc_denom * cpuspeed / 1000LL;
 #ifdef XEN_CLOCK_DEBUG
 	if (cycles <= 0) {
 		printf("xen_microtime: CPU counter has decreased by %lli"
 			" since last hardclock(9)\n", -cycles);
 	}
 #endif
-	tv->tv_usec += cycles * cc_ms_delta * hz / (pentium_mhz * 1000000);
+	tv->tv_usec += cycles * cc_ms_delta * hz / (cpuspeed * 1000000);
 	KDASSERT(tv->tv_usec < 2000000);
 	while (tv->tv_usec >= 1000000) {
 		tv->tv_usec -= 1000000;
@@ -438,7 +438,7 @@ sysctl_xen_timepush(const int *name, u_int namelen, void *oldp,
 void
 calibrate_cyclecounter(uint64_t freq)
 {
-	pentium_mhz = (freq + 500000) / 1000000;
+	cpuspeed = (freq + 500000) / 1000000;
 }
 
 void
@@ -454,7 +454,7 @@ xen_initclocks(void)
 	processed_system_time = shadow_system_time;
 	cc_time = time;
 	cc_ms_delta = 1;
-	cc_denom = pentium_mhz * 1;
+	cc_denom = cpuspeed * 1;
 
 	event_set_handler(evtch, (int (*)(void *))xen_timer_handler,
 	    NULL, IPL_CLOCK, "clock");

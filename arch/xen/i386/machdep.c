@@ -1868,11 +1868,11 @@ identifycpu(struct cpu_info *ci)
 		else
 			freq = freq >> tinfo->tsc_shift;
 		calibrate_cyclecounter(freq);
-		if (pentium_mhz > 994) {
+		if (cpuspeed > 994) {
 			int ghz, fr;
 
-			ghz = (pentium_mhz + 9) / 1000;
-			fr = ((pentium_mhz + 9) / 10 ) % 100;
+			ghz = (cpuspeed + 9) / 1000;
+			fr = ((cpuspeed + 9) / 10 ) % 100;
 			if ((ci->ci_flags & CPUF_BSP) == 0) {
 				if (fr)
 					printf(" %d.%02d GHz", ghz, fr);
@@ -1881,7 +1881,7 @@ identifycpu(struct cpu_info *ci)
 			}
 		} else {
 			if ((ci->ci_flags & CPUF_BSP) == 0) {
-				printf(" %d MHz", pentium_mhz);
+				printf(" %d MHz", cpuspeed);
 			}
 		}
 	}
@@ -1925,7 +1925,7 @@ identifycpu(struct cpu_info *ci)
 
 #ifndef SMALL_KERNEL
 #if defined(I586_CPU) || defined(I686_CPU)
-	if (pentium_mhz != 0)
+	if (cpuspeed != 0)
 		cpu_cpuspeed = pentium_cpuspeed;
 #endif
 #endif
@@ -2231,7 +2231,7 @@ p4_update_cpuspeed(void)
 	}
 	mult = ((msr >> 24) & 0xff);
 
-	pentium_mhz = bus * mult / 100;
+	cpuspeed = bus * mult / 100;
 }
 
 void
@@ -2261,7 +2261,7 @@ p3_update_cpuspeed(void)
 	if (p3_step > 1)
 		mult += ((msr >> 27) & 0x1) * 40;
 
-	pentium_mhz = (bus * mult) / 1000;
+	cpuspeed = (bus * mult) / 1000;
 }
 #endif	/* I686_CPU */
 
@@ -2269,7 +2269,7 @@ p3_update_cpuspeed(void)
 int
 pentium_cpuspeed(int *freq)
 {
-	*freq = pentium_mhz;
+	*freq = cpuspeed;
 	return (0);
 }
 #endif
