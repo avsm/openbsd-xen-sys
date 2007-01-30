@@ -134,18 +134,6 @@ cpu_fork(struct proc *p1, struct proc *p2,
 	pcb->pcb_esp = (int)sf;
 }
 
-void
-cpu_swapout(struct proc *p)
-{
-
-#if NNPX > 0
-	/*
-	 * Make sure we save the FP state before the user area vanishes.
-	 */
-	npxsave_proc(p, 1);
-#endif
-}
-
 /*
  * cpu_exit is called as the last action during exit.
  *

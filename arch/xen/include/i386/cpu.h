@@ -55,12 +55,6 @@
 #endif
 
 /*
- * definitions of cpu-dependent requirements
- * referenced in generic code
- */
-#define	cpu_swapin(p)			/* nothing */
-
-/*
  * Arguments to hardclock, softclock and statclock
  * encapsulate the previous machine state in an opaque
  * clockframe; for now, use generic intrframe.
@@ -205,12 +199,6 @@ extern void cpu_init_idle_pcbs(void);
 //#warning "curcpu defined"
 
 #define CPU_IS_PRIMARY(ci)	1
-
-/*
- * definitions of cpu-dependent requirements
- * referenced in generic code
- */
-#define	cpu_swapin(p)			/* nothing */
 
 #endif
 
