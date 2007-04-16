@@ -8692,10 +8692,6 @@ static const struct pci_known_product pci_known_products[] = {
 	    "GeForce 6600 GT AGP",
 	},
 	{
-	    PCI_VENDOR_NVIDIA, PCI_PRODUCT_NVIDIA_GEFORCE7800GS,
-	    "GeForce 7800 GS",
-	},
-	{
 	    PCI_VENDOR_NVIDIA, PCI_PRODUCT_NVIDIA_GEFORCE6800GT,
 	    "GeForce 6800 GT",
 	},

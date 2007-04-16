@@ -1,0 +1,188 @@
+#	$OpenBSD: files.xen,v 1.19 2005/11/30 17:48:05 hshoexer Exp $
+#
+# new style config file for xen architecture
+#
+
+# maxpartitions must be first item in files.${ARCH}
+maxpartitions 16
+
+maxusers 2 16 64
+
+#
+# Media Independent Interface (mii)
+#
+include "../../../dev/mii/files.mii"
+
+#
+# Machine-independent SCSI drivers
+#
+
+include "../../../scsi/files.scsi"
+major   {sd = 4}
+major   {st = 5}
+major   {cd = 6}
+major   {rd = 17}
+
+#
+# I2O
+#
+include "dev/i2o/files.i2o"
+
+#
+# Machine-independent ATAPI drivers
+#
+
+include "../../../dev/atapiscsi/files.atapiscsi"
+include "../../../dev/ata/files.ata"
+
+#
+# System bus types
+#
+
+define	hypervisorbus {}
+define xendevbus {}
+define mainbus {[apid = -1]}
+
+device	mainbus: hypervisorbus, mainbus
+attach	mainbus at root
+file	arch/xen/i386/mainbus.c
+
+# Xenbus
+include "../../../arch/xen/xenbus/files.xen_xenbus"
+
+# Common files and drivers 
+include "../../../arch/xen/xen/files.xen_xen"
+
+# Xen-i386 files
+include "../../../arch/xen/i386/files.xen_i386"
+
+#
+# PCI-only drivers
+# XXX MUST BE INCLUDED BEFORE files.isa, as long as files.isa attaches
+# XXX devices to 'pci'.
+#
+
+include "../../../dev/pci/files.pci"
+file	arch/i386/pci/pci_machdep.c		pci
+file	arch/i386/pci/agp_machdep.c		pciagp
+file	dev/pci/agp_ali.c			pciagp
+file	dev/pci/agp_amd.c			pciagp
+file	dev/pci/agp_i810.c			pciagp
+file	dev/pci/agp_intel.c			pciagp
+file	dev/pci/agp_sis.c			pciagp
+file	dev/pci/agp_via.c			pciagp
+file	arch/i386/pci/pcic_pci_machdep.c	pcic_pci
+
+# PCI-Host bridge chipsets
+device	pchb: pcibus
+attach	pchb at pci
+file	arch/i386/pci/pchb.c		pchb
+
+# PCI-ISA bridge chipsets
+device	pcib: isabus
+attach	pcib at pci
+file	arch/i386/pci/pcib.c		pcib | ichpcib | gscpcib
+
+#
+# ISA and mixed ISA+PCI
+#
+
+major {wd = 0}
+
+include "../../../dev/isa/files.isa"
+file	arch/xen/xen/isa_machdep.c	isabus & dom0ops
+
+# attribute used to represent the "keyboard controller"
+# XXX should be a real device
+define pckbcport {[irq = -1], [port = -1]}
+
+# 8250/16[45]50-based "com" ports, optimized for the i386 interrupt system
+#device	pccom: tty
+attach	pccom at isa with pccom_isa
+file	arch/i386/isa/pccom.c		pccom & pccom_isa needs-flag
+
+# PC Mice; Logitech-style, Microsoft-style, and PS/2-style
+device	lms: wsmousedev
+attach	lms at isa
+file	arch/i386/isa/lms.c		lms needs-flag
+device	mms: wsmousedev
+attach	mms at isa
+file	arch/i386/isa/mms.c		mms needs-flag
+
+include	"dev/wscons/files.wscons"
+include	"dev/pckbc/files.pckbc"
+
+device sysbeep
+attach sysbeep at pcppi
+
+# Floppy disk controller
+# XXX temporarily conflicts with arc, will soon move to files.isa
+device	fdc {[drive = -1]}
+attach	fdc at isa
+file	dev/isa/fdc.c		fdc needs-flag
+
+device	fd: disk, isa_dma
+attach	fd at fdc
+file	dev/isa/fd.c		fd needs-flag
+major	{fd = 2}
+
+pseudo-device   mtrr
+file    arch/i386/i386/mtrr.c           mtrr needs-flag
+
+#
+# ISA PnP
+#
+
+include "../../../dev/isa/files.isapnp"
+file    arch/i386/isa/isapnp_machdep.c  isapnp
+
+device	bios {}
+attach	bios at hypervisor
+file	arch/i386/i386/bios.c		bios needs-count
+
+# Intel SMP specification 1.4
+define  mpbios
+file    arch/i386/i386/mpbios.c         mpbios needs-flag
+
+device  apm
+attach  apm at bios
+file    arch/i386/i386/apm.c            apm needs-count
+file    arch/i386/i386/apmcall.S        apm
+
+# Common APIC support routines
+file    arch/i386/i386/apic.c           ioapic | lapic
+
+# Local APIC (required for multiprocessor)
+define  lapic
+file    arch/i386/i386/lapic.c          lapic needs-flag
+
+# I/O APICs
+device  ioapic: mpbios, lapic
+attach  ioapic at mainbus
+file    arch/i386/i386/ioapic.c         ioapic needs-flag
+
+# CPUS
+define	cpu {[apid = -1]}
+device	cpu
+attach	cpu at mainbus
+file	arch/xen/i386/cpu.c		cpu
+
+device	pcibios
+attach	pcibios at bios
+file	arch/i386/pci/pcibios.c		pcibios needs-count
+file	arch/i386/pci/pci_intr_fixup.c	pcibios
+file	arch/i386/pci/pci_bus_fixup.c	pcibios
+file	arch/i386/pci/pci_addr_fixup.c	pcibios
+file	arch/i386/pci/opti82c558.c	pcibios
+file	arch/i386/pci/opti82c700.c	pcibios
+file	arch/i386/pci/piix.c		pcibios
+file	arch/i386/pci/rccosb4.c		pcibios
+file	arch/i386/pci/sis85c503.c	pcibios
+file	arch/i386/pci/via82c586.c	pcibios
+file	arch/i386/pci/via8231.c		pcibios
+file	arch/i386/pci/amd756.c		pcibios
+file	arch/i386/pci/ali1543.c		pcibios
+
+
+include "../../../dev/acpi/files.acpi"
+file	arch/i386/i386/acpi_machdep.c	acpi

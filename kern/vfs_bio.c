@@ -234,6 +234,7 @@ static __inline struct buf *
 bio_doread(struct vnode *vp, daddr64_t blkno, int size, int async)
 {
 	struct buf *bp;
+	struct proc *p = (curproc != NULL ? curproc : &proc0);	/* XXX */
 
 	bp = getblk(vp, blkno, size, 0, 0);
 
@@ -247,7 +248,7 @@ bio_doread(struct vnode *vp, daddr64_t blkno, int size, int async)
 		VOP_STRATEGY(bp);
 
 		/* Pay for the read. */
-		curproc->p_stats->p_ru.ru_inblock++;		/* XXX */
+		p->p_stats->p_ru.ru_inblock++;		/* XXX */
 	} else if (async) {
 		brelse(bp);
 	}
@@ -310,6 +311,7 @@ bwrite(struct buf *bp)
 	int rv, async, wasdelayed, s;
 	struct vnode *vp;
 	struct mount *mp;
+	struct proc *p = (curproc != NULL ? curproc : &proc0);	/* XXX */
 
 	vp = bp->b_vp;
 	if (vp != NULL)
@@ -356,7 +358,7 @@ bwrite(struct buf *bp)
 	if (wasdelayed) {
 		reassignbuf(bp);
 	} else
-		curproc->p_stats->p_ru.ru_oublock++;
+		p->p_stats->p_ru.ru_oublock++;
 	
 
 	/* Initiate disk write.  Make sure the appropriate party is charged. */
@@ -397,6 +399,7 @@ void
 bdwrite(struct buf *bp)
 {
 	int s;
+	struct proc *p = (curproc != NULL ? curproc : &proc0);	/* XXX */
 
 	/*
 	 * If the block hasn't been seen before:
@@ -411,7 +414,7 @@ bdwrite(struct buf *bp)
 		s = splbio();
 		reassignbuf(bp);
 		splx(s);
-		curproc->p_stats->p_ru.ru_oublock++;	/* XXX */
+		p->p_stats->p_ru.ru_oublock++;	/* XXX */
 	} else {
 		/*
 		 * see if this buffer has slacked through the syncer
@@ -431,8 +434,7 @@ bdwrite(struct buf *bp)
 	}
 
 	/* Otherwise, the "write" is done, so mark and release the buffer. */
-	CLR(bp->b_flags, B_NEEDCOMMIT);
-	SET(bp->b_flags, B_DONE);
+	CLR(bp->b_flags, B_NEEDCOMMIT|B_DONE);
 	brelse(bp);
 }
 
@@ -486,6 +488,25 @@ brelse(struct buf *bp)
 	struct bqueues *bufq;
 	int s;
 
+
+	/* Wake up syncer and cleaner processes waiting for buffers */
+	if (nobuffers) {
+		wakeup(&nobuffers);
+		nobuffers = 0;
+	}
+
+	/* Wake up any processes waiting for any buffer to become free. */
+	if (needbuffer && (numcleanpages > locleanpages)) {
+		needbuffer--;
+		wakeup_one(&needbuffer);
+	}
+
+	/* Wake up any processes waiting for _this_ buffer to become free. */
+	if (ISSET(bp->b_flags, B_WANTED)) {
+		CLR(bp->b_flags, B_WANTED|B_AGE);
+		wakeup(bp);
+	}
+
 	/* Block disk interrupts. */
 	s = splbio();
 
@@ -505,13 +526,10 @@ brelse(struct buf *bp)
 		if (LIST_FIRST(&bp->b_dep) != NULL)
 			buf_deallocate(bp);
 
-		if (ISSET(bp->b_flags, B_DELWRI)) {
-			CLR(bp->b_flags, B_DELWRI);
-		}
-
 		if (bp->b_vp)
 			brelvp(bp);
 
+		CLR(bp->b_flags, B_DELWRI|B_DONE);
 		if (bp->b_bufsize <= 0) {
 			/* no data */
 			bufq = &bufqueues[BQ_EMPTY];
@@ -544,26 +562,7 @@ brelse(struct buf *bp)
 	}
 
 	/* Unlock the buffer. */
-	CLR(bp->b_flags, (B_AGE | B_ASYNC | B_BUSY | B_NOCACHE | B_DEFERRED));
-
-
-	/* Wake up syncer and cleaner processes waiting for buffers */
-	if (nobuffers) {
-		wakeup(&nobuffers);
-		nobuffers = 0;
-	}
-
-	/* Wake up any processes waiting for any buffer to become free. */
-	if (needbuffer && (numcleanpages > locleanpages)) {
-		needbuffer--;
-		wakeup_one(&needbuffer);
-	}
-
-	/* Wake up any processes waiting for _this_ buffer to become free. */
-	if (ISSET(bp->b_flags, B_WANTED)) {
-		CLR(bp->b_flags, B_WANTED);
-		wakeup(bp);
-	}
+	CLR(bp->b_flags, (B_AGE | B_ASYNC | B_BUSY | B_NOCACHE | B_CACHE | B_DEFERRED));
 
 	splx(s);
 }
@@ -621,8 +620,8 @@ start:
 		s = splbio();
 		if (ISSET(bp->b_flags, B_BUSY)) {
 			SET(bp->b_flags, B_WANTED);
-			error = tsleep(bp, slpflag | (PRIBIO + 1), "getblk",
-			    slptimeo);
+			error = ltsleep(bp, slpflag | (PRIBIO + 1) | PNORELOCK,
+				"getblk", slptimeo, &vp->v_interlock);
 			splx(s);
 			if (error)
 				return (NULL);
@@ -630,7 +629,12 @@ start:
 		}
 
 		if (!ISSET(bp->b_flags, B_INVAL)) {
-			SET(bp->b_flags, (B_BUSY | B_CACHE));
+#ifdef DIAGNOSTIC
+			if (ISSET(bp->b_flags, B_DONE|B_DELWRI) &&
+			    bp->b_bcount < size && vp->v_type != VBLK)
+				panic("getblk: block size invariant failed");
+#endif
+			SET(bp->b_flags, B_BUSY);
 			bremfree(bp);
 			splx(s);
 			break;
@@ -910,7 +914,7 @@ biowait(struct buf *bp)
 	int s;
 
 	s = splbio();
-	while (!ISSET(bp->b_flags, B_DONE))
+	while (!ISSET(bp->b_flags, B_DONE|B_DELWRI))
 		tsleep(bp, PRIBIO + 1, "biowait", 0);
 	splx(s);
 

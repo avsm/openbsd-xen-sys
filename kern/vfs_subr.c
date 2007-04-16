@@ -2263,7 +2263,7 @@ vfs_vnode_print(struct vnode *vp, int full, int (*pr)(const char *, ...))
 	      vp->v_type > NENTS(vtypes)? "<unk>":vtypes[vp->v_type],
 	      vp->v_type, vp->v_mount, vp->v_mountedhere);
 
-	(*pr)("data %p usecount %d writecount %ld holdcnt %ld numoutput %d\n",
+	(*pr)("data %p usecount %u writecount %lu holdcnt %ld numoutput %d\n",
 	      vp->v_data, vp->v_usecount, vp->v_writecount,
 	      vp->v_holdcnt, vp->v_numoutput);
 

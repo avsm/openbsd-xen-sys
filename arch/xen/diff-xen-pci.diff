@@ -1,0 +1,16 @@
+Index: dev/pci/pcivar.h
+===================================================================
+RCS file: /mount/p4/cvs/openbsd/src/sys/dev/pci/pcivar.h,v
+retrieving revision 1.48
+diff -u -p -r1.48 pcivar.h
+--- dev/pci/pcivar.h	7 Apr 2006 01:04:49 -0000	1.48
++++ dev/pci/pcivar.h	10 Apr 2006 06:50:56 -0000
+@@ -58,6 +58,8 @@ struct pci_softc;
+  */
+ #if defined(__alpha__)
+ #include <alpha/pci/pci_machdep.h>
++#elif defined(xen)
++#include <machine/pci_machdep.h>
+ #elif defined(__i386__)
+ #include <i386/pci/pci_machdep.h>
+ #elif defined(__cats__)

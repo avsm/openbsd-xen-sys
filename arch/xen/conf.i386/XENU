@@ -1,0 +1,48 @@
+#	$OpenBSD: GENERIC,v 1.9 2005/11/11 19:25:09 hshoexer Exp $
+#
+# For further information on compiling OpenBSD kernels, see the config(8)
+# man page.
+#
+# For further information on hardware support for this architecture, see
+# the intro(4) man page.  For further information about kernel options
+# for this architecture, see the options(4) man page.  For an explanation
+# of each device driver in this file see the section 4 man page for the
+# device.
+
+machine		xen
+include		"../../../conf/GENERIC"
+maxusers	32		# estimated number of users
+
+option		XEN
+#option		DOM0OPS
+
+option		I686_CPU
+
+# disabled, see OpenBSD bug #5042
+#makeoptions	COPTS="-O2 -mcpu=i686 -march=i686"
+makeoptions	COPTS="-O0 -g"
+
+#option		PCIVERBOSE
+
+# Generic swap; second partition of root disk or network.
+config          bsd     swap generic
+
+mainbus0	at root
+cpu0		at mainbus?
+
+hypervisor*	at mainbus?	# Xen hypervisor
+
+npx0		at hypervisor?	# x86 math coprocessor
+
+xencons*	at hypervisor?	# Xen virtual console
+xenbus*		at hypervisor?	# Xen virtual bus
+xennet*		at xenbus?	# Xen virtual network interface
+xbd*		at xenbus?	# Xen virtual block interface
+
+# PCI bus support
+#pci*		at hypervisor? bus ?
+
+#pchb*		at pci? dev ? function ?	# PCI-Host bridges
+#ppb*		at pci? dev ? function ?	# PCI-PCI bridges
+
+#option          PCIAGP

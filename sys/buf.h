@@ -97,6 +97,8 @@ struct buf {
 	int	b_validoff;		/* Offset in buffer of valid region. */
 	int	b_validend;		/* Offset of end of valid region. */
  	struct	workhead b_dep;		/* List of filesystem dependencies. */
+
+	void *b_private;		/* private data for owner */
 };
 
 /*

@@ -69,6 +69,8 @@ struct pci_softc;
  */
 #if defined(__alpha__)
 #include <alpha/pci/pci_machdep.h>
+#elif defined(xen)
+#include <machine/pci_machdep.h>
 #elif defined(__i386__)
 #include <i386/pci/pci_machdep.h>
 #elif defined(__cats__)
