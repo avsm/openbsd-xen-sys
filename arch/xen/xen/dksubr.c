@@ -99,7 +99,7 @@ dk_open(struct dk_intf *di, struct dk_softc *dksc, dev_t dev,
 	DPRINTF_FOLLOW(("dk_open(%s, %p, 0x%x, 0x%x)\n",
 	    di->di_dkname, dksc, dev, flags));
 
-	if ((ret = lockmgr(&dk->dk_lock, LK_EXCLUSIVE, NULL)) != 0)
+	if (disk_lock(dk) != 0)
 		return ret;
 
 	part = DISKPART(dev);
@@ -150,7 +150,7 @@ dk_open(struct dk_intf *di, struct dk_softc *dksc, dev_t dev,
 	dk->dk_openmask = dk->dk_copenmask | dk->dk_bopenmask;
 
 done:
-	lockmgr(&dk->dk_lock, LK_RELEASE, NULL);
+	disk_unlock(dk);
 	return ret;
 }
 
@@ -167,7 +167,7 @@ dk_close(struct dk_intf *di, struct dk_softc *dksc, dev_t dev,
 	DPRINTF_FOLLOW(("dk_close(%s, %p, 0x%x, 0x%x)\n",
 	    di->di_dkname, dksc, dev, flags));
 
-	if ((ret = lockmgr(&dk->dk_lock, LK_EXCLUSIVE, NULL)) != 0)
+	if (disk_lock(disk)) != 0)
 		return ret;
 
 	switch (fmt) {
@@ -180,7 +180,7 @@ dk_close(struct dk_intf *di, struct dk_softc *dksc, dev_t dev,
 	}
 	dk->dk_openmask = dk->dk_copenmask | dk->dk_bopenmask;
 
-	lockmgr(&dk->dk_lock, LK_RELEASE, NULL);
+	disk_unlock(dk);
 	return 0;
 }
 
@@ -349,7 +349,7 @@ dk_ioctl(struct dk_intf *di, struct dk_softc *dksc, dev_t dev,
 		lp = (struct disklabel *)data;
 
 		dk = &dksc->sc_dkdev;
-		error = lockmgr(&dk->dk_lock, LK_EXCLUSIVE, NULL);
+		error = disk_lock(dk);
 		if (error) {
 			break;
 		}
@@ -366,7 +366,7 @@ dk_ioctl(struct dk_intf *di, struct dk_softc *dksc, dev_t dev,
 		}
 
 		dksc->sc_flags &= ~DKF_LABELLING;
-		error = lockmgr(&dk->dk_lock, LK_RELEASE, NULL);
+		disk_unlock(dk);
 		break;
 
 	case DIOCWLABEL:
