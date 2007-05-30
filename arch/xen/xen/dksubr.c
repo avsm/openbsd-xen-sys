@@ -167,7 +167,7 @@ dk_close(struct dk_intf *di, struct dk_softc *dksc, dev_t dev,
 	DPRINTF_FOLLOW(("dk_close(%s, %p, 0x%x, 0x%x)\n",
 	    di->di_dkname, dksc, dev, flags));
 
-	if (disk_lock(disk)) != 0)
+	if (disk_lock(dk) != 0)
 		return ret;
 
 	switch (fmt) {
