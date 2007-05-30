@@ -75,7 +75,7 @@ uvm_km_kmemalloc1(struct vm_map *map, struct uvm_object *obj,
 	if (__predict_false(uvm_map(map, &kva, size, obj, prefer, align,
 		UVM_MAPFLAG(UVM_PROT_RW, UVM_PROT_RW, UVM_INH_NONE,
 			UVM_ADV_RANDOM, (flags & UVM_KMF_TRYLOCK)))
-			!= KERN_SUCCESS)) {
+			!= 0)) {
 		UVMHIST_LOG(maphist, "<- done (no VM)", 0,0,0,0);
 		return (0);
 	}
