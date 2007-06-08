@@ -17,6 +17,9 @@ option		XEN
 option		DOM0OPS
 option		I686_CPU
 
+#makeoptions   COPTS="-O2 -mcpu=i686 -march=i686"
+makeoptions     COPTS="-O0 -g"
+
 option		PCIVERBOSE
 
 # Generic swap; second partition of root disk or network.
