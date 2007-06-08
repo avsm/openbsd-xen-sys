@@ -3566,7 +3566,7 @@ pmap_enter_ma(struct pmap *pmap, vaddr_t va, paddr_t ma, paddr_t pa,
 	} else {
 		bank = -1;
 	}
-	XENPRINTK(("pg %p from %p, init %d\n", pg, (void *) pa,
+	XENPRINTK(("pg %p from %p, init %d\n", PHYS_TO_VM_PAGE(pa), (void *) pa,
 		pmap_initialized));
 	if (pmap_initialized && bank != -1) {
 		pvh = &vm_physmem[bank].pmseg.pvhead[off];

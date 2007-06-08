@@ -1,4 +1,4 @@
-/*	$OpenBSD: scsiconf.h,v 1.83 2007/04/03 04:47:59 dlg Exp $	*/
+/*	$OpenBSD: scsiconf.h,v 1.81 2006/11/28 23:59:45 dlg Exp $	*/
 /*	$NetBSD: scsiconf.h,v 1.35 1997/04/02 02:29:38 mycroft Exp $	*/
 
 /*
@@ -73,7 +73,7 @@
  * each individual scsi bus has an array that points to all the scsi_link
  *    structs associated with that scsi bus. Slots with no device have
  *    a NULL pointer.
- * each individual device also knows the address of its own scsi_link
+ * each individual device also knows the address of it's own scsi_link
  *    structure.
  *
  *				-------------
@@ -312,7 +312,6 @@ int	scsi_execute_xs(struct scsi_xfer *);
 u_long	scsi_size(struct scsi_link *, int, u_int32_t *);
 int	scsi_test_unit_ready(struct scsi_link *, int, int);
 int	scsi_inquire(struct scsi_link *, struct scsi_inquiry_data *, int);
-int	scsi_inquire_vpd(struct scsi_link *, void *, u_int, u_int8_t, int);
 int	scsi_prevent(struct scsi_link *, int, int);
 int	scsi_start(struct scsi_link *, int, int);
 int	scsi_mode_sense(struct scsi_link *, int, int, struct scsi_mode_header *,

@@ -1,4 +1,4 @@
-/* $OpenBSD: mfi.c,v 1.70 2007/02/14 00:53:16 dlg Exp $ */
+/* $OpenBSD: mfi.c,v 1.66 2006/11/28 23:59:45 dlg Exp $ */
 /*
  * Copyright (c) 2006 Marco Peereboom <marco@peereboom.us>
  *
@@ -703,8 +703,8 @@ mfi_despatch_cmd(struct mfi_ccb *ccb)
 	DNPRINTF(MFI_D_CMD, "%s: mfi_despatch_cmd\n",
 	    DEVNAME(ccb->ccb_sc));
 
-	mfi_write(ccb->ccb_sc, MFI_IQP, (ccb->ccb_pframe >> 3) |
-	    ccb->ccb_extra_frames);
+	mfi_write(ccb->ccb_sc, MFI_IQP, htole32((ccb->ccb_pframe >> 3) |
+	    ccb->ccb_extra_frames));
 
 	return(0);
 }
@@ -825,8 +825,8 @@ mfi_scsi_io(struct mfi_ccb *ccb, struct scsi_xfer *xs, uint32_t blockno,
 	ccb->ccb_data = xs->data;
 	ccb->ccb_len = xs->datalen;
 
-	if (mfi_create_sgl(ccb, (xs->flags & SCSI_NOSLEEP) ?
-	    BUS_DMA_NOWAIT : BUS_DMA_WAITOK))
+	if (mfi_create_sgl(ccb, xs->flags & SCSI_NOSLEEP) ?
+	    BUS_DMA_NOWAIT : BUS_DMA_WAITOK)
 		return (1);
 
 	return (0);
@@ -916,8 +916,8 @@ mfi_scsi_ld(struct mfi_ccb *ccb, struct scsi_xfer *xs)
 		ccb->ccb_data = xs->data;
 		ccb->ccb_len = xs->datalen;
 
-		if (mfi_create_sgl(ccb, (xs->flags & SCSI_NOSLEEP) ?
-		    BUS_DMA_NOWAIT : BUS_DMA_WAITOK))
+		if (mfi_create_sgl(ccb, xs->flags & SCSI_NOSLEEP) ?
+		    BUS_DMA_NOWAIT : BUS_DMA_WAITOK)
 			return (1);
 	}
 
@@ -1575,7 +1575,7 @@ mfi_ioctl_blink(struct mfi_softc *sc, struct bioc_blink *bb)
 
 	memset(mbox, 0, sizeof mbox);
 
-	*((uint16_t *)&mbox) = pd->mpl_address[i].mpa_pd_id;
+	*((uint16_t *)&mbox) = pd->mpl_address[i].mpa_pd_id;;
 
 	switch (bb->bb_status) {
 	case BIOC_SBUNBLINK:
@@ -1632,7 +1632,7 @@ mfi_ioctl_setstate(struct mfi_softc *sc, struct bioc_setstate *bs)
 
 	memset(mbox, 0, sizeof mbox);
 
-	*((uint16_t *)&mbox) = pd->mpl_address[i].mpa_pd_id;
+	*((uint16_t *)&mbox) = pd->mpl_address[i].mpa_pd_id;;
 
 	switch (bs->bs_status) {
 	case BIOC_SSONLINE:
@@ -1788,11 +1788,11 @@ mfi_create_sensors(struct mfi_softc *sc)
 	if (ssc == NULL)
 		return (1);
 
-	sc->sc_sensors = malloc(sizeof(struct ksensor) * sc->sc_ld_cnt,
+	sc->sc_sensors = malloc(sizeof(struct sensor) * sc->sc_ld_cnt,
 	    M_DEVBUF, M_WAITOK);
 	if (sc->sc_sensors == NULL)
 		return (1);
-	bzero(sc->sc_sensors, sizeof(struct ksensor) * sc->sc_ld_cnt);	
+	bzero(sc->sc_sensors, sizeof(struct sensor) * sc->sc_ld_cnt);	
 
 	strlcpy(sc->sc_sensordev.xname, DEVNAME(sc),
 	    sizeof(sc->sc_sensordev.xname));

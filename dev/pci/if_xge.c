@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_xge.c,v 1.36 2007/02/27 22:18:53 kettenis Exp $	*/
+/*	$OpenBSD: if_xge.c,v 1.34 2006/10/23 21:08:22 brad Exp $	*/
 /*	$NetBSD: if_xge.c,v 1.1 2005/09/09 10:30:27 ragge Exp $	*/
 
 /*
@@ -645,12 +645,7 @@ xge_attach(struct device *parent, struct device *self, void *aux)
 	IFQ_SET_MAXLEN(&ifp->if_snd, NTXDESCS - 1);
 	IFQ_SET_READY(&ifp->if_snd);
 
-	ifp->if_capabilities = IFCAP_VLAN_MTU | IFCAP_CSUM_IPv4 |
-			       IFCAP_CSUM_TCPv4 | IFCAP_CSUM_UDPv4;
-
-#if NVLAN > 0
-	ifp->if_capabilities |= IFCAP_VLAN_HWTAGGING;
-#endif
+	ifp->if_capabilities = IFCAP_VLAN_MTU;
 
 	/*
 	 * Attach the interface.
@@ -751,11 +746,6 @@ xge_init(struct ifnet *ifp)
 		splx(s);
 		return (1);
 	}
-
-	/* disable VLAN tag stripping */
-	val = PIF_RCSR(RX_PA_CFG);
-	val &= ~STRIP_VLAN_TAG;
-	PIF_WCSR(RX_PA_CFG, val);
 
 	/* set MRU */
 #ifdef XGE_JUMBO
@@ -1108,9 +1098,6 @@ xge_start(struct ifnet *ifp)
 	struct	mbuf *m;
 	uint64_t par, lcr;
 	int nexttx = 0, ntxd, error, i;
-#if NVLAN > 0
-	struct ifvlan *ifv = NULL;
-#endif
 
 	if ((ifp->if_flags & (IFF_RUNNING|IFF_OACTIVE)) != IFF_RUNNING)
 		return;
@@ -1153,23 +1140,14 @@ xge_start(struct ifnet *ifp)
 		txd->txd_control1 |= TXD_CTL1_OWN|TXD_CTL1_GCF;
 		txd->txd_control2 = TXD_CTL2_UTIL;
 
-#if NVLAN > 0
-		if ((m->m_flags & (M_PROTO1|M_PKTHDR)) == (M_PROTO1|M_PKTHDR) &&
-		    m->m_pkthdr.rcvif != NULL) {
-			ifv = m->m_pkthdr.rcvif->if_softc;
-
-			txd->txd_control2 |= TXD_CTL2_VLANE;
-			txd->txd_control2 |= TXD_CTL2_VLANT(ifv->ifv_tag);
-		}
-#endif
-
-		if (m->m_pkthdr.csum_flags & M_IPV4_CSUM_OUT)
+#ifdef XGE_CKSUM
+		if (m->m_pkthdr.csum_flags & M_CSUM_IPv4)
 			txd->txd_control2 |= TXD_CTL2_CIPv4;
-		if (m->m_pkthdr.csum_flags & M_TCPV4_CSUM_OUT)
+		if (m->m_pkthdr.csum_flags & M_CSUM_TCPv4)
 			txd->txd_control2 |= TXD_CTL2_CTCP;
-		if (m->m_pkthdr.csum_flags & M_UDPV4_CSUM_OUT)
+		if (m->m_pkthdr.csum_flags & M_CSUM_UDPv4)
 			txd->txd_control2 |= TXD_CTL2_CUDP;
-
+#endif
 		txd[ntxd].txd_control1 |= TXD_CTL1_GCL;
 
 		bus_dmamap_sync(sc->sc_dmat, dmp, 0, dmp->dm_mapsize,

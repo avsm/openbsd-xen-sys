@@ -1,4 +1,4 @@
-/*	$OpenBSD: dead_vnops.c,v 1.16 2007/03/21 17:29:32 thib Exp $	*/
+/*	$OpenBSD: dead_vnops.c,v 1.14 2003/06/02 23:28:10 millert Exp $	*/
 /*	$NetBSD: dead_vnops.c,v 1.16 1996/02/13 13:12:48 mycroft Exp $	*/
 
 /*
@@ -131,7 +131,8 @@ struct vnodeopv_desc dead_vnodeop_opv_desc =
  */
 /* ARGSUSED */
 int
-dead_lookup(void *v)
+dead_lookup(v)
+	void *v;
 {
 	struct vop_lookup_args /* {
 		struct vnode * a_dvp;
@@ -148,8 +149,10 @@ dead_lookup(void *v)
  */
 /* ARGSUSED */
 int
-dead_open(void *v)
+dead_open(v)
+	void *v;
 {
+
 	return (ENXIO);
 }
 
@@ -158,7 +161,8 @@ dead_open(void *v)
  */
 /* ARGSUSED */
 int
-dead_read(void *v)
+dead_read(v)
+	void *v;
 {
 	struct vop_read_args /* {
 		struct vnode *a_vp;
@@ -182,7 +186,8 @@ dead_read(void *v)
  */
 /* ARGSUSED */
 int
-dead_write(void *v)
+dead_write(v)
+	void *v;
 {
 	struct vop_write_args /* {
 		struct vnode *a_vp;
@@ -201,7 +206,8 @@ dead_write(void *v)
  */
 /* ARGSUSED */
 int
-dead_ioctl(void *v)
+dead_ioctl(v)
+	void *v;
 {
 	struct vop_ioctl_args /* {
 		struct vnode *a_vp;
@@ -219,7 +225,8 @@ dead_ioctl(void *v)
 
 /* ARGSUSED */
 int
-dead_poll(void *v)
+dead_poll(v)
+	void *v;
 {
 #if 0
 	struct vop_poll_args /* {
@@ -239,8 +246,10 @@ dead_poll(void *v)
  * Just call the device strategy routine
  */
 int
-dead_strategy(void *v)
+dead_strategy(v)
+	void *v;
 {
+
 	struct vop_strategy_args /* {
 		struct buf *a_bp;
 	} */ *ap = v;
@@ -260,7 +269,8 @@ dead_strategy(void *v)
  * Wait until the vnode has finished changing state.
  */
 int
-dead_lock(void *v)
+dead_lock(v)
+	void *v;
 {
 	struct vop_lock_args /* {
 		struct vnode *a_vp;
@@ -269,8 +279,16 @@ dead_lock(void *v)
 	} */ *ap = v;
 	struct vnode *vp = ap->a_vp;
 
+	/*
+	 * Since we are not using the lock manager, we must clear
+	 * the interlock here.
+	 */
+	if (ap->a_flags & LK_INTERLOCK) {
+		simple_unlock(&vp->v_interlock);
+		ap->a_flags &= ~LK_INTERLOCK;
+	}
 	if (ap->a_flags & LK_DRAIN || !chkvnlock(vp))
-		return (0);
+ 		return (0);
 
 	return (VCALL(vp, VOFFSET(vop_lock), ap));
 }
@@ -279,7 +297,8 @@ dead_lock(void *v)
  * Wait until the vnode has finished changing state.
  */
 int
-dead_bmap(void *v)
+dead_bmap(v)
+	void *v;
 {
 	struct vop_bmap_args /* {
 		struct vnode *a_vp;
@@ -299,7 +318,8 @@ dead_bmap(void *v)
  */
 /* ARGSUSED */
 int
-dead_print(void *v)
+dead_print(v)
+	void *v;
 {
 	printf("tag VT_NON, dead vnode\n");
 	return 0;
@@ -310,8 +330,10 @@ dead_print(void *v)
  */
 /*ARGSUSED*/
 int
-dead_ebadf(void *v)
+dead_ebadf(v)
+	void *v;
 {
+
 	return (EBADF);
 }
 
@@ -320,8 +342,10 @@ dead_ebadf(void *v)
  */
 /*ARGSUSED*/
 int
-dead_badop(void *v)
+dead_badop(v)
+	void *v;
 {
+
 	panic("dead_badop called");
 	/* NOTREACHED */
 }
@@ -331,7 +355,8 @@ dead_badop(void *v)
  * in a state of change.
  */
 int
-chkvnlock(struct vnode *vp)
+chkvnlock(vp)
+	register struct vnode *vp;
 {
 	int locked = 0;
 

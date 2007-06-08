@@ -1,4 +1,4 @@
-/*	$OpenBSD: uftdi.c,v 1.32 2007/02/07 23:51:51 jsg Exp $ 	*/
+/*	$OpenBSD: uftdi.c,v 1.30 2006/06/23 06:27:11 miod Exp $ 	*/
 /*	$NetBSD: uftdi.c,v 1.14 2003/02/23 04:20:07 simonb Exp $	*/
 
 /*
@@ -143,7 +143,6 @@ USB_MATCH(uftdi)
 	if (uaa->vendor == USB_VENDOR_FTDI &&
 	    (uaa->product == USB_PRODUCT_FTDI_SERIAL_8U100AX ||
 	     uaa->product == USB_PRODUCT_FTDI_SERIAL_8U232AM ||
-	     uaa->product == USB_PRODUCT_FTDI_SERIAL_232BM ||
 	     uaa->product == USB_PRODUCT_FTDI_SEMC_DSS20 ||
 	     uaa->product == USB_PRODUCT_FTDI_MHAM_KW ||
 	     uaa->product == USB_PRODUCT_FTDI_MHAM_YS ||
@@ -160,9 +159,8 @@ USB_MATCH(uftdi)
 	     uaa->product == USB_PRODUCT_FTDI_LCD_CFA_631 ||
 	     uaa->product == USB_PRODUCT_FTDI_LCD_CFA_632 ||
 	     uaa->product == USB_PRODUCT_FTDI_LCD_CFA_633 ||
-	     uaa->product == USB_PRODUCT_FTDI_LCD_CFA_634 ||
-	     uaa->product == USB_PRODUCT_FTDI_MJS_SIRIUS_PC))
-		return (UMATCH_VENDOR_PRODUCT);
+	     uaa->product == USB_PRODUCT_FTDI_LCD_CFA_634))
+	    return (UMATCH_VENDOR_PRODUCT);
 	if (uaa->vendor == USB_VENDOR_SIIG2 &&
 	    (uaa->product == USB_PRODUCT_SIIG2_US2308))
 		return (UMATCH_VENDOR_PRODUCT);
@@ -238,7 +236,6 @@ USB_ATTACH(uftdi)
 		case USB_PRODUCT_FTDI_SEMC_DSS20:
 		case USB_PRODUCT_FTDI_SERIAL_8U232AM:
 		case USB_PRODUCT_FTDI_SERIAL_2232C:
-		case USB_PRODUCT_FTDI_SERIAL_232BM:
 		case USB_PRODUCT_FTDI_COASTAL_TNCX:
 		case USB_PRODUCT_FTDI_LCD_LK202_24:
 		case USB_PRODUCT_FTDI_LCD_LK204_24:
@@ -256,7 +253,6 @@ USB_ATTACH(uftdi)
 		case USB_PRODUCT_FTDI_MHAM_RS232:
 		case USB_PRODUCT_FTDI_MHAM_Y9:
 		case USB_PRODUCT_SEALEVEL_USBSERIAL:
-		case USB_PRODUCT_FTDI_MJS_SIRIUS_PC:
 			sc->sc_type = UFTDI_TYPE_8U232AM;
 			sc->sc_hdrlen = 0;
 			break;

@@ -207,11 +207,12 @@
  * Xen guest identifier and loader selection
  */
 .section __xen_guest
-        .ascii  "GUEST_OS=openbsd,GUEST_VER=3.0,XEN_VER=xen-3.0"
+        .ascii  "GUEST_OS=openbsd,GUEST_VER=4.1,XEN_VER=xen-3.0"
 	.ascii	",VIRT_BASE=0xd0100000"	/* KERNTEXTOFF */
 	.ascii	",ELF_PADDR_OFFSET=0xd0100000"	/* KERNTEXTOFF */
         .ascii	",HYPERCALL_PAGE=0x00000001"
-                /* (???+HYPERCALL_PAGE_OFFSET)/PAGE_SIZE) */
+                /* (__PHYSICAL_START+HYPERCALL_PAGE_OFFSET)>>PAGE_SIZE) */
+	.ascii	",PAE=no"
         .ascii  ",LOADER=generic"
 #if (NKSYMS || defined(DDB) || defined(LKM)) && !defined(SYMTAB_SPACE)
         .ascii  ",BSD_SYMTAB=yes"

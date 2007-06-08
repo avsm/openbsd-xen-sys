@@ -1,4 +1,4 @@
-/*	$OpenBSD: uvm_pager.c,v 1.41 2007/04/04 17:44:45 art Exp $	*/
+/*	$OpenBSD: uvm_pager.c,v 1.38 2006/07/26 23:15:55 mickey Exp $	*/
 /*	$NetBSD: uvm_pager.c,v 1.36 2000/11/27 18:26:41 chs Exp $	*/
 
 /*
@@ -140,7 +140,7 @@ ReStart:
 	kva = 0;			/* let system choose VA */
 
 	if (uvm_map(pager_map, &kva, size, NULL, 
-	      UVM_UNKNOWN_OFFSET, 0, UVM_FLAG_NOMERGE) != 0) {
+	      UVM_UNKNOWN_OFFSET, 0, UVM_FLAG_NOMERGE) != KERN_SUCCESS) {
 		if (curproc == uvm.pagedaemon_proc) {
 			simple_lock(&pager_map_wanted_lock);
 			if (emerginuse) {
@@ -172,7 +172,7 @@ enter:
 	for (cva = kva ; size != 0 ; size -= PAGE_SIZE, cva += PAGE_SIZE) {
 		pp = *pps++;
 		KASSERT(pp);
-		KASSERT(pp->pg_flags & PG_BUSY);
+		KASSERT(pp->flags & PG_BUSY);
 		pmap_enter(vm_map_pmap(pager_map), cva, VM_PAGE_TO_PHYS(pp),
 		    prot, PMAP_WIRED | prot);
 	}
@@ -323,33 +323,30 @@ uvm_mk_pcluster(uobj, pps, npages, center, flags, mlo, mhi)
 			}
 			/* handle active pages */
 			/* NOTE: inactive pages don't have pmap mappings */
-			if ((pclust->pg_flags & PQ_INACTIVE) == 0) {
+			if ((pclust->pqflags & PQ_INACTIVE) == 0) {
 				if ((flags & PGO_DOACTCLUST) == 0) {
 					/* dont want mapped pages at all */
 					break;
 				}
 
 				/* make sure "clean" bit is sync'd */
-				if ((pclust->pg_flags & PG_CLEANCHK) == 0) {
-					if ((pclust->pg_flags & (PG_CLEAN|PG_BUSY))
+				if ((pclust->flags & PG_CLEANCHK) == 0) {
+					if ((pclust->flags & (PG_CLEAN|PG_BUSY))
 					   == PG_CLEAN &&
 					   pmap_is_modified(pclust))
-						atomic_clearbits_int(
-						    &pclust->pg_flags,
-						    PG_CLEAN);
+						pclust->flags &= ~PG_CLEAN;
 					/* now checked */
-					atomic_setbits_int(&pclust->pg_flags,
-					    PG_CLEANCHK);
+					pclust->flags |= PG_CLEANCHK;
 				}
 			}
 
 			/* is page available for cleaning and does it need it */
-			if ((pclust->pg_flags & (PG_CLEAN|PG_BUSY)) != 0) {
+			if ((pclust->flags & (PG_CLEAN|PG_BUSY)) != 0) {
 				break;	/* page is already clean or is busy */
 			}
 
 			/* yes!   enroll the page in our array */
-			atomic_setbits_int(&pclust->pg_flags, PG_BUSY);
+			pclust->flags |= PG_BUSY;		/* busy! */
 			UVM_PAGE_OWN(pclust, "uvm_mk_pcluster");
 
 			/* XXX: protect wired page?   see above comment. */
@@ -536,7 +533,7 @@ ReTry:
 
 		if (uobj == NULL && pg != NULL) {
 			int nswblk = (result == VM_PAGER_AGAIN) ? swblk : 0;
-			if (pg->pg_flags & PQ_ANON) {
+			if (pg->pqflags & PQ_ANON) {
 				simple_lock(&pg->uanon->an_lock);
 				pg->uanon->an_swslot = nswblk;
 				simple_unlock(&pg->uanon->an_lock);
@@ -640,7 +637,7 @@ uvm_pager_dropcluster(uobj, pg, ppsp, npages, flags)
 		 * requested
 		 */
 		if (!uobj) {
-			if (ppsp[lcv]->pg_flags & PQ_ANON) {
+			if (ppsp[lcv]->pqflags & PQ_ANON) {
 				simple_lock(&ppsp[lcv]->uanon->an_lock);
 				if (flags & PGO_REALLOCSWAP)
 					  /* zap swap block */
@@ -654,18 +651,17 @@ uvm_pager_dropcluster(uobj, pg, ppsp, npages, flags)
 		}
 
 		/* did someone want the page while we had it busy-locked? */
-		if (ppsp[lcv]->pg_flags & PG_WANTED) {
+		if (ppsp[lcv]->flags & PG_WANTED) {
 			/* still holding obj lock */
 			wakeup(ppsp[lcv]);
 		}
 
 		/* if page was released, release it.  otherwise un-busy it */
-		if (ppsp[lcv]->pg_flags & PG_RELEASED) {
+		if (ppsp[lcv]->flags & PG_RELEASED) {
 
-			if (ppsp[lcv]->pg_flags & PQ_ANON) {
+			if (ppsp[lcv]->pqflags & PQ_ANON) {
 				/* so that anfree will free */
-				atomic_clearbits_int(&ppsp[lcv]->pg_flags,
-				    PG_BUSY);
+				ppsp[lcv]->flags &= ~(PG_BUSY);
 				UVM_PAGE_OWN(ppsp[lcv], NULL);
 
 				pmap_page_protect(ppsp[lcv], VM_PROT_NONE);
@@ -699,9 +695,9 @@ uvm_pager_dropcluster(uobj, pg, ppsp, npages, flags)
 			 */
 
 			continue;		/* next page */
+
 		} else {
-			atomic_clearbits_int(&ppsp[lcv]->pg_flags,
-			    PG_BUSY|PG_WANTED|PG_FAKE);
+			ppsp[lcv]->flags &= ~(PG_BUSY|PG_WANTED|PG_FAKE);
 			UVM_PAGE_OWN(ppsp[lcv], NULL);
 		}
 
@@ -712,12 +708,12 @@ uvm_pager_dropcluster(uobj, pg, ppsp, npages, flags)
 		if (flags & PGO_PDFREECLUST) {
 			pmap_clear_reference(ppsp[lcv]);
 			pmap_clear_modify(ppsp[lcv]);
-			atomic_setbits_int(&ppsp[lcv]->pg_flags, PG_CLEAN);
+			ppsp[lcv]->flags |= PG_CLEAN;
 		}
 
 		/* if anonymous cluster, unlock object and move on */
 		if (!uobj) {
-			if (ppsp[lcv]->pg_flags & PQ_ANON)
+			if (ppsp[lcv]->pqflags & PQ_ANON)
 				simple_unlock(&ppsp[lcv]->uanon->an_lock);
 			else
 				simple_unlock(&ppsp[lcv]->uobject->vmobjlock);
@@ -813,7 +809,7 @@ uvm_aio_aiodone(bp)
 	/*
 	 * XXX - assumes that we only get ASYNC writes. used to be above.
 	 */
-	if (pgs[0]->pg_flags & PQ_ENCRYPT) {
+	if (pgs[0]->pqflags & PQ_ENCRYPT) {
 		uvm_swap_freepages(pgs, npages);
 		goto freed;
 	}
@@ -822,7 +818,7 @@ uvm_aio_aiodone(bp)
 		pg = pgs[i];
 
 		if (i == 0) {
-			swap = (pg->pg_flags & PQ_SWAPBACKED) != 0;
+			swap = (pg->pqflags & PQ_SWAPBACKED) != 0;
 			if (!swap) {
 				uobj = pg->uobject;
 				simple_lock(&uobj->vmobjlock);
@@ -830,7 +826,7 @@ uvm_aio_aiodone(bp)
 		}
 		KASSERT(swap || pg->uobject == uobj);
 		if (swap) {
-			if (pg->pg_flags & PQ_ANON) {
+			if (pg->pqflags & PQ_ANON) {
 				simple_lock(&pg->uanon->an_lock);
 			} else {
 				simple_lock(&pg->uobject->vmobjlock);
@@ -841,11 +837,12 @@ uvm_aio_aiodone(bp)
 		 * if this is a read and we got an error, mark the pages
 		 * PG_RELEASED so that uvm_page_unbusy() will free them.
 		 */
+
 		if (!write && error) {
-			atomic_setbits_int(&pg->pg_flags, PG_RELEASED);
+			pg->flags |= PG_RELEASED;
 			continue;
 		}
-		KASSERT(!write || (pgs[i]->pg_flags & PG_FAKE) == 0);
+		KASSERT(!write || (pgs[i]->flags & PG_FAKE) == 0);
 
 		/*
 		 * if this is a read and the page is PG_FAKE,
@@ -853,14 +850,14 @@ uvm_aio_aiodone(bp)
 		 * mark the page PG_CLEAN and not PG_FAKE.
 		 */
 
-		if ((pgs[i]->pg_flags & PG_FAKE) || (write && error != ENOMEM)) {
+		if ((pgs[i]->flags & PG_FAKE) || (write && error != ENOMEM)) {
 			pmap_clear_reference(pgs[i]);
 			pmap_clear_modify(pgs[i]);
-			atomic_setbits_int(&pgs[i]->pg_flags, PG_CLEAN);
-			atomic_clearbits_int(&pgs[i]->pg_flags, PG_FAKE);
+			pgs[i]->flags |= PG_CLEAN;
+			pgs[i]->flags &= ~PG_FAKE;
 		}
 		if (swap) {
-			if (pg->pg_flags & PQ_ANON) {
+			if (pg->pqflags & PQ_ANON) {
 				simple_unlock(&pg->uanon->an_lock);
 			} else {
 				simple_unlock(&pg->uobject->vmobjlock);

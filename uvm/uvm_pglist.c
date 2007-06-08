@@ -1,4 +1,4 @@
-/*	$OpenBSD: uvm_pglist.c,v 1.19 2007/04/04 17:44:45 art Exp $	*/
+/*	$OpenBSD: uvm_pglist.c,v 1.16 2006/06/01 05:16:49 krw Exp $	*/
 /*	$NetBSD: uvm_pglist.c,v 1.13 2001/02/18 21:19:08 chs Exp $	*/
 
 /*-
@@ -74,9 +74,6 @@ uvm_pglistalloc_simple(psize_t size, paddr_t low, paddr_t high,
 	struct vm_page *pg;
 	int s, todo, idx, pgflidx, error, free_list;
 	UVMHIST_FUNC("uvm_pglistalloc_simple"); UVMHIST_CALLED(pghist);
-#ifdef DEBUG
-	vm_page_t tp;
-#endif
 
 	/* Default to "lose". */
 	error = ENOMEM;
@@ -105,7 +102,7 @@ uvm_pglistalloc_simple(psize_t size, paddr_t low, paddr_t high,
 			continue;
 
 		free_list = uvm_page_lookup_freelist(pg);
-		pgflidx = (pg->pg_flags & PG_ZERO) ? PGFL_ZEROS : PGFL_UNKNOWN;
+		pgflidx = (pg->flags & PG_ZERO) ? PGFL_ZEROS : PGFL_UNKNOWN;
 #ifdef DEBUG
 		for (tp = TAILQ_FIRST(&uvm.page_free[free_list].pgfl_queues[pgflidx]);
 		     tp != NULL;
@@ -118,12 +115,13 @@ uvm_pglistalloc_simple(psize_t size, paddr_t low, paddr_t high,
 #endif
 		TAILQ_REMOVE(&uvm.page_free[free_list].pgfl_queues[pgflidx], pg, pageq);
 		uvmexp.free--;
-		if (pg->pg_flags & PG_ZERO)
+		if (pg->flags & PG_ZERO)
 			uvmexp.zeropages--;
-		pg->pg_flags = PG_CLEAN;
+		pg->flags = PG_CLEAN;
+		pg->pqflags = 0;
 		pg->uobject = NULL;
 		pg->uanon = NULL;
-		pg->pg_version++;
+		pg->version++;
 		TAILQ_INSERT_TAIL(rlist, pg, pageq);
 		STAT_INCR(uvm_pglistalloc_npages);
 		if (--todo == 0) {
@@ -295,7 +293,7 @@ uvm_pglistalloc(size, low, high, alignment, boundary, rlist, nsegs, waitok)
 	while (idx < end) {
 		m = &pgs[idx];
 		free_list = uvm_page_lookup_freelist(m);
-		pgflidx = (m->pg_flags & PG_ZERO) ? PGFL_ZEROS : PGFL_UNKNOWN;
+		pgflidx = (m->flags & PG_ZERO) ? PGFL_ZEROS : PGFL_UNKNOWN;
 #ifdef DEBUG
 		for (tp = TAILQ_FIRST(&uvm.page_free[
 			free_list].pgfl_queues[pgflidx]);
@@ -310,12 +308,13 @@ uvm_pglistalloc(size, low, high, alignment, boundary, rlist, nsegs, waitok)
 		TAILQ_REMOVE(&uvm.page_free[free_list].pgfl_queues[pgflidx],
 		    m, pageq);
 		uvmexp.free--;
-		if (m->pg_flags & PG_ZERO)
+		if (m->flags & PG_ZERO)
 			uvmexp.zeropages--;
-		m->pg_flags = PG_CLEAN;
+		m->flags = PG_CLEAN;
+		m->pqflags = 0;
 		m->uobject = NULL;
 		m->uanon = NULL;
-		m->pg_version++;
+		m->version++;
 		TAILQ_INSERT_TAIL(rlist, m, pageq);
 		idx++;
 		STAT_INCR(uvm_pglistalloc_npages);
@@ -346,9 +345,10 @@ out:
  */
 
 void
-uvm_pglistfree(struct pglist *list)
+uvm_pglistfree(list)
+	struct pglist *list;
 {
-	struct vm_page *m;
+	vm_page_t m;
 	int s;
 	UVMHIST_FUNC("uvm_pglistfree"); UVMHIST_CALLED(pghist);
 
@@ -358,7 +358,7 @@ uvm_pglistfree(struct pglist *list)
 	s = uvm_lock_fpageq();
 
 	while ((m = TAILQ_FIRST(list)) != NULL) {
-		KASSERT((m->pg_flags & (PQ_ACTIVE|PQ_INACTIVE)) == 0);
+		KASSERT((m->pqflags & (PQ_ACTIVE|PQ_INACTIVE)) == 0);
 		TAILQ_REMOVE(list, m, pageq);
 #ifdef DEBUG
 		if (m->uobject == (void *)0xdeadbeef &&
@@ -370,8 +370,7 @@ uvm_pglistfree(struct pglist *list)
 		m->offset = 0xdeadbeef;
 		m->uanon = (void *)0xdeadbeef;
 #endif
-		atomic_clearbits_int(&m->pg_flags, PQ_MASK);
-		atomic_setbits_int(&m->pg_flags, PQ_FREE);
+		m->pqflags = PQ_FREE;
 		TAILQ_INSERT_TAIL(&uvm.page_free[
 		    uvm_page_lookup_freelist(m)].pgfl_queues[PGFL_UNKNOWN],
 		    m, pageq);

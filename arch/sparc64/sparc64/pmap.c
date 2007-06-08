@@ -1,4 +1,4 @@
-/*	$OpenBSD: pmap.c,v 1.36 2007/04/05 20:08:30 claudio Exp $	*/
+/*	$OpenBSD: pmap.c,v 1.33 2007/01/06 21:08:07 kettenis Exp $	*/
 /*	$NetBSD: pmap.c,v 1.107 2001/08/31 16:47:41 eeh Exp $	*/
 #undef	NO_VCACHE /* Don't forget the locked TLB in dostart */
 /*
@@ -1031,7 +1031,7 @@ remap_data:
 #endif
 
 	/*
-	 * Allocate a 64KB page for the cpu_info structure now.
+	 * Allocate a 64MB page for the cpu_info structure now.
 	 */
 	if ((cpu0paddr = prom_alloc_phys(8*NBPG, 8*NBPG)) == 0 ) {
 		prom_printf("Cannot allocate new cpu_info\r\n");
@@ -3679,7 +3679,7 @@ vm_page_alloc1()
 	struct vm_page *pg = uvm_pagealloc(NULL, 0, NULL, UVM_PGA_USERESERVE);
 	if (pg) {
 		pg->wire_count = 1;	/* no mappings yet */
-		atomic_clearbits_int(&pg->pg_flags, PG_BUSY);
+		pg->flags &= ~PG_BUSY;	/* never busy */
 	}
 	return pg;
 }
@@ -3696,13 +3696,13 @@ void
 vm_page_free1(mem)
 	struct vm_page *mem;
 {
-	if (mem->pg_flags != (PG_CLEAN|PG_FAKE)) {
+	if (mem->flags != (PG_CLEAN|PG_FAKE)) {
 		printf("Freeing invalid page %p\n", mem);
 		printf("pa = %llx\n", (unsigned long long)VM_PAGE_TO_PHYS(mem));
 		Debugger();
 		return;
 	}
-	atomic_setbits_int(&mem->pg_flags, PG_BUSY);
+	mem->flags |= PG_BUSY;
 	mem->wire_count = 0;
 	uvm_pagefree(mem);
 }

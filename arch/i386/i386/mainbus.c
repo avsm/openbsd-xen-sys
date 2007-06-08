@@ -1,4 +1,4 @@
-/*	$OpenBSD: mainbus.c,v 1.34 2007/03/19 03:02:09 marco Exp $	*/
+/*	$OpenBSD: mainbus.c,v 1.30 2006/11/29 20:03:19 dim Exp $	*/
 /*	$NetBSD: mainbus.c,v 1.21 1997/06/06 23:14:20 thorpej Exp $	*/
 
 /*
@@ -118,9 +118,6 @@ union mainbus_attach_args {
 #if NESM > 0
 	struct esm_attach_args mba_eaa;
 #endif
-#if NSOFTRAID > 0
-	struct sr_attach_args mba_maa;
-#endif
 };
 
 /*
@@ -145,6 +142,9 @@ void
 mainbus_attach(struct device *parent, struct device *self, void *aux)
 {
 	union mainbus_attach_args	mba;
+#if NACPI > 0
+	int				acpi_attached = 0;
+#endif
 	extern void			(*setperf_setup)(struct cpu_info *);
 
 	printf("\n");
@@ -167,8 +167,9 @@ mainbus_attach(struct device *parent, struct device *self, void *aux)
 		mba.mba_aaa.aaa_iot = I386_BUS_SPACE_IO;
 		mba.mba_aaa.aaa_memt = I386_BUS_SPACE_MEM;
 
-		if (acpi_probe(self, aux, &mba.mba_aaa))
-			config_found(self, &mba.mba_aaa, mainbus_print);
+		if (acpi_probe(self, aux, &mba.mba_aaa) &&
+		    config_found(self, &mba.mba_aaa, mainbus_print) != NULL)
+			acpi_attached = 1;
 	}
 #endif
 
@@ -203,7 +204,7 @@ mainbus_attach(struct device *parent, struct device *self, void *aux)
 	}
 
 #if NACPI > 0
-	if (!acpi_hasprocfvs)
+	if (!acpi_attached)
 #endif
 	{
 		if (setperf_setup != NULL)
@@ -211,7 +212,7 @@ mainbus_attach(struct device *parent, struct device *self, void *aux)
 	}
 
 #if NVESABIOS > 0
-	if (vbeprobe())	{
+        if (vbeprobe())	{
 		mba.mba_busname = "vesabios";
 		config_found(self, &mba.mba_busname, NULL);
 	}

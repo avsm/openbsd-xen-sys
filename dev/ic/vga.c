@@ -1,4 +1,4 @@
-/* $OpenBSD: vga.c,v 1.44 2007/02/06 22:03:23 miod Exp $ */
+/* $OpenBSD: vga.c,v 1.42 2006/11/29 19:11:15 miod Exp $ */
 /* $NetBSD: vga.c,v 1.28.2.1 2000/06/30 16:27:47 simonb Exp $ */
 
 /*
@@ -48,6 +48,10 @@
 #include <dev/wscons/unicode.h>
 
 #include <dev/ic/pcdisplay.h>
+
+#if 0
+#include "opt_wsdisplay_compat.h" /* for WSCONS_SUPPORT_PCVTFONTS */
+#endif
 
 static struct vgafont {
 	char name[WSFONT_NAME_SIZE];
@@ -1008,7 +1012,7 @@ vga_unpack_attr(id, attr, fg, bg, ul)
 	} else {
 		*fg = pctoansi[attr & 0x07];
 		*bg = pctoansi[(attr & 0x70) >> 4];
-		if (ul != NULL)
+		if (*ul != NULL)
 			*ul = 0;
 	}
 	if (attr & FG_INTENSE)

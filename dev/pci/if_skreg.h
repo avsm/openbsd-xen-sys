@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_skreg.h,v 1.43 2007/02/10 22:49:46 kettenis Exp $	*/
+/*	$OpenBSD: if_skreg.h,v 1.40 2006/11/16 03:27:46 brad Exp $	*/
 
 /*
  * Copyright (c) 1997, 1998, 1999, 2000
@@ -347,7 +347,6 @@
 #define SK_YUKON_LP		0xB2
 #define SK_YUKON_XL		0xB3
 #define SK_YUKON_EC_U		0xB4
-#define SK_YUKON_EX		0xB5
 #define SK_YUKON_EC		0xB6
 #define SK_YUKON_FE		0xB7
 
@@ -1053,8 +1052,8 @@
 #define SK_RFCTL_RD_PTR_TST_ON	0x00000400	/* Read pointer test on */
 #define SK_RFCTL_RD_PTR_TST_OFF	0x00000200	/* Read pointer test off */
 #define SK_RFCTL_RD_PTR_STEP	0x00000100	/* Read pointer increment */
-#define SK_RFCTL_FIFO_FLUSH_ON	0x00000080	/* RX FIFO Flush mode on */
-#define SK_RFCTL_FIFO_FLUSH_OFF	0x00000040	/* RX FIFO Flush mode off */
+#define SK_RFCTL_FIFO_FLUSH_OFF	0x00000080	/* RX FIFO Flsuh mode off */
+#define SK_RFCTL_FIFO_FLUSH_ON	0x00000040	/* RX FIFO Flush mode on */
 #define SK_RFCTL_RX_FIFO_OVER	0x00000020	/* Clear IRQ RX FIFO Overrun */
 #define SK_RFCTL_FRAME_RX_DONE	0x00000010	/* Clear IRQ Frame RX Done */
 #define SK_RFCTL_OPERATION_ON	0x00000008	/* Operational mode on */
@@ -2172,5 +2171,3 @@ struct msk_status_desc {
 #define XM_RESAB_FDMODESEL	0x0020
 #define XM_RESAB_HDMODESEL	0x0040
 #define XM_RESAB_PAUSEBITS	0x0180
-
-#define SK_HASH_BITS		6

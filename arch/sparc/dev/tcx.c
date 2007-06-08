@@ -1,4 +1,4 @@
-/*	$OpenBSD: tcx.c,v 1.29 2007/02/18 18:40:35 miod Exp $	*/
+/*	$OpenBSD: tcx.c,v 1.27 2006/06/02 20:00:54 miod Exp $	*/
 /*	$NetBSD: tcx.c,v 1.8 1997/07/29 09:58:14 fair Exp $ */
 
 /*
@@ -176,12 +176,9 @@ tcxattach(struct device *parent, struct device *self, void *args)
 {
 	struct tcx_softc *sc = (struct tcx_softc *)self;
 	struct confargs *ca = args;
-	int node, pri, i;
+	int node = 0, i;
 	int isconsole = 0;
 	char *nam = NULL;
-
-	pri = ca->ca_ra.ra_intr[0].int_pri;
-	printf(" pri %d", pri);
 
 	node = ca->ca_ra.ra_node;
 
@@ -234,7 +231,8 @@ tcxattach(struct device *parent, struct device *self, void *args)
 
 	sc->sc_ih.ih_fun = tcx_intr;
 	sc->sc_ih.ih_arg = sc;
-	intr_establish(pri, &sc->sc_ih, IPL_FB, self->dv_xname);
+	intr_establish(ca->ca_ra.ra_intr[0].int_pri, &sc->sc_ih, IPL_FB,
+	    self->dv_xname);
 
 	if (isconsole) {
 		fbwscons_console_init(&sc->sc_sunfb, -1);
@@ -277,12 +275,6 @@ tcx_ioctl(void *dev, u_long cmd, caddr_t data, int flags, struct proc *p)
 		wdf->width = sc->sc_sunfb.sf_width;
 		wdf->depth = sc->sc_sunfb.sf_depth;
 		wdf->cmsize = sc->sc_cplane == NULL ? 256 : 0;
-		break;
-	case WSDISPLAYIO_GETSUPPORTEDDEPTH:
-		if (sc->sc_cplane != NULL)
-			*(u_int *)data = WSDISPLAYIO_DEPTH_24_32;
-		else
-			return (-1);
 		break;
 	case WSDISPLAYIO_LINEBYTES:
 		if (sc->sc_cplane == NULL)

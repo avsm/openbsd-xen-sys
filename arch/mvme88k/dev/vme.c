@@ -1,4 +1,4 @@
-/*	$OpenBSD: vme.c,v 1.45 2006/11/16 23:21:56 miod Exp $ */
+/*	$OpenBSD: vme.c,v 1.44 2006/05/08 14:36:10 miod Exp $ */
 /*
  * Copyright (c) 2004, Miodrag Vallat.
  * Copyright (c) 1999 Steve Murphree, Jr.
@@ -431,18 +431,6 @@ vmerw(sc, uio, flags, bus)
 	return error;
 }
 
-#ifdef MVME188
-/*
- * Currently registered VME interrupt vectors for a given IPL, if they
- * are unique. Used to help the MVME188 interrupt handler when it's getting
- * behind.
- */
-u_int vmevec_hints[8] = {
-	(u_int)-1, (u_int)-1, (u_int)-1, (u_int)-1,
-	(u_int)-1, (u_int)-1, (u_int)-1, (u_int)-1
-};
-#endif
-
 /*
  * On the VMEbus, only one cpu may be configured to respond to any
  * particular vme ipl. Therefore, it wouldn't make sense to globally
@@ -460,12 +448,6 @@ int
 vmeintr_establish(int vec, struct intrhand *ih, const char *name)
 {
 	struct vmesoftc *sc = (struct vmesoftc *) vme_cd.cd_devs[0];
-	int rc;
-
-#ifdef DIAGNOSTIC
-	if (ih->ih_ipl < 1 || ih->ih_ipl > 7)
-		return (EINVAL);
-#endif
 
 	switch (vmebustype) {
 #if NPCCTWO > 0
@@ -477,17 +459,7 @@ vmeintr_establish(int vec, struct intrhand *ih, const char *name)
 #endif
 	}
 
-	if ((rc = intr_establish(vec, ih, name)) != 0)
-		return (rc);
-
-#ifdef MVME188
-	if (vmevec_hints[ih->ih_ipl] == (u_int)-1)
-		vmevec_hints[ih->ih_ipl] = vec;
-	else
-		vmevec_hints[ih->ih_ipl] = (u_int)-1;
-#endif
-
-	return (0);
+	return intr_establish(vec, ih, name);
 }
 
 #if NPCCTWO > 0

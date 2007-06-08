@@ -1,4 +1,4 @@
-/*	$OpenBSD: onewire_subr.c,v 1.1 2006/03/04 16:27:03 grange Exp $	*/
+/*	$OpenBSD$	*/
 
 /*
  * Copyright (c) 2006 Alexander Yurchenko <grange@openbsd.org>
@@ -29,6 +29,10 @@
 #include <dev/onewire/onewirevar.h>
 
 #ifdef ONEWIREVERBOSE
+struct onewire_family {
+	int		of_type;
+	const char *	of_name;
+};
 #include <dev/onewire/onewiredevs_data.h>
 #endif
 

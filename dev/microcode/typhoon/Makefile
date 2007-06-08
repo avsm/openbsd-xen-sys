@@ -1,8 +1,7 @@
-# $OpenBSD: Makefile,v 1.4 2005/06/16 08:23:49 markus Exp $
+# $OpenBSD: Makefile,v 1.3 2004/12/19 16:19:43 deraadt Exp $
 
 NOPROG=
 NOMAN=
-CC=${HOSTCC}
 
 # PCI capable systems only
 .if (${MACHINE} == "i386") || (${MACHINE} == "amd64") || \

@@ -1,4 +1,4 @@
-/*	$OpenBSD: clock.c,v 1.18 2007/03/20 20:59:54 kettenis Exp $	*/
+/*	$OpenBSD: clock.c,v 1.16 2005/10/21 22:07:45 kettenis Exp $	*/
 /*	$NetBSD: clock.c,v 1.1 1996/09/30 16:34:40 ws Exp $	*/
 
 /*
@@ -36,7 +36,6 @@
 #include <sys/kernel.h>
 #include <sys/systm.h>
 #include <sys/evcount.h>
-#include <sys/timetc.h>
 
 #include <machine/autoconf.h>
 #include <machine/pio.h>
@@ -45,8 +44,10 @@
 #include <machine/powerpc.h>
 #include <dev/ofw/openfirm.h>
 
+void resettodr(void);
+
+/* XXX, called from asm code */
 void decr_intr(struct clockframe *frame);
-u_int tb_get_timecount(struct timecounter *);
 
 /*
  * Initially we assume a processor with a bus frequency of 12.5 MHz.
@@ -56,9 +57,7 @@ static u_int32_t ns_per_tick = 320;
 static int32_t ticks_per_intr;
 static volatile u_int64_t lasttb;
 
-static struct timecounter tb_timecounter = {
-	tb_get_timecount, NULL, 0x7fffffff, 0, "tb", 0, NULL
-};
+#define SECYR           (SECDAY * 365)
 
 time_read_t  *time_read;
 time_write_t *time_write;
@@ -77,15 +76,18 @@ static int clk_irq = PPC_CLK_IRQ;
 static int stat_irq = PPC_STAT_IRQ;
 
 /*
- * Set up the system's time, given a `reasonable' time value.
+ * For now we let the machine run with boot time, not changing the clock
+ * at inittodr at all.
+ *
+ * We might continue to do this due to setting up the real wall clock with
+ * a user level utility in the future.
  */
+
+/* ARGSUSED */
 void
 inittodr(time_t base)
 {
 	int badbase = 0, waszero = base == 0;
-	char *bad = NULL;
-	struct timeval tv;
-	struct timespec ts;
 
         if (base < 5 * SECYR) {
                 /*
@@ -102,54 +104,43 @@ inittodr(time_t base)
 	if (time_read != NULL) {
 		u_int32_t cursec;
 		(*time_read)(&cursec);
-		tv.tv_sec = cursec;
-		tv.tv_usec = 0;
+		time.tv_sec = cursec;
 	} else {
 		/* force failure */
-		tv.tv_sec = tv.tv_usec = 0;
+		time.tv_sec = 0;
 	}
 
-	if (tv.tv_sec == 0) {
+	if (time.tv_sec == 0) {
+		printf("WARNING: unable to get date/time");
 		/*
 		 * Believe the time in the file system for lack of
 		 * anything better, resetting the clock.
 		 */
-		bad = "WARNING: unable to get date/time";
-		tv.tv_sec = base;
-		tv.tv_usec = 0;
+		time.tv_sec = base;
 		if (!badbase)
 			resettodr();
 	} else {
 		int deltat;
 
-		tv.tv_sec += tz.tz_minuteswest * 60;
+		time.tv_sec += tz.tz_minuteswest * 60;
 		if (tz.tz_dsttime)
-			tv.tv_sec -= 3600;
+			time.tv_sec -= 3600;
 
-		deltat = tv.tv_sec - base;
+		deltat = time.tv_sec - base;
 
 		if (deltat < 0)
 			deltat = -deltat;
-		if (!(waszero || deltat < 2 * SECDAY)) {
-			printf("WARNING: clock %s %d days",
-			    tv.tv_sec < base ? "lost" : "gained", deltat / SECDAY);
-			bad = "";
+		if (waszero || deltat < 2 * SECDAY)
+			return;
+		printf("WARNING: clock %s %d days",
+		    time.tv_sec < base ? "lost" : "gained", deltat / SECDAY);
 
-			if (tv.tv_sec < base && deltat > 1000 * SECDAY) {
-				printf(", using FS time");
-				tv.tv_sec = base;
-			}
+		if (time.tv_sec < base && deltat > 1000 * SECDAY) {
+			printf(", using FS time");
+			time.tv_sec = base;
 		}
 	}
-
-	ts.tv_sec = tv.tv_sec;
-	ts.tv_nsec = tv.tv_usec * 1000;
-	tc_setclock(&ts);
-
-	if (bad) {
-		printf("%s", bad);
-		printf(" -- CHECK AND RESET THE DATE!\n");
-	}
+	printf(" -- CHECK AND RESET THE DATE!\n");
 }
 
 /*
@@ -158,19 +149,13 @@ inittodr(time_t base)
 void
 resettodr(void)
 {
-	struct timeval tv;
-
-	if (time_second == 0)
-		return;
-
-	microtime(&tv);
-
+	struct timeval curtime = time;
 	if (time_write != NULL) {
-		tv.tv_sec -= tz.tz_minuteswest * 60;
+		curtime.tv_sec -= tz.tz_minuteswest * 60;
 		if (tz.tz_dsttime) {
-			tv.tv_sec += 3600;
+			curtime.tv_sec += 3600;
 		}
-		(*time_write)(tv.tv_sec);
+		(*time_write)(curtime.tv_sec);
 	}
 }
 
@@ -224,7 +209,7 @@ decr_intr(struct clockframe *frame)
 	 */
 	ppc_mtdec(nextevent - tb);
 
-	if (curcpu()->ci_cpl & SPL_CLOCK) {
+	if (cpl & SPL_CLOCK) {
 		statspending += nstats;
 	} else {
 		nstats += statspending;
@@ -308,9 +293,6 @@ cpu_initclocks()
 	evcount_attach(&clk_count, "clock", (void *)&clk_irq, &evcount_intr);
 	evcount_attach(&stat_count, "stat", (void *)&stat_irq, &evcount_intr);
 
-	tb_timecounter.tc_frequency = ticks_per_sec;
-	tc_init(&tb_timecounter);
-
 	ppc_mtdec(nextevent-lasttb);
 	ppc_intr_enable(intrstate);
 }
@@ -350,6 +332,28 @@ calc_delayconst(void)
 
 	if (!phandle)
 		panic("no cpu node");
+}
+
+/*
+ * Fill in *tvp with current time with microsecond resolution.
+ */
+void
+microtime(struct timeval *tvp)
+{
+	u_int64_t tb;
+	u_int32_t ticks;
+	int s;
+
+	s = ppc_intr_disable();
+	tb = ppc_mftb();
+	ticks = ((tb - lasttb) * ns_per_tick) / 1000;
+	*tvp = time;
+	ppc_intr_enable(s);
+	tvp->tv_usec += ticks;
+	while (tvp->tv_usec >= 1000000) {
+		tvp->tv_usec -= 1000000;
+		tvp->tv_sec++;
+	}
 }
 
 /*
@@ -395,10 +399,4 @@ setstatclockrate(int newhz)
 	 * XXX this allows the next stat timer to occur then it switches
 	 * to the new frequency. Rather than switching instantly.
 	 */
-}
-
-u_int
-tb_get_timecount(struct timecounter *tc)
-{
-	return ppc_mftbl();
 }

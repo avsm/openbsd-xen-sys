@@ -1,7 +1,7 @@
-/*     $OpenBSD: ar5210.c,v 1.38 2007/03/12 01:04:52 reyk Exp $        */
+/*     $OpenBSD: ar5210.c,v 1.32 2005/10/07 22:03:25 reyk Exp $        */
 
 /*
- * Copyright (c) 2004, 2005, 2006, 2007 Reyk Floeter <reyk@openbsd.org>
+ * Copyright (c) 2004, 2005 Reyk Floeter <reyk@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -171,22 +171,6 @@ ar5k_ar5210_fill(struct ath_hal *hal)
 	AR5K_HAL_FUNCTION(hal, ar5210, eeprom_is_busy);
 	AR5K_HAL_FUNCTION(hal, ar5210, eeprom_read);
 	AR5K_HAL_FUNCTION(hal, ar5210, eeprom_write);
-
-	/*
-	 * Unused functions or functions not implemented
-	 */
-	AR5K_HAL_FUNCTION(hal, ar5210, set_bssid_mask);
-	AR5K_HAL_FUNCTION(hal, ar5210, get_tx_queueprops);
-	AR5K_HAL_FUNCTION(hal, ar5210, num_tx_pending);
-	AR5K_HAL_FUNCTION(hal, ar5210, phy_disable);
-	AR5K_HAL_FUNCTION(hal, ar5210, set_txpower_limit);
-	AR5K_HAL_FUNCTION(hal, ar5210, set_def_antenna);
-	AR5K_HAL_FUNCTION(hal, ar5210, get_def_antenna);
-#ifdef notyet
-	AR5K_HAL_FUNCTION(hal, ar5210, set_capability);
-	AR5K_HAL_FUNCTION(hal, ar5210, proc_mib_event);
-	AR5K_HAL_FUNCTION(hal, ar5210, get_tx_inter_queue);
-#endif
 }
 
 struct ath_hal *
@@ -200,7 +184,7 @@ ar5k_ar5210_attach(u_int16_t device, void *sc, bus_space_tag_t st,
 
 	ar5k_ar5210_fill(hal);
 
-	/* Bring device out of sleep and reset its units */
+	/* Bring device out of sleep and reset it's units */
 	if (ar5k_ar5210_nic_wakeup(hal, AH_FALSE, AH_TRUE) != AH_TRUE)
 		return (NULL);
 
@@ -357,13 +341,6 @@ ar5k_ar5210_detach(struct ath_hal *hal)
 }
 
 HAL_BOOL
-ar5k_ar5210_phy_disable(struct ath_hal *hal)
-{
-	AR5K_REG_WRITE(AR5K_AR5210_PHY_ACTIVE, AR5K_AR5210_PHY_DISABLE);
-	return (AH_TRUE);
-}
-
-HAL_BOOL
 ar5k_ar5210_reset(struct ath_hal *hal, HAL_OPMODE op_mode, HAL_CHANNEL *channel,
     HAL_BOOL change_channel, HAL_STATUS *status)
 {
@@ -457,19 +434,6 @@ ar5k_ar5210_reset(struct ath_hal *hal, HAL_OPMODE op_mode, HAL_CHANNEL *channel,
 }
 
 void
-ar5k_ar5210_set_def_antenna(struct ath_hal *hal, u_int ant)
-{
-	/* Not available */
-	return;
-}
-
-u_int
-ar5k_ar5210_get_def_antenna(struct ath_hal *hal)
-{
-	return (0);
-}
-
-void
 ar5k_ar5210_set_opmode(struct ath_hal *hal)
 {
 	u_int32_t pcu_reg, beacon_reg, low_id, high_id;
@@ -509,8 +473,8 @@ ar5k_ar5210_set_opmode(struct ath_hal *hal)
 	/*
 	 * Set PCU and BCR registers
 	 */
-	low_id = AR5K_LOW_ID(hal->ah_sta_id);
-	high_id = AR5K_HIGH_ID(hal->ah_sta_id);
+	bcopy(&(hal->ah_sta_id[0]), &low_id, 4);
+	bcopy(&(hal->ah_sta_id[4]), &high_id, 2);
 	AR5K_REG_WRITE(AR5K_AR5210_STA_ID0, low_id);
 	AR5K_REG_WRITE(AR5K_AR5210_STA_ID1, pcu_reg | high_id);
 	AR5K_REG_WRITE(AR5K_AR5210_BCR, beacon_reg);
@@ -774,15 +738,6 @@ ar5k_ar5210_setup_tx_queueprops(struct ath_hal *hal, int queue,
 }
 
 HAL_BOOL
-ar5k_ar5210_get_tx_queueprops(struct ath_hal *hal, int queue,
-    HAL_TXQ_INFO *queue_info)
-{
-	AR5K_ASSERT_ENTRY(queue, hal->ah_capabilities.cap_queues.q_tx_num);
-	bcopy(&hal->ah_txq[queue], queue_info, sizeof(HAL_TXQ_INFO));
-	return (AH_TRUE);
-}
-
-HAL_BOOL
 ar5k_ar5210_release_tx_queue(struct ath_hal *hal, u_int queue)
 {
 	AR5K_ASSERT_ENTRY(queue, hal->ah_capabilities.cap_queues.q_tx_num);
@@ -916,12 +871,6 @@ ar5k_ar5210_put_tx_buf(struct ath_hal *hal, u_int queue, u_int32_t phys_addr)
 	AR5K_REG_WRITE(tx_reg, phys_addr);
 
 	return (AH_TRUE);
-}
-
-u_int32_t
-ar5k_ar5210_num_tx_pending(struct ath_hal *hal, u_int queue)
-{
-	return (AH_FALSE);
 }
 
 HAL_BOOL
@@ -1496,8 +1445,9 @@ ar5k_ar5210_set_lladdr(struct ath_hal *hal, const u_int8_t *mac)
 	/* Set new station ID */
 	bcopy(mac, hal->ah_sta_id, IEEE80211_ADDR_LEN);
 
-	low_id = AR5K_LOW_ID(mac);
-	high_id = 0x0000ffff & AR5K_HIGH_ID(mac);
+	bcopy(mac, &low_id, 4);
+	bcopy(mac + 4, &high_id, 2);
+	high_id = 0x0000ffff & high_id;
 
 	AR5K_REG_WRITE(AR5K_AR5210_STA_ID0, low_id);
 	AR5K_REG_WRITE(AR5K_AR5210_STA_ID1, high_id);
@@ -1564,8 +1514,8 @@ ar5k_ar5210_set_associd(struct ath_hal *hal, const u_int8_t *bssid,
 	/*
 	 * Set BSSID which triggers the "SME Join" operation
 	 */
-	low_id = AR5K_LOW_ID(bssid);
-	high_id = AR5K_HIGH_ID(bssid);
+	bcopy(bssid, &low_id, 4);
+	bcopy(bssid + 4, &high_id, 2);
 	AR5K_REG_WRITE(AR5K_AR5210_BSS_ID0, low_id);
 	AR5K_REG_WRITE(AR5K_AR5210_BSS_ID1, high_id |
 	    ((assoc_id & 0x3fff) << AR5K_AR5210_BSS_ID1_AID_S));
@@ -1580,13 +1530,6 @@ ar5k_ar5210_set_associd(struct ath_hal *hal, const u_int8_t *bssid,
 	    tim_offset ? tim_offset + 4 : 0);
 
 	ar5k_ar5210_enable_pspoll(hal, NULL, 0);
-}
-
-HAL_BOOL
-ar5k_ar5210_set_bssid_mask(struct ath_hal *hal, const u_int8_t* mask)
-{
-	/* Not supported in 5210 */
-	return (AH_FALSE);
 }
 
 HAL_BOOL
@@ -1900,8 +1843,9 @@ ar5k_ar5210_set_key_lladdr(struct ath_hal *hal, u_int16_t entry,
 	/* MAC may be NULL if it's a broadcast key */
 	mac_v = mac == NULL ? etherbroadcastaddr : mac;
 
-	low_id = AR5K_LOW_ID(mac_v);
-	high_id = AR5K_HIGH_ID(mac_v) | AR5K_AR5210_KEYTABLE_VALID;
+	bcopy(mac_v, &low_id, 4);
+	bcopy(mac_v + 4, &high_id, 2);
+	high_id |= AR5K_AR5210_KEYTABLE_VALID;
 
 	AR5K_REG_WRITE(AR5K_AR5210_KEYTABLE_MAC0(entry), low_id);
 	AR5K_REG_WRITE(AR5K_AR5210_KEYTABLE_MAC1(entry), high_id);
@@ -1925,7 +1869,7 @@ ar5k_ar5210_set_power(struct ath_hal *hal, HAL_POWER_MODE mode,
 	switch (mode) {
 	case HAL_PM_AUTO:
 		staid &= ~AR5K_AR5210_STA_ID1_DEFAULT_ANTENNA;
-		/* FALLTHROUGH */
+		/* fallthrough */
 	case HAL_PM_NETWORK_SLEEP:
 		if (set_chip == AH_TRUE) {
 			AR5K_REG_WRITE(AR5K_AR5210_SCR,
@@ -2377,9 +2321,3 @@ ar5k_ar5210_eeprom_write(struct ath_hal *hal, u_int32_t offset, u_int16_t data)
 	return (ETIMEDOUT);
 }
 
-HAL_BOOL
-ar5k_ar5210_set_txpower_limit(struct ath_hal *hal, u_int power)
-{
-	/* Not implemented */
-	return (AH_FALSE);
-}

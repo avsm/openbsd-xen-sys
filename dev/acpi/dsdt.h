@@ -1,4 +1,4 @@
-/* $OpenBSD: dsdt.h,v 1.27 2007/02/22 06:22:31 jordan Exp $ */
+/* $OpenBSD: dsdt.h,v 1.23 2006/12/21 19:59:02 deraadt Exp $ */
 /*
  * Copyright (c) 2005 Marco Peereboom <marco@openbsd.org>
  *
@@ -47,7 +47,7 @@ struct aml_opcode {
 
 const char		*aml_eisaid(u_int32_t);
 const char              *aml_args(int);
-const char		*aml_mnem(int, uint8_t *);
+const char		*aml_mnem(int);
 int64_t			aml_val2int(struct aml_value *);
 struct aml_node		*aml_searchname(struct aml_node *, const void *);
 struct aml_node         *aml_createname(struct aml_node *, const void *,
@@ -106,7 +106,6 @@ const char		*aml_nodename(struct aml_node *);
 #define LR_EXTIRQ               0x89
 #define LR_QWORD                0x8A
 
-#define __amlflagbit(v,s,l)
 union acpi_resource {
 	struct {
 		uint8_t  typecode;
@@ -119,45 +118,45 @@ union acpi_resource {
 	struct {
 		uint8_t  typecode;
 		uint16_t irq_mask;
-		uint8_t  irq_flags;
+		uint8_t  irq_info;
 	}  __packed sr_irq;
 	struct {
 		uint8_t  typecode;
-		uint8_t  channel;
-		uint8_t  flags;
+		uint8_t  dma_chan;
+		uint8_t  dma_info;
 	}  __packed sr_dma;
 	struct {
 		uint8_t  typecode;
-		uint8_t  flags;
-		uint16_t _min;
-		uint16_t _max;
-		uint8_t  _aln;
-		uint8_t  _len;
+		uint8_t  io_info;
+		uint16_t io_min;
+		uint16_t io_max;
+		uint8_t  io_aln;
+		uint8_t  io_len;
 	}  __packed sr_ioport;
 	struct {
 		uint8_t  typecode;
-		uint16_t _bas;
-		uint8_t  _len;
+		uint16_t fio_bas;
+		uint8_t  fio_len;
 	}  __packed sr_fioport;
 
 	/* Large resource structures */
 	struct {
 		uint8_t  typecode;
 		uint16_t length;
-		uint8_t  _info;
-		uint16_t _min;
-		uint16_t _max;
-		uint16_t _aln;
-		uint16_t _len;
+		uint8_t  m24_info;
+		uint16_t m24_min;
+		uint16_t m24_max;
+		uint16_t m24_aln;
+		uint16_t m24_len;
 	}  __packed lr_m24;
 	struct {
 		uint8_t  typecode;
 		uint16_t length;
-		uint8_t  _info;
-		uint32_t _min;
-		uint32_t _max;
-		uint32_t _aln;
-		uint32_t _len;
+		uint8_t  m32_info;
+		uint32_t m32_min;
+		uint32_t m32_max;
+		uint32_t m32_aln;
+		uint32_t m32_len;
 	}  __packed lr_m32;
 	struct {
 		uint8_t  typecode;
@@ -166,55 +165,12 @@ union acpi_resource {
 		uint8_t  irq_count;
 		uint32_t irq[1];
 	} __packed lr_extirq;
-  	struct {
-		uint8_t		typecode;
-		uint16_t	length;
-		uint8_t		type;
-		uint8_t		flags;
-		uint8_t		tflags;
-		uint16_t	_gra;
-		uint16_t	_min;
-		uint16_t	_max;
-		uint16_t	_tra;
-		uint16_t	_len;
-		uint8_t		src_index;
-		char		src[1];
-	} __packed lr_word;
-  	struct {
-		uint8_t		typecode;
-		uint16_t	length;
-		uint8_t		type;
-		uint8_t		flags;
-		uint8_t		tflags;
-		uint32_t	_gra;
-		uint32_t	_min;
-		uint32_t	_max;
-		uint32_t	_tra;
-		uint32_t	_len;
-		uint8_t		src_index;
-		char		src[1];
-	} __packed lr_dword;
-  	struct {
-		uint8_t		typecode;
-		uint16_t	length;
-		uint8_t		type;
-		uint8_t		flags;
-		uint8_t		tflags;
-		uint64_t	_gra;
-		uint64_t	_min;
-		uint64_t	_max;
-		uint64_t	_tra;
-		uint64_t	_len;
-		uint8_t		src_index;
-		char		src[1];
-	} __packed lr_qword;
-	uint8_t          pad[64];
 } __packed;
 
 #define AML_CRSTYPE(x)	((x)->hdr.typecode & 0x80 ? \
 			    (x)->hdr.typecode : (x)->hdr.typecode >> 3)
 #define AML_CRSLEN(x)	((x)->hdr.typecode & 0x80 ? \
-			    3+(x)->hdr.length : 1+((x)->hdr.typecode & 0x7))
+			    (x)->hdr.length+2 : (x)->hdr.typecode & 0x7)
 
 int			aml_print_resource(union acpi_resource *, void *);
 int			aml_parse_resource(int, uint8_t *,
@@ -239,10 +195,5 @@ void			aml_walknodes(struct aml_node *, int,
 
 void			aml_postparse(void);
 void			acpi_poll_notify(void);
-
-void			aml_hashopcodes(void);
-
-void	aml_foreachpkg(struct aml_value *, int,
-	    void (*fn)(struct aml_value *, void *), void *);
 
 #endif /* __DEV_ACPI_DSDT_H__ */

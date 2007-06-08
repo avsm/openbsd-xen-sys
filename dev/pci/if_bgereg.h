@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bgereg.h,v 1.71 2007/01/30 02:35:16 krw Exp $	*/
+/*	$OpenBSD: if_bgereg.h,v 1.69 2006/12/22 17:37:50 krw Exp $	*/
 
 /*
  * Copyright (c) 2001 Wind River Systems
@@ -277,11 +277,6 @@
 #define BGE_CHIPID_BCM5715_A0		0x90000000
 #define BGE_CHIPID_BCM5715_A1		0x90010000
 #define BGE_CHIPID_BCM5715_A3		0x90030000
-#define BGE_CHIPID_BCM5755_A0		0xa0000000
-#define BGE_CHIPID_BCM5755_A1		0xa0010000
-#define BGE_CHIPID_BCM5755_A2		0xa0020000
-#define BGE_CHIPID_BCM5787_A0		0xb0000000
-#define BGE_CHIPID_BCM5787_A1		0xb0010000
 #define BGE_CHIPID_BCM5787_A2		0xb0020000
 #define BGE_CHIPID_BCM5906_A1		0xc0010000
 
@@ -2374,8 +2369,7 @@ struct bge_softc {
 #define BGE_PHY_5704_A0_BUG	0x00002000
 #define BGE_PHY_JITTER_BUG	0x00004000
 #define BGE_PHY_BER_BUG		0x00008000
-#define BGE_PHY_ADJUST_TRIM	0x00010000
-#define BGE_NO_ETH_WIRE_SPEED	0x00020000
+#define BGE_NO_ETH_WIRE_SPEED	0x00010000
 
 	bus_dma_tag_t		bge_dmatag;
 	u_int32_t		bge_chipid;

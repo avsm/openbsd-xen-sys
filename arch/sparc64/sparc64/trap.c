@@ -1,4 +1,4 @@
-/*	$OpenBSD: trap.c,v 1.46 2007/02/27 22:46:32 deraadt Exp $	*/
+/*	$OpenBSD: trap.c,v 1.44 2006/12/24 20:29:19 miod Exp $	*/
 /*	$NetBSD: trap.c,v 1.73 2001/08/09 01:03:01 eeh Exp $ */
 
 /*
@@ -498,6 +498,7 @@ badtrap:
 	case T_AST:
 		want_ast = 0;
 		if (p->p_flag & P_OWEUPC) {
+			p->p_flag &= ~P_OWEUPC;
 			ADDUPROF(p);
 		}
 		if (want_resched)
@@ -973,8 +974,9 @@ data_access_error(tf, type, afva, afsr, sfva, sfsr)
 
 			trap_trace_dis = 1; /* Disable traptrace for printf */
 			(void) splhigh();
-			panic("data fault: pc=%lx addr=%lx sfsr=%b\n",
+			printf("data fault: pc=%lx addr=%lx sfsr=%b\n",
 				(u_long)pc, (long)sfva, sfsr, SFSR_BITS);
+			panic("kernel fault");
 			/* NOTREACHED */
 		}
 

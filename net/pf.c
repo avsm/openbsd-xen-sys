@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf.c,v 1.526 2007/02/19 10:18:58 pyr Exp $ */
+/*	$OpenBSD: pf.c,v 1.522 2006/12/21 12:26:51 dhartmei Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -55,7 +55,6 @@
 #include <net/if_types.h>
 #include <net/bpf.h>
 #include <net/route.h>
-#include <net/radix_mpath.h>
 
 #include <netinet/in.h>
 #include <netinet/in_var.h>
@@ -1297,7 +1296,6 @@ pf_addr_wrap_neq(struct pf_addr_wrap *aw1, struct pf_addr_wrap *aw2)
 	case PF_ADDR_DYNIFTL:
 		return (aw1->p.dyn->pfid_kt != aw2->p.dyn->pfid_kt);
 	case PF_ADDR_NOROUTE:
-	case PF_ADDR_URPFFAILED:
 		return (0);
 	case PF_ADDR_TABLE:
 		return (aw1->p.tbl != aw2->p.tbl);
@@ -5384,21 +5382,14 @@ int
 pf_routable(struct pf_addr *addr, sa_family_t af, struct pfi_kif *kif)
 {
 	struct sockaddr_in	*dst;
-	int			 ret = 1;
-	int			 check_mpath;
-	extern int		 ipmultipath;
+	int ret = 1;
 #ifdef INET6
-	extern int		 ip6_multipath;
 	struct sockaddr_in6	*dst6;
 	struct route_in6	 ro;
 #else
 	struct route		 ro;
 #endif
-	struct radix_node	*rn;
-	struct rtentry		*rt;
-	struct ifnet		*ifp;
 
-	check_mpath = 0;
 	bzero(&ro, sizeof(ro));
 	switch (af) {
 	case AF_INET:
@@ -5406,8 +5397,6 @@ pf_routable(struct pf_addr *addr, sa_family_t af, struct pfi_kif *kif)
 		dst->sin_family = AF_INET;
 		dst->sin_len = sizeof(*dst);
 		dst->sin_addr = addr->v4;
-		if (ipmultipath)
-			check_mpath = 1;
 		break;
 #ifdef INET6
 	case AF_INET6:
@@ -5415,49 +5404,33 @@ pf_routable(struct pf_addr *addr, sa_family_t af, struct pfi_kif *kif)
 		dst6->sin6_family = AF_INET6;
 		dst6->sin6_len = sizeof(*dst6);
 		dst6->sin6_addr = addr->v6;
-		if (ip6_multipath)
-			check_mpath = 1;
 		break;
 #endif /* INET6 */
 	default:
 		return (0);
 	}
 
-	/* Skip checks for ipsec interfaces */
-	if (kif != NULL && kif->pfik_ifp->if_type == IFT_ENC)
-		goto out;
-
 	rtalloc_noclone((struct route *)&ro, NO_CLONING);
 
 	if (ro.ro_rt != NULL) {
-		/* No interface given, this is a no-route check */
-		if (kif == NULL)
-			goto out;
-
-		if (kif->pfik_ifp == NULL) {
-			ret = 0;
-			goto out;
-		}
-
 		/* Perform uRPF check if passed input interface */
-		ret = 0;
-		rn = (struct radix_node *)ro.ro_rt;
-		do {
-			rt = (struct rtentry *)rn;
-			if (rt->rt_ifp->if_type == IFT_CARP)
-				ifp = rt->rt_ifp->if_carpdev;
-			else
-				ifp = rt->rt_ifp;
-
-			if (kif->pfik_ifp == ifp)
+		/* XXX doesn't try to grok multipath */
+		if (kif != NULL && (kif->pfik_ifp == NULL ||
+		    kif->pfik_ifp != ro.ro_rt->rt_ifp))
+			ret = 0;
+		/*
+		 * If the interface is a carp one check if the packet was 
+		 * seen on the underlying interface
+		 */
+		if (kif != NULL && ret == 0) {
+			if (ro.ro_rt->rt_ifp->if_type == IFT_CARP &&
+			    ro.ro_rt->rt_ifp->if_carpdev == kif->pfik_ifp)
 				ret = 1;
-			rn = rn_mpath_next(rn);
-		} while (check_mpath == 1 && rn != NULL && ret == 0);
+		}
+		RTFREE(ro.ro_rt);
 	} else
 		ret = 0;
-out:
-	if (ro.ro_rt != NULL)
-		RTFREE(ro.ro_rt);
+
 	return (ret);
 }
 
@@ -6242,7 +6215,7 @@ pf_test6(int dir, struct ifnet *ifp, struct mbuf **m0,
 {
 	struct pfi_kif		*kif;
 	u_short			 action, reason = 0, log = 0;
-	struct mbuf		*m = *m0, *n = NULL;
+	struct mbuf		*m = *m0;
 	struct ip6_hdr		*h;
 	struct pf_rule		*a = NULL, *r = &pf_default_rule, *tr, *nr;
 	struct pf_state		*s = NULL;
@@ -6294,18 +6267,6 @@ pf_test6(int dir, struct ifnet *ifp, struct mbuf **m0,
 	m = *m0;
 	h = mtod(m, struct ip6_hdr *);
 
-#if 1
-	/*
-	 * we do not support jumbogram yet.  if we keep going, zero ip6_plen
-	 * will do something bad, so drop the packet for now.
-	 */
-	if (htons(h->ip6_plen) == 0) {
-		action = PF_DROP;
-		REASON_SET(&reason, PFRES_NORM);	/*XXX*/
-		goto done;
-	}
-#endif
-
 	pd.src = (struct pf_addr *)&h->ip6_src;
 	pd.dst = (struct pf_addr *)&h->ip6_dst;
 	PF_ACPY(&pd.baddr, dir == PF_OUT ? pd.src : pd.dst, AF_INET6);
@@ -6325,67 +6286,9 @@ pf_test6(int dir, struct ifnet *ifp, struct mbuf **m0,
 			if (action == PF_DROP)
 				REASON_SET(&reason, PFRES_FRAG);
 			goto done;
-		case IPPROTO_ROUTING: {
-			struct ip6_rthdr rthdr;
-			struct ip6_rthdr0 rthdr0;
-			struct in6_addr finaldst;
-			struct ip6_hdr *ip6;
-
-			if (!pf_pull_hdr(m, off, &rthdr, sizeof(rthdr), NULL,
-			    &reason, pd.af)) {
-				DPFPRINTF(PF_DEBUG_MISC,
-				    ("pf: IPv6 short rthdr\n"));
-				action = PF_DROP;
-				log = 1;
-				goto done;
-			}
-			if (rthdr.ip6r_type == IPV6_RTHDR_TYPE_0) {
-				if (!pf_pull_hdr(m, off, &rthdr0,
-				    sizeof(rthdr0), NULL, &reason, pd.af)) {
-					DPFPRINTF(PF_DEBUG_MISC,
-					    ("pf: IPv6 short rthdr0\n"));
-					action = PF_DROP;
-					log = 1;
-					goto done;
-				}
-				if (rthdr0.ip6r0_segleft != 0) {
-					if (!pf_pull_hdr(m, off +
-					    sizeof(rthdr0) +
-					    rthdr0.ip6r0_len * 8 -
-					    sizeof(finaldst), &finaldst,
-					    sizeof(finaldst), NULL,
-					    &reason, pd.af)) {
-						DPFPRINTF(PF_DEBUG_MISC,
-						    ("pf: IPv6 short rthdr0\n"));
-						action = PF_DROP;
-						log = 1;
-						goto done;
-					}
-
-					n = m_copym(m, 0, M_COPYALL, M_DONTWAIT);
-					if (!n) {
-						DPFPRINTF(PF_DEBUG_MISC,
-						    ("pf: mbuf shortage\n"));
-						action = PF_DROP;
-						log = 1;
-						goto done;
-					}
-					n = m_pullup(n, sizeof(struct ip6_hdr));
-					if (!n) {
-						DPFPRINTF(PF_DEBUG_MISC,
-						    ("pf: mbuf shortage\n"));
-						action = PF_DROP;
-						log = 1;
-						goto done;
-					}
-					ip6 = mtod(n, struct ip6_hdr *);
-					ip6->ip6_dst = finaldst;
-				}
-			}
-			/* FALLTHROUGH */
-		}
 		case IPPROTO_AH:
 		case IPPROTO_HOPOPTS:
+		case IPPROTO_ROUTING:
 		case IPPROTO_DSTOPTS: {
 			/* get next header and header length */
 			struct ip6_ext	opt6;
@@ -6412,10 +6315,6 @@ pf_test6(int dir, struct ifnet *ifp, struct mbuf **m0,
 		}
 	} while (!terminal);
 
-	/* if there's no routing header, use unmodified mbuf for checksumming */
-	if (!n)
-		n = m;
-
 	switch (pd.proto) {
 
 	case IPPROTO_TCP: {
@@ -6427,7 +6326,7 @@ pf_test6(int dir, struct ifnet *ifp, struct mbuf **m0,
 			log = action != PF_PASS;
 			goto done;
 		}
-		if (dir == PF_IN && pf_check_proto_cksum(n, off,
+		if (dir == PF_IN && pf_check_proto_cksum(m, off,
 		    ntohs(h->ip6_plen) - (off - sizeof(struct ip6_hdr)),
 		    IPPROTO_TCP, AF_INET6)) {
 			action = PF_DROP;
@@ -6462,7 +6361,7 @@ pf_test6(int dir, struct ifnet *ifp, struct mbuf **m0,
 			log = action != PF_PASS;
 			goto done;
 		}
-		if (dir == PF_IN && uh.uh_sum && pf_check_proto_cksum(n,
+		if (dir == PF_IN && uh.uh_sum && pf_check_proto_cksum(m,
 		    off, ntohs(h->ip6_plen) - (off - sizeof(struct ip6_hdr)),
 		    IPPROTO_UDP, AF_INET6)) {
 			action = PF_DROP;
@@ -6499,7 +6398,7 @@ pf_test6(int dir, struct ifnet *ifp, struct mbuf **m0,
 			log = action != PF_PASS;
 			goto done;
 		}
-		if (dir == PF_IN && pf_check_proto_cksum(n, off,
+		if (dir == PF_IN && pf_check_proto_cksum(m, off,
 		    ntohs(h->ip6_plen) - (off - sizeof(struct ip6_hdr)),
 		    IPPROTO_ICMPV6, AF_INET6)) {
 			action = PF_DROP;
@@ -6537,12 +6436,7 @@ pf_test6(int dir, struct ifnet *ifp, struct mbuf **m0,
 	}
 
 done:
-	if (n != m) {
-		m_freem(n);
-		n = NULL;
-	}
-
-	/* XXX handle IPv6 options, if not allowed.  not implemented. */
+	/* XXX handle IPv6 options, if not allowed. not implemented. */
 
 	if ((s && s->tag) || r->rtableid)
 		pf_tag_packet(m, pd.pf_mtag, s ? s->tag : 0, r->rtableid);

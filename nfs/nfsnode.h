@@ -1,4 +1,4 @@
-/*	$OpenBSD: nfsnode.h,v 1.24 2007/03/18 15:05:33 mickey Exp $	*/
+/*	$OpenBSD: nfsnode.h,v 1.22 2004/08/03 17:11:48 marius Exp $	*/
 /*	$NetBSD: nfsnode.h,v 1.16 1996/02/18 11:54:04 fvdl Exp $	*/
 
 /*
@@ -87,6 +87,7 @@ struct nfsdmap {
  */
 struct nfsnode {
 	LIST_ENTRY(nfsnode)	n_hash;		/* Hash chain */
+	CIRCLEQ_ENTRY(nfsnode)	n_timer;	/* Nqnfs timer chain */
 	u_quad_t		n_size;		/* Current size of file */
 	u_quad_t		n_brev;		/* Modify rev when cached */
 	u_quad_t		n_lrev;		/* Modify rev for lease */
@@ -206,6 +207,8 @@ int	nfs_pathconf(void *);
 int	nfs_advlock(void *);
 int	nfs_bwrite(void *);
 int	nfs_vget(struct mount *, ino_t, struct vnode **);
+#define nfs_reallocblks \
+	((int (*)(void *))eopnotsupp)
 
 /* other stuff */
 int	nfs_removeit(struct sillyrename *);

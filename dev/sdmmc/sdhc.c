@@ -1,4 +1,4 @@
-/*	$OpenBSD: sdhc.c,v 1.17 2007/01/31 12:54:47 claudio Exp $	*/
+/*	$OpenBSD: sdhc.c,v 1.15 2006/11/29 14:05:45 uwe Exp $	*/
 
 /*
  * Copyright (c) 2006 Uwe Stuehler <uwe@openbsd.org>
@@ -743,12 +743,10 @@ sdhc_read_data(struct sdhc_host *hp, u_char *datap, int datalen)
 {
 	while (datalen > 0) {
 		if (datalen > 3) {
-			*((u_int32_t *)datap) = HREAD4(hp, SDHC_DATA);
-			datap += 4;
+			*((u_int32_t *)datap)++ = HREAD4(hp, SDHC_DATA);
 			datalen -= 4;
 		} else if (datalen > 1) {
-			*((u_int16_t *)datap) = HREAD2(hp, SDHC_DATA);
-			datap += 2;
+			*((u_int16_t *)datap)++ = HREAD2(hp, SDHC_DATA);
 			datalen -= 2;
 		} else {
 			*datap++ = HREAD1(hp, SDHC_DATA);
@@ -790,7 +788,6 @@ sdhc_soft_reset(struct sdhc_host *hp, int mask)
 		if (!ISSET(HREAD1(hp, SDHC_SOFTWARE_RESET), mask))
 			break;
 		sdmmc_delay(10000);
-		HWRITE1(hp, SDHC_SOFTWARE_RESET, 0);
 	}
 	if (timo == 0) {
 		DPRINTF(1,("%s: timeout reg=%#x\n", HDEVNAME(hp),

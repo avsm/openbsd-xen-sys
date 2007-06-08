@@ -1,4 +1,4 @@
-/*	$OpenBSD: acpitimer.c,v 1.5 2007/02/20 22:10:27 marco Exp $	*/
+/*	$OpenBSD: acpitimer.c,v 1.2 2005/07/10 19:39:01 grange Exp $	*/
 /*
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>
  *
@@ -79,15 +79,42 @@ acpitimerattach(struct device *parent, struct device *self, void *aux)
 {
 	struct acpitimer_softc *sc = (struct acpitimer_softc *) self;
 	struct acpi_softc *psc = (struct acpi_softc *) parent;
-	int rc;
+	struct acpi_attach_args *aa = aux;
+	bus_addr_t address;
+	bus_size_t size;
 
-	if (psc->sc_fadt->hdr_revision >= 3)
-		rc = acpi_map_address(psc, &psc->sc_fadt->x_pm_tmr_blk, 0,
-		    psc->sc_fadt->pm_tmr_len, &sc->sc_ioh, &sc->sc_iot);
-	else
-		rc = acpi_map_address(psc, NULL, psc->sc_fadt->pm_tmr_blk,
-		    psc->sc_fadt->pm_tmr_len, &sc->sc_ioh, &sc->sc_iot);
-	if (rc) {
+	if (psc->sc_fadt->hdr_revision > 1) {
+		switch (psc->sc_fadt->x_pm_tmr_blk.address_space_id) {
+		case GAS_SYSTEM_MEMORY:
+			sc->sc_iot = aa->aaa_memt;
+			break;
+
+		case GAS_SYSTEM_IOSPACE:
+			sc->sc_iot = aa->aaa_iot;
+			break;
+
+#if 0
+		case GAS_SYSTEM_PCI_CFG_SPACE:
+			sc->sc_iot = aa->aaa_pcit;
+			break;
+
+		case GAS_SYSTEM_SMBUS:
+			sc->sc_iot = aa->aaa_smbust;
+			break;
+#endif
+
+		default:
+			printf(": can't identify bus\n");
+			return;
+		}
+		address = psc->sc_fadt->x_pm_tmr_blk.address;
+	} else {
+		sc->sc_iot = aa->aaa_iot;
+		address = psc->sc_fadt->pm_tmr_blk;
+	}
+	size = psc->sc_fadt->pm_tmr_len;
+
+	if (bus_space_map(sc->sc_iot, address, size, 0, &sc->sc_ioh)) {
 		printf(": can't map i/o space\n");
 		return;
 	}
@@ -119,7 +146,6 @@ acpi_get_timecount(struct timecounter *tc)
 		u2 = u3;
 		u3 = bus_space_read_4(sc->sc_iot, sc->sc_ioh, 0);
 	} while (u1 > u2 || u2 > u3);
-
 	return (u2);
 }
 #endif

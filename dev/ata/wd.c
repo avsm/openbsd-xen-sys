@@ -1,4 +1,4 @@
-/*	$OpenBSD: wd.c,v 1.54 2007/03/25 18:05:49 deraadt Exp $ */
+/*	$OpenBSD: wd.c,v 1.50 2006/10/04 00:52:55 krw Exp $ */
 /*	$NetBSD: wd.c,v 1.193 1999/02/28 17:15:27 explorer Exp $ */
 
 /*
@@ -638,7 +638,6 @@ wdrestart(void *v)
 	    DEBUG_XFERS);
 
 	s = splbio();
-	disk_unbusy(&wd->sc_dk, 0, (bp->b_flags & B_READ));
 	__wdstart(v, bp);
 	splx(s);
 }
@@ -854,7 +853,7 @@ wdgetdisklabel(dev_t dev, struct wd_softc *wd, struct disklabel *lp,
 		    wdstrategy, lp, clp, spoofonly);
 	}
 	if (errstring) {
-		/*printf("%s: %s\n", wd->sc_dev.dv_xname, errstring);*/
+		printf("%s: %s\n", wd->sc_dev.dv_xname, errstring);
 		return;
 	}
 
@@ -946,7 +945,7 @@ wdioctl(dev_t dev, u_long xfer, caddr_t addr, int flag, struct proc *p)
 		if ((flag & FWRITE) == 0)
 			return EBADF;
 		{
-		struct format_op *fop;
+		register struct format_op *fop;
 		struct iovec aiov;
 		struct uio auio;
 

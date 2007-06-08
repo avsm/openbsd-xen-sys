@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_ral.c,v 1.88 2007/01/02 14:43:50 claudio Exp $	*/
+/*	$OpenBSD: if_ral.c,v 1.87 2006/12/07 17:32:19 damien Exp $	*/
 
 /*-
  * Copyright (c) 2005, 2006
@@ -638,10 +638,14 @@ ural_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 	timeout_del(&sc->scan_to);
 	timeout_del(&sc->amrr_to);
 
-	/* do it in a process context */
 	sc->sc_state = nstate;
 	sc->sc_arg = arg;
-	usb_add_task(sc->sc_udev, &sc->sc_task);
+	if (curproc != NULL) {
+		ural_task(sc);
+	} else {
+		/* do it in a process context */
+		usb_add_task(sc->sc_udev, &sc->sc_task);
+	}
 	return 0;
 }
 

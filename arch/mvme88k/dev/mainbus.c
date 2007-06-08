@@ -1,4 +1,4 @@
-/*	$OpenBSD: mainbus.c,v 1.21 2006/07/07 19:36:50 miod Exp $ */
+/*	$OpenBSD: mainbus.c,v 1.20 2006/05/06 16:59:28 miod Exp $ */
 /*
  * Copyright (c) 1998 Steve Murphree, Jr.
  * Copyright (c) 2004, Miodrag Vallat.
@@ -76,8 +76,7 @@ const struct mvme88k_bus_space_tag mainbus_bustag = {
 	mainbus_vaddr
 };
 
-bus_addr_t	 bs_obio_start;
-bus_addr_t	 bs_obio_end;
+bus_addr_t	 bs_threshold;
 struct extent	*bs_extent;
 
 /*
@@ -131,36 +130,26 @@ mainbus_vaddr(bus_space_handle_t handle)
  * we might have several mappings for a given chunk of the IO page.
  */
 vaddr_t
-mapiodev(paddr_t addr, int _size)
+mapiodev(addr, size)
+	paddr_t addr;
+	int size;
 {
 	vaddr_t	va, iova, off;
-	paddr_t pa, epa;
-	psize_t size;
+	paddr_t pa;
 	int s, error;
 
-	/* sanity checks */
-	if (_size <= 0)
-		return NULL;
-	size = (psize_t)_size;
-	epa = addr + size;
-	if (epa < addr && epa != 0)
+	if (size <= 0)
 		return NULL;
 
-	/* check for 1:1 mapping */
-	if (addr >= bs_obio_start) {
-		if (bs_obio_end == 0 || epa <= bs_obio_end)
-			return ((vaddr_t)addr);
-		else if (addr <= bs_obio_end)
-			/* accross obio and non-obio, not supported */
-			return NULL;
-	}
+	if (addr >= bs_threshold)
+		return ((vaddr_t)addr);
 
 	pa = trunc_page(addr);
 	off = addr & PGOFSET;
 	size = round_page(off + size);
 
 	s = splhigh();
-	error = extent_alloc_region(bs_extent, atop(pa), atop(size),
+	error = extent_alloc_region(bs_extent, pa, size,
 	    EX_MALLOCOK | (cold ? 0 : EX_WAITSPACE));
 	splx(s);
 
@@ -169,7 +158,7 @@ mapiodev(paddr_t addr, int _size)
 
 	va = uvm_km_valloc(kernel_map, size);
 	if (va == 0) {
-		extent_free(bs_extent, atop(pa), atop(size),
+		extent_free(bs_extent, pa, size,
 		    EX_MALLOCOK | (cold ? 0 : EX_WAITSPACE));
 		return NULL;
 	}
@@ -191,29 +180,16 @@ mapiodev(paddr_t addr, int _size)
  * Free up the mapping in iomap.
  */
 void
-unmapiodev(vaddr_t va, int _size)
+unmapiodev(va, size)
+	vaddr_t va;
+	int size;
 {
-	vaddr_t eva, kva, off;
-	vsize_t size;
+	vaddr_t kva, off;
 	paddr_t pa;
 	int s, error;
 
-	/* sanity checks */
-	if (_size <= 0)
+	if (va >= bs_threshold)
 		return;
-	size = (vsize_t)_size;
-	eva = va + size;
-	if (eva < va && eva != 0)
-		return;
-
-	/* check for 1:1 mapping */
-	if (va >= bs_obio_start) {
-		if (bs_obio_end == 0 || eva <= bs_obio_end)
-			return;
-		else if (va <= bs_obio_end)
-			/* accross obio and non-obio, not supported */
-			return;
-	}
 
 	off = va & PGOFSET;
 	kva = trunc_page(va);
@@ -227,7 +203,7 @@ unmapiodev(vaddr_t va, int _size)
 	uvm_km_free(kernel_map, kva, size);
 
 	s = splhigh();
-	error = extent_free(bs_extent, atop(pa), atop(size),
+	error = extent_free(bs_extent, pa, size,
 	    EX_MALLOCOK | (cold ? 0 : EX_WAITSPACE));
 #ifdef DIAGNOSTIC
 	if (error != 0)
@@ -250,13 +226,18 @@ struct cfdriver mainbus_cd = {
 };
 
 int
-mainbus_match(struct device *parent, void *cf, void *args)
+mainbus_match(parent, cf, args)
+	struct device *parent;
+	void *cf;
+	void *args;
 {
 	return (1);
 }
 
 int
-mainbus_print(void *args, const char *bus)
+mainbus_print(args, bus)
+	void *args;
+	const char *bus;
 {
 	struct confargs *ca = args;
 
@@ -266,7 +247,9 @@ mainbus_print(void *args, const char *bus)
 }
 
 int
-mainbus_scan(struct device *parent, void *child, void *args)
+mainbus_scan(parent, child, args)
+	struct device *parent;
+	void *child, *args;
 {
 	struct cfdata *cf = child;
 	struct confargs oca;
@@ -285,7 +268,9 @@ mainbus_scan(struct device *parent, void *child, void *args)
 }
 
 void
-mainbus_attach(struct device *parent, struct device *self, void *args)
+mainbus_attach(parent, self, args)
+	struct device *parent, *self;
+	void *args;
 {
 	extern char cpu_model[];
 
@@ -300,19 +285,15 @@ mainbus_attach(struct device *parent, struct device *self, void *args)
 	 * Initialize an extent to keep track of I/O mappings.
 	 */
 #ifdef M88100
-	if (CPU_IS88100) {
-		bs_obio_start = BATC8_VA;	/* hardwired BATC */
-		bs_obio_end = 0;
-	}
+	if (CPU_IS88100)
+		bs_threshold = BATC8_VA;	/* hardwired BATC */
 #endif
 #ifdef MVME197
-	if (CPU_IS88110) {
-		bs_obio_start = OBIO197_START;
-		bs_obio_end = OBIO197_START + OBIO197_SIZE;
-	}
+	if (CPU_IS88110)
+		bs_threshold = OBIO197_START;
 #endif
-	bs_extent = extent_create("bus_space", atop(physmem),
-	    1 + atop(0U - PAGE_SIZE), M_DEVBUF, NULL, 0, EX_NOWAIT);
+	bs_extent = extent_create("bus_space", physmem,
+	    bs_threshold, M_DEVBUF, NULL, 0, EX_NOWAIT);
 	if (bs_extent == NULL)
 		panic("unable to allocate bus_space extent");
 

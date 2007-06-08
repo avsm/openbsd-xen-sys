@@ -1,4 +1,4 @@
-/*	$OpenBSD: fd.c,v 1.59 2007/02/14 00:53:48 jsg Exp $	*/
+/*	$OpenBSD: fd.c,v 1.57 2006/11/29 12:24:17 miod Exp $	*/
 /*	$NetBSD: fd.c,v 1.90 1996/05/12 23:12:03 mycroft Exp $	*/
 
 /*-
@@ -669,7 +669,7 @@ loop:
 		/* Make sure the right drive is selected. */
 		fd_set_motor(fdc, 0);
 
-		/* FALLTHROUGH */
+		/* fall through */
 	case DOSEEK:
 	doseek:
 		if (fd->sc_cylin == bp->b_cylinder)
@@ -842,7 +842,7 @@ loop:
 			(void) fdcresult(fdc);
 		}
 
-		/* FALLTHROUGH */
+		/* fall through */
 	case DORECAL:
 		out_fdc(iot, ioh, NE7CMD_RECAL);	/* recal function */
 		out_fdc(iot, ioh, fd->sc_drive);
@@ -997,7 +997,7 @@ fdioctl(dev, cmd, addr, flag, p)
 
 		errstring = readdisklabel(dev, fdstrategy, lp, &cdl, 0);
 		if (errstring) {
-			/*printf("%s: %s\n", fd->sc_dev.dv_xname, errstring);*/
+			/*printf("%s: %s\n", fd->sc_dev.dv_xname, errstring); */
 		}
 
 		*(struct disklabel *)addr = *lp;

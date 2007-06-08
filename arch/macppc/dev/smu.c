@@ -1,4 +1,4 @@
-/*	$OpenBSD: smu.c,v 1.16 2007/03/14 22:49:00 kettenis Exp $	*/
+/*	$OpenBSD: smu.c,v 1.12 2006/03/20 22:40:18 kettenis Exp $	*/
 
 /*
  * Copyright (c) 2005 Mark Kettenis
@@ -43,14 +43,14 @@ struct smu_fan {
 	u_int16_t	min_rpm;
 	u_int16_t	max_rpm;
 	u_int16_t	unmanaged_rpm;
-	struct ksensor	sensor;
+	struct sensor	sensor;
 };
 
 #define SMU_MAXSENSORS	3
 
 struct smu_sensor {
 	u_int8_t	reg;
-	struct ksensor	sensor;
+	struct sensor	sensor;
 };
 
 struct smu_softc {
@@ -75,7 +75,7 @@ struct smu_softc {
 	struct smu_sensor sc_sensors[SMU_MAXSENSORS];
 	int		sc_num_sensors;
 
-	struct ksensordev sc_sensordev;
+	struct sensordev sc_sensordev;
 
 	u_int16_t	sc_cpu_diode_scale;
 	int16_t		sc_cpu_diode_offset;
@@ -253,9 +253,7 @@ smu_attach(struct device *parent, struct device *self, void *aux)
 	time_write = smu_time_write;
 
 	/* Fans */
-	node = OF_getnodebyname(ca->ca_node, "rpm-fans");
-	if (node == 0)
-		node = OF_getnodebyname(ca->ca_node, "fans");
+	node = OF_getnodebyname(ca->ca_node, "fans");
 	for (node = OF_child(node); node; node = OF_peer(node)) {
 		if (OF_getprop(node, "reg", &reg, sizeof reg) <= 0 ||
 		    OF_getprop(node, "device_type", type, sizeof type) <= 0)
@@ -294,17 +292,6 @@ smu_attach(struct device *parent, struct device *self, void *aux)
 		smu_fan_set_rpm(sc, fan, fan->unmanaged_rpm);
 
 		sensor_attach(&sc->sc_sensordev, &fan->sensor);
-	}
-
-	/*
-	 * Bail out if we didn't find any fans.  If we don't set the
-	 * fans to a safe speed, but tickle the SMU periodically by
-	 * reading sensors, the fans will never spin up and the
-	 * machine might overheat.
-	 */
-	if (sc->sc_num_fans == 0) {
-		printf(": no fans\n");
-		return;
 	}
 
 	/* Sensors */
@@ -518,18 +505,12 @@ smu_fan_set_rpm(struct smu_softc *sc, struct smu_fan *fan, u_int16_t rpm)
 {
 	struct smu_cmd *cmd = (struct smu_cmd *)sc->sc_cmd;
 
-	/*
-	 * On the PowerMac8,2 this command expects the requested fan
-	 * speed at a different location in the command block than on
-	 * the PowerMac8,1.  We simply store the value at both
-	 * locations.
-	 */
 	cmd->cmd = SMU_FAN;
-	cmd->len = 14;
+	cmd->len = 4;
 	cmd->data[0] = 0x00;	/* fan-rpm-control */
 	cmd->data[1] = 0x01 << fan->reg;
-	cmd->data[2] = cmd->data[2 + fan->reg * 2] = (rpm >> 8) & 0xff;
-	cmd->data[3] = cmd->data[3 + fan->reg * 2] = (rpm & 0xff);
+	cmd->data[2] = (rpm >> 8) & 0xff;
+	cmd->data[3] = (rpm & 0xff);
 	return smu_do_cmd(sc, 800);
 }
 

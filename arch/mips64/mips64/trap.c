@@ -1,4 +1,4 @@
-/*	$OpenBSD: trap.c,v 1.31 2006/12/24 20:30:35 miod Exp $	*/
+/*	$OpenBSD: trap.c,v 1.30 2006/05/31 20:19:39 miod Exp $	*/
 /* tracked to 1.23 */
 
 /*
@@ -1115,9 +1115,7 @@ cpu_singlestep(p)
 #define MIPS_JR_RA	0x03e00008	/* instruction code for jr ra */
 
 /* forward */
-#if !defined(DDB)
 char *fn_name(long addr);
-#endif
 void stacktrace_subr(struct trap_frame *, int (*)(const char*, ...));
 
 /*
@@ -1166,7 +1164,7 @@ loop:
 /* Jump here after a nonstandard (interrupt handler) frame */
 	stksize = 0;
 	subr = 0;
-	if (frames++ > 6) {
+	if	(frames++ > 6) {
 		(*printfn)("stackframe count exceeded\n");
 		return;
 	}
@@ -1322,16 +1320,13 @@ loop:
 	}
 
 done:
-#ifdef DDB
-	db_printsym(pc, DB_STGY_ANY, printfn);
+	(*printfn)("%s+%x ra %p sp %p (%p,%p,%p,%p)\n",
+		fn_name(subr), pc - subr, ra, sp, a0, a1, a2, a3);
+#if defined(_LP64)
+	a0 = a1 = a2 = a3 = 0x00dead0000dead00;
 #else
-	(*printfn)("%s+%x", fn_name(subr), pc - subr);
+	a0 = a1 = a2 = a3 = 0x00dead00;
 #endif
-	if (frames == 1)
-		(*printfn)(" ra %p sp %p (%p,%p,%p,%p)\n",
-		    ra, sp, a0, a1, a2, a3);
-	else
-		(*printfn)(" ra %p sp %p\n", ra, sp);
 
 	if (ra) {
 		if (pc == ra && stksize == 0)
@@ -1350,7 +1345,6 @@ done:
 	}
 }
 
-#if !defined(DDB)
 /*
  * Functions ``special'' enough to print by name
  */
@@ -1379,6 +1373,5 @@ fn_name(long addr)
 	snprintf(buf, sizeof(buf), "%x", addr);
 	return (buf);
 }
-#endif	/* !DDB */
 
-#endif /* DDB || DEBUG */
+#endif /* DDB */

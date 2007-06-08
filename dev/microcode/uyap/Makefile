@@ -1,8 +1,7 @@
-# $OpenBSD: Makefile,v 1.4 2006/11/07 23:52:45 deraadt Exp $
+# $OpenBSD: Makefile,v 1.3 2005/06/16 08:23:49 markus Exp $
 
 NOPROG=
 NOMAN=
-CC=${HOSTCC}
 
 # USB capable systems only
 .if (${MACHINE} == "i386") || (${MACHINE} == "amd64") || \

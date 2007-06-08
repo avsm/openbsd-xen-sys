@@ -1,4 +1,4 @@
-/*	$OpenBSD: autoconf.c,v 1.4 2006/11/06 19:42:52 miod Exp $	*/
+/*	$OpenBSD: autoconf.c,v 1.3 2006/11/06 19:05:31 miod Exp $	*/
 /*	$NetBSD: autoconf.c,v 1.1 2006/09/01 21:26:18 uwe Exp $	*/
 
 /*-
@@ -43,7 +43,6 @@
 
 #include <dev/cons.h>
 
-#include <machine/cpu.h>
 #include <machine/intr.h>
 
 int cold = 1;
@@ -52,6 +51,9 @@ struct device *booted_device;
 struct device *root_device;
 
 void	diskconf(void);
+#ifdef notyet
+void	dumpconf(void);
+#endif
 struct device *parsedisk(char *, int, int, dev_t *);
 void	setroot(void);
 int	findblkmajor(struct device *);
@@ -83,7 +85,9 @@ diskconf(void)
 	printf("boot device: %s\n",
 	    booted_device ? booted_device->dv_xname : "<unknown>");
 	setroot();
+#ifdef notyet
 	dumpconf();
+#endif
 }
 
 static	struct nam2blk {

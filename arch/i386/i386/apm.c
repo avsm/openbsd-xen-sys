@@ -1,4 +1,4 @@
-/*	$OpenBSD: apm.c,v 1.73 2007/02/27 15:16:30 marco Exp $	*/
+/*	$OpenBSD: apm.c,v 1.71 2006/10/19 20:46:16 deraadt Exp $	*/
 
 /*-
  * Copyright (c) 1998-2001 Michael Shalayeff. All rights reserved.
@@ -351,7 +351,7 @@ apm_resume(struct apm_softc *sc, struct apmregs *regs)
 	/* they say that some machines may require reinitializing the clock */
 	initrtclock();
 
-	inittodr(time_second);
+	inittodr(time.tv_sec);
 	/* lower bit in cx means pccard was powered down */
 	dopowerhooks(PWR_RESUME);
 	apm_record_event(sc, regs->bx);
@@ -464,7 +464,7 @@ apm_handle_event(struct apm_softc *sc, struct apmregs *regs)
 		break;
 	case APM_UPDATE_TIME:
 		DPRINTF(("update time, please\n"));
-		inittodr(time_second);
+		inittodr(time.tv_sec);
 		apm_record_event(sc, regs->bx);
 		break;
 	case APM_CRIT_SUSPEND_REQ:
@@ -638,7 +638,7 @@ void
 apm_cpu_idle(void)
 {
 	struct apmregs regs;
-	static u_int64_t call_apm = 0;
+	static int call_apm = 0;
 
 	if (!apm_cd.cd_ndevs) {	/* No APM device, wait for next interrupt */
 		__asm __volatile("sti;hlt");

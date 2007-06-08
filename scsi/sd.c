@@ -1,4 +1,4 @@
-/*	$OpenBSD: sd.c,v 1.124 2007/04/13 18:56:26 krw Exp $	*/
+/*	$OpenBSD: sd.c,v 1.115 2006/12/12 02:44:36 krw Exp $	*/
 /*	$NetBSD: sd.c,v 1.111 1997/04/02 02:29:41 mycroft Exp $	*/
 
 /*-
@@ -105,11 +105,8 @@ int	sd_reassign_blocks(struct sd_softc *, u_long);
 int	sd_interpret_sense(struct scsi_xfer *);
 int	sd_get_parms(struct sd_softc *, struct disk_parms *, int);
 void	sd_flush(struct sd_softc *, int);
-void	sd_kill_buffers(struct sd_softc *);
 
 void	viscpy(u_char *, u_char *, int);
-
-int	sd_ioctl_inquiry(struct sd_softc *, struct dk_inquiry *);
 
 struct cfattach sd_ca = {
 	sizeof(struct sd_softc), sdmatch, sdattach,
@@ -149,7 +146,9 @@ const struct scsi_inquiry_pattern sd_patterns[] = {
 #define sdlookup(unit) (struct sd_softc *)device_lookup(&sd_cd, (unit))
 
 int
-sdmatch(struct device *parent, void *match, void *aux)
+sdmatch(parent, match, aux)
+	struct device *parent;
+	void *match, *aux;
 {
 	struct scsi_attach_args *sa = aux;
 	int priority;
@@ -157,7 +156,6 @@ sdmatch(struct device *parent, void *match, void *aux)
 	(void)scsi_inqmatch(sa->sa_inqbuf,
 	    sd_patterns, sizeof(sd_patterns)/sizeof(sd_patterns[0]),
 	    sizeof(sd_patterns[0]), &priority);
-
 	return (priority);
 }
 
@@ -166,10 +164,12 @@ sdmatch(struct device *parent, void *match, void *aux)
  * a device suitable for this driver.
  */
 void
-sdattach(struct device *parent, struct device *self, void *aux)
+sdattach(parent, self, aux)
+	struct device *parent, *self;
+	void *aux;
 {
 	int error, result;
-	struct sd_softc *sd = (struct sd_softc *)self;
+	struct sd_softc *sd = (void *)self;
 	struct disk_parms *dp = &sd->params;
 	struct scsi_attach_args *sa = aux;
 	struct scsi_link *sc_link = sa->sa_sc_link;
@@ -212,10 +212,9 @@ sdattach(struct device *parent, struct device *self, void *aux)
 
 	timeout_set(&sd->sc_timeout, sdrestart, sd);
 
-	/* Spin up non-UMASS devices ready or not. */
-	if ((sd->sc_link->flags & SDEV_UMASS) == 0)
-		scsi_start(sc_link, SSS_START, scsi_autoconf | SCSI_SILENT |
-		    SCSI_IGNORE_ILLEGAL_REQUEST | SCSI_IGNORE_MEDIA_CHANGE);
+	/* Spin up the unit ready or not. */
+	scsi_start(sc_link, SSS_START, scsi_autoconf | SCSI_SILENT |
+	    SCSI_IGNORE_ILLEGAL_REQUEST | SCSI_IGNORE_MEDIA_CHANGE);
 
 	/* Check that it is still responding and ok. */
 	error = scsi_test_unit_ready(sd->sc_link, TEST_READY_RETRIES,
@@ -263,7 +262,9 @@ sdattach(struct device *parent, struct device *self, void *aux)
 }
 
 int
-sdactivate(struct device *self, enum devact act)
+sdactivate(self, act)
+	struct device *self;
+	enum devact act;
 {
 	int rv = 0;
 
@@ -277,20 +278,31 @@ sdactivate(struct device *self, enum devact act)
 		 */
 		break;
 	}
-
 	return (rv);
 }
 
 
 int
-sddetach(struct device *self, int flags)
+sddetach(self, flags)
+	struct device *self;
+	int flags;
 {
-	struct sd_softc *sd = (struct sd_softc *)self;
-	int bmaj, cmaj, mn;
+	struct sd_softc *sc = (struct sd_softc *)self;
+	struct buf *dp, *bp;
+	int s, bmaj, cmaj, mn;
 
-	sd_kill_buffers(sd);
+	/* Remove unprocessed buffers from queue */
+	s = splbio();
+	for (dp = &sc->buf_queue; (bp = dp->b_actf) != NULL; ) {
+		dp->b_actf = bp->b_actf;
 
-	/* locate the minor number */
+		bp->b_error = ENXIO;
+		bp->b_flags |= B_ERROR;
+		biodone(bp);
+	}
+	splx(s);
+
+	/* locate the major number */
 	mn = SDMINOR(self->dv_unit, 0);
 
 	for (bmaj = 0; bmaj < nblkdev; bmaj++)
@@ -301,11 +313,11 @@ sddetach(struct device *self, int flags)
 			vdevgone(cmaj, mn, mn + MAXPARTITIONS - 1, VCHR);
 
 	/* Get rid of the shutdown hook. */
-	if (sd->sc_sdhook != NULL)
-		shutdownhook_disestablish(sd->sc_sdhook);
+	if (sc->sc_sdhook != NULL)
+		shutdownhook_disestablish(sc->sc_sdhook);
 
 	/* Detach disk. */
-	disk_detach(&sd->sc_dk);
+	disk_detach(&sc->sc_dk);
 
 	return (0);
 }
@@ -314,7 +326,10 @@ sddetach(struct device *self, int flags)
  * Open the device. Make sure the partition info is as up-to-date as can be.
  */
 int
-sdopen(dev_t dev, int flag, int fmt, struct proc *p)
+sdopen(dev, flag, fmt, p)
+	dev_t dev;
+	int flag, fmt;
+	struct proc *p;
 {
 	struct scsi_link *sc_link;
 	struct sd_softc *sd;
@@ -351,11 +366,9 @@ sdopen(dev_t dev, int flag, int fmt, struct proc *p)
 			goto bad;
 		}
 	} else {
-		/* Spin up non-UMASS devices ready or not. */
-		if ((sd->sc_link->flags & SDEV_UMASS) == 0)
-			scsi_start(sc_link, SSS_START, (rawopen ? SCSI_SILENT :
-			    0) | SCSI_IGNORE_ILLEGAL_REQUEST |
-			    SCSI_IGNORE_MEDIA_CHANGE);
+		/* Spin up the unit, ready or not. */
+		scsi_start(sc_link, SSS_START, (rawopen ? SCSI_SILENT : 0) |
+		    SCSI_IGNORE_ILLEGAL_REQUEST | SCSI_IGNORE_MEDIA_CHANGE);
 
 		/* Use sd_interpret_sense() for sense errors.
 		 *
@@ -378,16 +391,14 @@ sdopen(dev_t dev, int flag, int fmt, struct proc *p)
 				goto bad;
 		}
 
-		/*
-		 * Try to prevent the unloading of a removable device while
-		 * it's open. But allow the open to proceed if the device can't
-		 * be locked in.
-		 */
-		if ((sc_link->flags & SDEV_REMOVABLE) != 0)
-			scsi_prevent(sc_link, PR_PREVENT,
+		/* Lock the pack in. */
+		if ((sc_link->flags & SDEV_REMOVABLE) != 0) {
+			error = scsi_prevent(sc_link, PR_PREVENT,
 			    SCSI_IGNORE_ILLEGAL_REQUEST |
 			    SCSI_IGNORE_MEDIA_CHANGE);
-
+			if (error)
+				goto bad;
+		}
 		/* Load the physical device parameters. */
 		sc_link->flags |= SDEV_MEDIA_LOADED;
 		if (sd_get_parms(sd, &sd->params, (rawopen ? SCSI_SILENT : 0))
@@ -444,7 +455,10 @@ bad:
  * device.  Convenient now but usually a pain.
  */
 int
-sdclose(dev_t dev, int flag, int fmt, struct proc *p)
+sdclose(dev, flag, fmt, p)
+	dev_t dev;
+	int flag, fmt;
+	struct proc *p;
 {
 	struct sd_softc *sd;
 	int part = SDPART(dev);
@@ -481,6 +495,7 @@ sdclose(dev_t dev, int flag, int fmt, struct proc *p)
 
 		if (sd->sc_link->flags & SDEV_EJECTING) {
 			scsi_start(sd->sc_link, SSS_STOP|SSS_LOEJ, 0);
+
 			sd->sc_link->flags &= ~SDEV_EJECTING;
 		}
 
@@ -498,7 +513,8 @@ sdclose(dev_t dev, int flag, int fmt, struct proc *p)
  * only one physical transfer.
  */
 void
-sdstrategy(struct buf *bp)
+sdstrategy(bp)
+	struct buf *bp;
 {
 	struct sd_softc *sd;
 	int s;
@@ -593,10 +609,11 @@ done:
  * sdstart() is called at splbio from sdstrategy, sdrestart and scsi_done
  */
 void
-sdstart(void *v)
+sdstart(v)
+	void *v;
 {
-	struct sd_softc *sd = (struct sd_softc *)v;
-	struct scsi_link *sc_link = sd->sc_link;
+	struct sd_softc *sd = v;
+	struct	scsi_link *sc_link = sd->sc_link;
 	struct buf *bp = 0;
 	struct buf *dp;
 	struct scsi_rw_big cmd_big;
@@ -729,7 +746,8 @@ sdstart(void *v)
 }
 
 void
-sdrestart(void *v)
+sdrestart(v)
+	void *v;
 {
 	int s;
 
@@ -739,7 +757,8 @@ sdrestart(void *v)
 }
 
 void
-sddone(struct scsi_xfer *xs)
+sddone(xs)
+	struct scsi_xfer *xs;
 {
 	struct sd_softc *sd = xs->sc_link->device_softc;
 
@@ -754,7 +773,8 @@ sddone(struct scsi_xfer *xs)
 }
 
 void
-sdminphys(struct buf *bp)
+sdminphys(bp)
+	struct buf *bp;
 {
 	struct sd_softc *sd;
 	long max;
@@ -787,14 +807,22 @@ sdminphys(struct buf *bp)
 }
 
 int
-sdread(dev_t dev, struct uio *uio, int ioflag)
+sdread(dev, uio, ioflag)
+	dev_t dev;
+	struct uio *uio;
+	int ioflag;
 {
+
 	return (physio(sdstrategy, NULL, dev, B_READ, sdminphys, uio));
 }
 
 int
-sdwrite(dev_t dev, struct uio *uio, int ioflag)
+sdwrite(dev, uio, ioflag)
+	dev_t dev;
+	struct uio *uio;
+	int ioflag;
 {
+
 	return (physio(sdstrategy, NULL, dev, B_WRITE, sdminphys, uio));
 }
 
@@ -803,7 +831,12 @@ sdwrite(dev_t dev, struct uio *uio, int ioflag)
  * Knows about the internals of this device
  */
 int
-sdioctl(dev_t dev, u_long cmd, caddr_t addr, int flag, struct proc *p)
+sdioctl(dev, cmd, addr, flag, p)
+	dev_t dev;
+	u_long cmd;
+	caddr_t addr;
+	int flag;
+	struct proc *p;
 {
 	struct sd_softc *sd;
 	int error = 0;
@@ -918,13 +951,6 @@ sdioctl(dev_t dev, u_long cmd, caddr_t addr, int flag, struct proc *p)
 		sd->sc_link->flags |= SDEV_EJECTING;
 		goto exit;
 
-	case DIOCINQ:
-		error = scsi_do_ioctl(sd->sc_link, dev, cmd, addr, flag, p);
-		if (error == ENOTTY)
-			error = sd_ioctl_inquiry(sd,
-			    (struct dk_inquiry *)addr);
-		goto exit;
-
 	default:
 		if (part != RAW_PART) {
 			error = ENOTTY;
@@ -938,33 +964,16 @@ sdioctl(dev_t dev, u_long cmd, caddr_t addr, int flag, struct proc *p)
 	return (error);
 }
 
-int
-sd_ioctl_inquiry(struct sd_softc *sd, struct dk_inquiry *di)
-{
-	struct scsi_inquiry_vpd vpd;
-
-	bzero(di, sizeof(struct dk_inquiry));
-	scsi_strvis(di->vendor, sd->sc_link->inqdata.vendor,
-	    sizeof(sd->sc_link->inqdata.vendor));
-	scsi_strvis(di->product, sd->sc_link->inqdata.product,
-	    sizeof(sd->sc_link->inqdata.product));
-	scsi_strvis(di->revision, sd->sc_link->inqdata.revision,
-	    sizeof(sd->sc_link->inqdata.revision));
-
-	/* the serial vpd page is optional */
-	if (scsi_inquire_vpd(sd->sc_link, &vpd, sizeof(vpd),
-	    SI_PG_SERIAL, 0) == 0)
-		scsi_strvis(di->serial, vpd.serial, sizeof(vpd.serial));
-
-	return (0);
-}
-
 /*
  * Load the label information on the named device
  */
 void
-sdgetdisklabel(dev_t dev, struct sd_softc *sd, struct disklabel *lp,
-    struct cpu_disklabel *clp, int spoofonly)
+sdgetdisklabel(dev, sd, lp, clp, spoofonly)
+	dev_t dev;
+	struct sd_softc *sd;
+	struct disklabel *lp;
+	struct cpu_disklabel *clp;
+	int spoofonly;
 {
 	size_t len;
 	char *errstring, packname[sizeof(lp->d_packname) + 1];
@@ -1036,14 +1045,16 @@ sdgetdisklabel(dev_t dev, struct sd_softc *sd, struct disklabel *lp,
 	    spoofonly);
 	if (errstring) {
 		/*printf("%s: %s\n", sd->sc_dev.dv_xname, errstring);*/
+		return;
 	}
 }
 
 
 void
-sd_shutdown(void *arg)
+sd_shutdown(arg)
+	void *arg;
 {
-	struct sd_softc *sd = (struct sd_softc *)arg;
+	struct sd_softc *sd = arg;
 
 	/*
 	 * If the disk cache needs to be flushed, and the disk supports
@@ -1060,7 +1071,9 @@ sd_shutdown(void *arg)
  * Tell the device to map out a defective block
  */
 int
-sd_reassign_blocks(struct sd_softc *sd, u_long blkno)
+sd_reassign_blocks(sd, blkno)
+	struct sd_softc *sd;
+	u_long blkno;
 {
 	struct scsi_reassign_blocks scsi_cmd;
 	struct scsi_reassign_blocks_data rbdata;
@@ -1081,7 +1094,8 @@ sd_reassign_blocks(struct sd_softc *sd, u_long blkno)
  * Check Errors
  */
 int
-sd_interpret_sense(struct scsi_xfer *xs)
+sd_interpret_sense(xs)
+	struct scsi_xfer *xs;
 {
 	struct scsi_sense_data *sense = &xs->sense;
 	struct scsi_link *sc_link = xs->sc_link;
@@ -1125,7 +1139,8 @@ sd_interpret_sense(struct scsi_xfer *xs)
 }
 
 int
-sdsize(dev_t dev)
+sdsize(dev)
+	dev_t dev;
 {
 	struct sd_softc *sd;
 	int part, omask;
@@ -1166,7 +1181,11 @@ static int sddoingadump;
  * at offset 'dumplo' into the partition.
  */
 int
-sddump(dev_t dev, daddr_t blkno, caddr_t va, size_t size)
+sddump(dev, blkno, va, size)
+	dev_t dev;
+	daddr_t blkno;
+	caddr_t va;
+	size_t size;
 {
 	struct sd_softc *sd;	/* disk unit to do the I/O */
 	struct disklabel *lp;	/* disk's disklabel */
@@ -1281,7 +1300,10 @@ sddump(dev_t dev, daddr_t blkno, caddr_t va, size_t size)
  * Does not assume src is NUL-terminated.
  */
 void
-viscpy(u_char *dst, u_char *src, int len)
+viscpy(dst, src, len)
+	u_char *dst;
+	u_char *src;
+	int len;
 {
 	while (len > 0 && *src != '\0') {
 		if (*src < 0x20 || *src >= 0x80) {
@@ -1301,7 +1323,10 @@ viscpy(u_char *dst, u_char *src, int len)
  * cannot be completed.
  */
 int
-sd_get_parms(struct sd_softc *sd, struct disk_parms *dp, int flags)
+sd_get_parms(sd, dp, flags)
+	struct sd_softc *sd;
+	struct disk_parms *dp;
+	int flags;
 {
 	union scsi_mode_sense_buf *buf = NULL;
 	struct page_rigid_geometry *rigid;
@@ -1412,11 +1437,12 @@ validate:
 	}
 
 	/*
-	 * Use standard geometry values for anything we still don't know.
+	 * Use Adaptec standard geometry values for anything we still don't
+	 * know.
 	 */
 
-	dp->heads = (heads == 0) ? 255 : heads;
-	dp->sectors = (sectors == 0) ? 63 : sectors;
+	dp->heads = (heads == 0) ? 64 : heads;
+	dp->sectors = (sectors == 0) ? 32 : sectors;
 	dp->rot_rate = (rpm == 0) ? 3600 : rpm;
 
 	/*
@@ -1432,7 +1458,9 @@ validate:
 }
 
 void
-sd_flush(struct sd_softc *sd, int flags)
+sd_flush(sd, flags)
+	struct sd_softc *sd;
+	int flags;
 {
 	struct scsi_link *sc_link = sd->sc_link;
 	struct scsi_synchronize_cache sync_cmd;
@@ -1465,24 +1493,4 @@ sd_flush(struct sd_softc *sd, int flags)
 		else
 			sd->flags |= SDF_FLUSHING;
 	}
-}
-
-/*
- * Remove unprocessed buffers from queue.
- */
-void
-sd_kill_buffers(struct sd_softc *sd)
-{
-	struct buf *dp, *bp;
-	int s;
-
-	s = splbio();
-	for (dp = &sd->buf_queue; (bp = dp->b_actf) != NULL; ) {
-		dp->b_actf = bp->b_actf;
-
-		bp->b_error = ENXIO;
-		bp->b_flags |= B_ERROR;
-		biodone(bp);
-	}
-	splx(s);
 }

@@ -1,4 +1,4 @@
-/*	$OpenBSD: msdosfs_vnops.c,v 1.61 2007/03/21 17:29:32 thib Exp $	*/
+/*	$OpenBSD: msdosfs_vnops.c,v 1.58 2006/10/16 11:27:53 pedro Exp $	*/
 /*	$NetBSD: msdosfs_vnops.c,v 1.63 1997/10/17 11:24:19 ws Exp $	*/
 
 /*-
@@ -1480,7 +1480,7 @@ msdosfs_readdir(v)
 	struct uio *uio = ap->a_uio;
 	u_long *cookies = NULL;
 	int ncookies = 0;
-	off_t offset, wlast = -1;
+	off_t offset;
 	int chksum = -1;
 
 #ifdef MSDOSFS_DEBUG
@@ -1616,7 +1616,6 @@ msdosfs_readdir(v)
 			 */
 			if (dentp->deName[0] == SLOT_DELETED) {
 				chksum = -1;
-				wlast = -1;
 				continue;
 			}
 
@@ -1624,13 +1623,9 @@ msdosfs_readdir(v)
 			 * Handle Win95 long directory entries
 			 */
 			if (dentp->deAttributes == ATTR_WIN95) {
-				struct winentry *wep;
 				if (pmp->pm_flags & MSDOSFSMNT_SHORTNAME)
 					continue;
-				wep = (struct winentry *)dentp;
-				chksum = win2unixfn(wep, &dirbuf, chksum);
-				if (wep->weCnt & WIN_LAST)
-					wlast = offset;
+				chksum = win2unixfn((struct winentry *)dentp, &dirbuf, chksum);
 				continue;
 			}
 
@@ -1639,7 +1634,6 @@ msdosfs_readdir(v)
 			 */
 			if (dentp->deAttributes & ATTR_VOLUME) {
 				chksum = -1;
-				wlast = -1;
 				continue;
 			}
 
@@ -1689,12 +1683,8 @@ msdosfs_readdir(v)
 			dirbuf.d_reclen = DIRENT_SIZE(&dirbuf);
 			if (uio->uio_resid < dirbuf.d_reclen) {
 				brelse(bp);
-				/* Remember long-name offset. */
-				if (wlast != -1)
-					offset = wlast;
 				goto out;
 			}
-			wlast = -1;
 			error = uiomove((caddr_t) &dirbuf,
 					dirbuf.d_reclen, uio);
 			if (error) {
@@ -1755,7 +1745,7 @@ msdosfs_lock(v)
 	} */ *ap = v;
 	struct vnode *vp = ap->a_vp;
 
-	return (lockmgr(&VTODE(vp)->de_lock, ap->a_flags, NULL));
+	return (lockmgr(&VTODE(vp)->de_lock, ap->a_flags, &vp->v_interlock));
 }
 
 int
@@ -1767,7 +1757,8 @@ msdosfs_unlock(v)
 	} */ *ap = v;
 	struct vnode *vp = ap->a_vp;
 
-	return (lockmgr(&VTODE(vp)->de_lock, ap->a_flags | LK_RELEASE, NULL));
+	return (lockmgr(&VTODE(vp)->de_lock, ap->a_flags | LK_RELEASE,
+	    &vp->v_interlock));
 }
 
 int
@@ -1813,6 +1804,21 @@ msdosfs_bmap(v)
 		*ap->a_runp = 0;
 	}
 	return (pcbmap(dep, de_bn2cn(pmp, ap->a_bn), ap->a_bnp, 0, 0));
+}
+
+int
+msdosfs_reallocblks(v)
+	void *v;
+{
+#if 0
+	struct vop_reallocblks_args /* {
+		struct vnode *a_vp;
+		struct cluster_save *a_buflist;
+	} */ *ap = v;
+#endif
+
+	/* Currently no support for clustering */		/* XXX */
+	return (ENOSPC);
 }
 
 int
@@ -1993,6 +1999,7 @@ struct vnodeopv_entry_desc msdosfs_vnodeop_entries[] = {
 	{ &vop_islocked_desc, msdosfs_islocked },	/* islocked */
 	{ &vop_pathconf_desc, msdosfs_pathconf },	/* pathconf */
 	{ &vop_advlock_desc, msdosfs_advlock },		/* advlock */
+	{ &vop_reallocblks_desc, msdosfs_reallocblks },	/* reallocblks */
 	{ &vop_bwrite_desc, vop_generic_bwrite },		/* bwrite */
 	{ (struct vnodeop_desc *)NULL, (int (*)(void *))NULL }
 };

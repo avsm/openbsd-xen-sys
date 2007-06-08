@@ -1,4 +1,4 @@
-/*	$OpenBSD: linux_misc.c,v 1.59 2006/10/08 19:49:57 sturm Exp $	*/
+/*	$OpenBSD: linux_misc.c,v 1.58 2005/02/17 18:07:36 jfb Exp $	*/
 /*	$NetBSD: linux_misc.c,v 1.27 1996/05/20 01:59:21 fvdl Exp $	*/
 
 /*-
@@ -185,7 +185,7 @@ linux_sys_wait4(p, v, retval)
 	if ((error = sys_wait4(p, &w4a, retval)))
 		return error;
 
-	atomic_clearbits_int(&p->p_siglist, sigmask(SIGCHLD));
+	p->p_siglist &= ~sigmask(SIGCHLD);
 
 	if (status != NULL) {
 		if ((error = copyin(status, &tstat, sizeof tstat)))

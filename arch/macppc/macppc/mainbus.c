@@ -1,4 +1,4 @@
-/*	$OpenBSD: mainbus.c,v 1.18 2007/03/31 08:31:02 kettenis Exp $	*/
+/*	$OpenBSD: mainbus.c,v 1.14 2005/10/31 06:14:53 drahn Exp $	*/
 
 /*
  * Copyright (c) 1994, 1995 Carnegie-Mellon University.
@@ -54,9 +54,7 @@ struct cfdriver mainbus_cd = {
 };
 
 /* hw.product sysctl see sys/kern/kern_sysctl.c */
-extern char *hw_prod, *hw_ver, *hw_vendor;
-
-#define HH_REG_CONF 	0x90
+extern char *hw_prod;
 
 void	mb_intr_establish(struct confargs *, int (*)(void *), void *);
 void	mb_intr_disestablish(struct confargs *);
@@ -79,38 +77,20 @@ mbattach(struct device *parent, struct device *self, void *aux)
 {
 	struct mainbus_softc *sc = (struct mainbus_softc *)self;
 	struct confargs nca;
-	char name[64], *t = NULL;
-	int reg[4], cpucnt;
-	int node, len, slen;
+	char name[64];
+	int node, len;
 
 	node = OF_peer(0);
 	len = OF_getprop(node, "model", name, sizeof(name));
 	if (len > 1) {
 		name[len] = '\0';
-		slen = strlen(name)+1;
-		if ((t = malloc(slen, M_DEVBUF, M_NOWAIT)) != NULL)
-			strlcpy(t, name, slen);
-
+		printf(": model %s", name);
+		len = strlen(name)+1;
+		if ((hw_prod = malloc(len, M_DEVBUF, M_NOWAIT)) != NULL)
+			strlcpy(hw_prod, name, len);	
 	}
 
-	len = OF_getprop(node, "compatible", name, sizeof(name));
-	if (len > 1) {
-		name[len] = '\0';
-		/* Old World Macintosh */
-		if ((strncmp(name, "AAPL", 4)) == 0) {
-			hw_vendor = "Apple Computer, Inc.";
-			slen = strlen(t) + strlen(name) - 3;
-			if ((hw_prod = malloc(slen, M_DEVBUF, M_NOWAIT)) != NULL) {
-				snprintf(hw_prod, slen, "%s %s", t, name + 5);
-				free(t, M_DEVBUF);
-			}
-		} else {
-			/* New World Macintosh or Unknown */
-			hw_vendor = "Apple Computer, Inc.";
-			hw_prod = t;
-		}
-	}
-	printf(": model %s\n", hw_prod);
+	printf("\n");
 
 	sc->sc_bus.bh_dv = (struct device *)sc;
 	sc->sc_bus.bh_type = BUS_MAIN;
@@ -120,56 +100,18 @@ mbattach(struct device *parent, struct device *self, void *aux)
 
 	/*
 	 * Try to find and attach all of the CPUs in the machine.
+	 * ( Right now only one CPU so code is simple )
 	 */
 
-	cpucnt = 0;
-	node = OF_finddevice("/cpus");
-	if (node != -1) {
-		for (node = OF_child(node); node != 0; node = OF_peer(node)) {
-			u_int32_t cpunum;
-			int len;
-			len = OF_getprop(node, "reg", &cpunum, sizeof cpunum);
-			if (len == 4 && cpucnt == cpunum) {
-				nca.ca_name = "cpu";
-				nca.ca_bus = &sc->sc_bus;
-				nca.ca_reg = reg;
-				reg[0] = cpucnt;
-				config_found(self, &nca, mbprint);
-				cpucnt++;
-			}
-		}
-	}
-	if (cpucnt == 0) {
-		nca.ca_name = "cpu";
+	nca.ca_name = "cpu";
+	nca.ca_bus = &sc->sc_bus;
+	config_found(self, &nca, mbprint);
+
+	/* Set up Openfirmware.*/
+	{ /* legacy? */
+		nca.ca_name = "ofroot";
 		nca.ca_bus = &sc->sc_bus;
-		nca.ca_reg = reg;
-		reg[0] = 0;
 		config_found(self, &nca, mbprint);
-	}
-
-	/*
-	 * Special hack for SMP old world macs which lack /cpus and only have
-	 * one cpu node.
-	 */
-	node = OF_finddevice("/hammerhead");
-	if (node != -1) {
-		len = OF_getprop(node, "reg", reg, sizeof(reg));
-		if (len >= 2) {
-			u_char *hh_base;
-			int twoway = 0;
-
-			if ((hh_base = mapiodev(reg[0], reg[1])) != NULL) {
-				twoway = in32rb(hh_base + HH_REG_CONF) & 0x02;
-				unmapiodev(hh_base, reg[1]);
-			}
-			if (twoway) {
-				nca.ca_name = "cpu";
-				nca.ca_bus = &sc->sc_bus;
-				nca.ca_reg = reg;
-				reg[0] = 1;
-				config_found(self, &nca, mbprint);
-			}
-		}
 	}
 
 	for (node = OF_child(OF_peer(0)); node; node=OF_peer(node)) {
@@ -212,10 +154,8 @@ mbattach(struct device *parent, struct device *self, void *aux)
 static int
 mbprint(void *aux, const char *pnp)
 {
-	struct confargs *ca = aux;
 	if (pnp)
-		printf("%s at %s", ca->ca_name, pnp);
-
+		return (QUIET);
 	return (UNCONF);
 }
 

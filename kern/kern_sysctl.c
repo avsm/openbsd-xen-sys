@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_sysctl.c,v 1.149 2007/03/22 16:55:31 deraadt Exp $	*/
+/*	$OpenBSD: kern_sysctl.c,v 1.146 2006/12/23 17:41:26 deraadt Exp $	*/
 /*	$NetBSD: kern_sysctl.c,v 1.17 1996/05/20 17:49:05 mrg Exp $	*/
 
 /*-
@@ -1175,7 +1175,6 @@ fill_eproc(struct proc *p, struct eproc *ep)
 	strncpy(ep->e_emul, p->p_emul->e_name, EMULNAMELEN);
 	ep->e_emul[EMULNAMELEN] = '\0';
 	ep->e_maxrss = p->p_rlimit ? p->p_rlimit[RLIMIT_RSS].rlim_cur : 0;
-	ep->e_limit = p->p_p->ps_limit;
 }
 
 #ifndef	SMALL_KERNEL
@@ -1194,7 +1193,7 @@ fill_kproc2(struct proc *p, struct kinfo_proc2 *ki)
 	ki->p_paddr = PTRTOINT64(p);
 	ki->p_fd = PTRTOINT64(p->p_fd);
 	ki->p_stats = PTRTOINT64(p->p_stats);
-	ki->p_limit = PTRTOINT64(p->p_p->ps_limit);
+	ki->p_limit = PTRTOINT64(p->p_limit);
 	ki->p_vmspace = PTRTOINT64(p->p_vmspace);
 	ki->p_sigacts = PTRTOINT64(p->p_sigacts);
 	ki->p_sess = PTRTOINT64(p->p_session);
@@ -1777,59 +1776,33 @@ int
 sysctl_sensors(int *name, u_int namelen, void *oldp, size_t *oldlenp,
     void *newp, size_t newlen)
 {
-	struct ksensor *ks;
-	struct sensor *us;
-	struct ksensordev *ksd;
-	struct sensordev *usd;
-	int dev, numt, ret;
+	struct sensor *s;
+	struct sensordev *sd;
+	int dev;
 	enum sensor_type type;
+	int numt;
 
 	if (namelen != 1 && namelen != 3)
 		return (ENOTDIR);
 
 	dev = name[0];
 	if (namelen == 1) {
-		ksd = sensordev_get(dev);
-		if (ksd == NULL)
+		sd = sensordev_get(dev);
+		if (sd == NULL)
 			return (ENOENT);
 
-		/* Grab a copy, to clear the kernel pointers */
-		usd = malloc(sizeof(*usd), M_TEMP, M_WAITOK);
-		bzero(usd, sizeof(*usd));
-		usd->num = ksd->num;
-		strlcpy(usd->xname, ksd->xname, sizeof(usd->xname));
-		memcpy(usd->maxnumt, ksd->maxnumt, sizeof(usd->maxnumt));
-		usd->sensors_count = ksd->sensors_count;
-
-		ret = sysctl_rdstruct(oldp, oldlenp, newp, usd,
-		    sizeof(struct sensordev));
-
-		free(usd, M_TEMP);
-		return (ret);
+		return (sysctl_rdstruct(oldp, oldlenp, newp, sd,
+		    sizeof(struct sensordev)));
 	}
 
 	type = name[1];
 	numt = name[2];
 
-	ks = sensor_find(dev, type, numt);
-	if (ks == NULL)
+	s = sensor_find(dev, type, numt);
+	if (s == NULL)
 		return (ENOENT);
 
-	/* Grab a copy, to clear the kernel pointers */
-	us = malloc(sizeof(*us), M_TEMP, M_WAITOK);
-	bzero(us, sizeof(*us));
-	memcpy(us->desc, ks->desc, sizeof(ks->desc));
-	us->tv = ks->tv;
-	us->value = ks->value;
-	us->type = ks->type;
-	us->status = ks->status;
-	us->numt = ks->numt;
-	us->flags = ks->flags;
-
-	ret = sysctl_rdstruct(oldp, oldlenp, newp, us,
-	    sizeof(struct sensor));
-	free(us, M_TEMP);
-	return (ret);
+	return (sysctl_rdstruct(oldp, oldlenp, newp, s, sizeof(struct sensor)));
 }
 
 int

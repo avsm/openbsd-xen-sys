@@ -1,4 +1,4 @@
-/*	$OpenBSD: pci_machdep.c,v 1.27 2007/04/01 12:26:15 kettenis Exp $	*/
+/*	$OpenBSD: pci_machdep.c,v 1.25 2006/06/27 21:22:14 kettenis Exp $	*/
 /*	$NetBSD: pci_machdep.c,v 1.22 2001/07/20 00:07:13 eeh Exp $	*/
 
 /*
@@ -278,6 +278,21 @@ sparc64_pci_enumerate_bus(struct pci_softc *sc,
 	    (cacheline/cacheinfo.ec_linesize)*cacheinfo.ec_linesize == cacheline &&
 	    (cacheline/4)*4 == cacheline);
 
+	/* Turn on parity for the bus. */
+	tag = PCITAG_CREATE(node, sc->sc_bus, 0, 0);
+	csr = pci_conf_read(pc, tag, PCI_COMMAND_STATUS_REG);
+	csr |= PCI_COMMAND_PARITY_ENABLE;
+	pci_conf_write(pc, tag, PCI_COMMAND_STATUS_REG, csr);
+
+	/*
+	 * Initialize the latency timer register.
+	 * The value 0x40 is from Solaris.
+	 */
+	bhlc = pci_conf_read(pc, tag, PCI_BHLC_REG);
+	bhlc &= ~(PCI_LATTIMER_MASK << PCI_LATTIMER_SHIFT);
+	bhlc |= 0x40 << PCI_LATTIMER_SHIFT;
+	pci_conf_write(pc, tag, PCI_BHLC_REG, bhlc);
+
 	for (node = OF_child(node); node != 0 && node != -1;
 	     node = OF_peer(node)) {
 		name[0] = name[29] = 0;
@@ -352,7 +367,7 @@ pci_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int reg)
                 (long)PCITAG_OFFSET(tag), reg));
         if (PCITAG_NODE(tag) != -1) {
                 val = bus_space_read_4(pc->bustag, pc->bushandle,
-                        (PCITAG_OFFSET(tag) << pc->tagshift) + reg);
+                        PCITAG_OFFSET(tag) + reg);
         } else
 		DPRINTF(SPDB_CONF, ("pci_conf_read: bogus pcitag %x\n",
 	            (int)PCITAG_OFFSET(tag)));
@@ -374,7 +389,7 @@ pci_conf_write(pci_chipset_tag_t pc, pcitag_t tag, int reg, pcireg_t data)
         }
 
         bus_space_write_4(pc->bustag, pc->bushandle,
-                (PCITAG_OFFSET(tag) << pc->tagshift) + reg, data);
+                PCITAG_OFFSET(tag) + reg, data);
 }
 
 /*

@@ -1,4 +1,4 @@
-/*	$OpenBSD: openpic.c,v 1.36 2007/03/01 15:00:57 mickey Exp $	*/
+/*	$OpenBSD: openpic.c,v 1.34 2006/03/12 02:49:50 brad Exp $	*/
 
 /*-
  * Copyright (c) 1995 Per Fogelstrom
@@ -451,21 +451,21 @@ cntlzw(int x)
 void
 openpic_do_pending_int()
 {
-	struct cpu_info *ci = curcpu();
 	struct intrhand *ih;
 	int irq;
 	int pcpl;
 	int hwpend;
 	int s;
+	static int processing;
 
-	if (ci->ci_iactive)
+	if (processing)
 		return;
 
-	ci->ci_iactive = 1;
+	processing = 1;
 	pcpl = splhigh();		/* Turn off all */
 	s = ppc_intr_disable();
 
-	hwpend = ci->ci_ipending & ~pcpl;	/* Do now unmasked pendings */
+	hwpend = ipending & ~pcpl;	/* Do now unmasked pendings */
 	imen_o &= ~hwpend;
 	openpic_enable_irq_mask(~imen_o);
 	hwpend &= HWIRQ_MASK;
@@ -488,26 +488,26 @@ openpic_do_pending_int()
 	/*out32rb(INT_ENABLE_REG, ~imen_o);*/
 
 	do {
-		if((ci->ci_ipending & SINT_CLOCK) & ~pcpl) {
-			ci->ci_ipending &= ~SINT_CLOCK;
+		if((ipending & SINT_CLOCK) & ~pcpl) {
+			ipending &= ~SINT_CLOCK;
 			softclock();
 		}
-		if((ci->ci_ipending & SINT_NET) & ~pcpl) {
+		if((ipending & SINT_NET) & ~pcpl) {
 			extern int netisr;
 			int pisr = netisr;
 			netisr = 0;
-			ci->ci_ipending &= ~SINT_NET;
+			ipending &= ~SINT_NET;
 			softnet(pisr);
 		}
-		if((ci->ci_ipending & SINT_TTY) & ~pcpl) {
-			ci->ci_ipending &= ~SINT_TTY;
+		if((ipending & SINT_TTY) & ~pcpl) {
+			ipending &= ~SINT_TTY;
 			softtty();
 		}
-	} while ((ci->ci_ipending & SINT_MASK) & ~pcpl);
-	ci->ci_ipending &= pcpl;
-	ci->ci_cpl = pcpl;	/* Don't use splx... we are here already! */
+	} while (ipending & (SINT_NET|SINT_CLOCK|SINT_TTY) & ~cpl);
+	ipending &= pcpl;
+	cpl = pcpl;	/* Don't use splx... we are here already! */
 	ppc_intr_enable(s);
-	ci->ci_iactive = 0;
+	processing = 0;
 }
 
 u_int
@@ -602,13 +602,12 @@ openpic_eoi(int cpu)
 void
 ext_intr_openpic()
 {
-	struct cpu_info *ci = curcpu();
 	int irq, realirq;
 	int r_imen;
 	int pcpl, ocpl;
 	struct intrhand *ih;
 
-	pcpl = ci->ci_cpl;
+	pcpl = cpl;
 
 	realirq = openpic_read_irq(0);
 
@@ -620,8 +619,7 @@ ext_intr_openpic()
 		r_imen = 1 << irq;
 
 		if ((pcpl & r_imen) != 0) {
-			/* Masked! Mark this as pending. */
-			ci->ci_ipending |= r_imen;
+			ipending |= r_imen;	/* Masked! Mark this as pending */
 			openpic_disable_irq(realirq);
 			openpic_eoi(0);
 		} else {
@@ -642,7 +640,7 @@ ext_intr_openpic()
 
 			uvmexp.intrs++;
 			__asm__ volatile("":::"memory"); /* don't reorder.... */
-			ci->ci_cpl = ocpl;
+			cpl = ocpl;
 			__asm__ volatile("":::"memory"); /* don't reorder.... */
 			openpic_enable_irq(realirq);
 		}

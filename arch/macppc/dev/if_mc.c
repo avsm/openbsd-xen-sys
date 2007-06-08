@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_mc.c,v 1.8 2007/03/23 17:17:23 gwk Exp $	*/
+/*	$OpenBSD: if_mc.c,v 1.6 2006/12/31 20:53:04 gwk Exp $	*/
 /*	$NetBSD: if_mc.c,v 1.9.16.1 2006/06/21 14:53:13 yamt Exp $	*/
 
 /*-
@@ -363,8 +363,8 @@ mc_attach(struct device *parent, struct device *self, void *aux)
 	u_int8_t lladdr[ETHER_ADDR_LEN];
 	int nseg, error;
 
-	if (OF_getprop(ca->ca_node, "local-mac-address", lladdr,
-	    ETHER_ADDR_LEN) != ETHER_ADDR_LEN) {
+	if (OF_getprop(ca->ca_node, "local-mac-address", lladdr, ETHER_ADDR_LEN)
+	     != ETHER_ADDR_LEN) {
 		printf(": failed to get MAC address.\n");
 		return;
 	}
@@ -373,64 +373,57 @@ mc_attach(struct device *parent, struct device *self, void *aux)
 	ca->ca_reg[2] += ca->ca_baseaddr;
 	ca->ca_reg[4] += ca->ca_baseaddr;
 
-	if ((sc->sc_reg = mapiodev(ca->ca_reg[0], ca->ca_reg[1])) == NULL) {
-		printf(": cannot map registers\n");
+	sc->sc_reg = mapiodev(ca->ca_reg[0], ca->ca_reg[1]);
+	sc->sc_dmat = ca->ca_dmat;
+	sc->sc_txdma = mapiodev(ca->ca_reg[2], ca->ca_reg[3]);
+	sc->sc_rxdma = mapiodev(ca->ca_reg[4], ca->ca_reg[5]);
+
+	sc->sc_txdbdma = dbdma_alloc(sc->sc_dmat, 2);
+	sc->sc_tail = 0;
+	sc->sc_txdmacmd = sc->sc_txdbdma->d_addr;
+	sc->sc_rxdbdma = dbdma_alloc(sc->sc_dmat, 8 + 1);
+	sc->sc_rxdmacmd = sc->sc_rxdbdma->d_addr;
+
+	error = bus_dmamem_alloc(sc->sc_dmat, MACE_BUFSZ,
+	    PAGE_SIZE, 0, sc->sc_bufseg, 1, &nseg, BUS_DMA_NOWAIT);
+	if (error) {
+		printf(": cannot allocate buffers (%d)\n", error);
 		return;
 	}
 
-	sc->sc_dmat = ca->ca_dmat;
-	sc->sc_tail = 0;
-
-	if ((sc->sc_txdma = mapiodev(ca->ca_reg[2], ca->ca_reg[3])) == NULL) {
-		printf(": cannot map TX DMA registers\n");
-		goto notxdma;
-	}
-	if ((sc->sc_rxdma = mapiodev(ca->ca_reg[4], ca->ca_reg[5])) == NULL) {
-		printf(": cannot map RX DMA registers\n");
-		goto norxdma;
-	}
-	if ((sc->sc_txdbdma = dbdma_alloc(sc->sc_dmat, 2)) == NULL) {
-		printf(": cannot alloc TX DMA descriptors\n");
-		goto notxdbdma;
-	}
-	sc->sc_txdmacmd = sc->sc_txdbdma->d_addr;
-
-	if ((sc->sc_rxdbdma = dbdma_alloc(sc->sc_dmat, 8 + 1)) == NULL) {
-		printf(": cannot alloc RX DMA descriptors\n");
-		goto norxdbdma;
-	}
-	sc->sc_rxdmacmd = sc->sc_rxdbdma->d_addr;
-
-	if ((error = bus_dmamem_alloc(sc->sc_dmat, MACE_BUFSZ, PAGE_SIZE, 0,
-	    sc->sc_bufseg, 1, &nseg, BUS_DMA_NOWAIT))) {
-		printf(": cannot allocate DMA mem (%d)\n", error);
-		goto nodmamem;
+	error = bus_dmamem_map(sc->sc_dmat, sc->sc_bufseg, nseg,
+	    MACE_BUFSZ, &sc->sc_txbuf, BUS_DMA_NOWAIT);
+	if (error) {
+		printf(": cannot map buffers (%d)\n", error);
+		bus_dmamem_free(sc->sc_dmat, sc->sc_bufseg, 1);
+		return;
 	}
 
-	if ((error = bus_dmamem_map(sc->sc_dmat, sc->sc_bufseg, nseg,
-	    MACE_BUFSZ, &sc->sc_txbuf, BUS_DMA_NOWAIT))) {
-		printf(": cannot map DMA mem (%d)\n", error);
-		goto nodmamap;
+	error = bus_dmamap_create(sc->sc_dmat, MACE_BUFSZ, 1, MACE_BUFSZ, 0,
+	    BUS_DMA_NOWAIT | BUS_DMA_ALLOCNOW, &sc->sc_bufmap);
+	if (error) {
+		printf(": cannot create buffer dmamap (%d)\n", error);
+		bus_dmamem_unmap(sc->sc_dmat, sc->sc_txbuf, MACE_BUFSZ);
+		bus_dmamem_free(sc->sc_dmat, sc->sc_bufseg, 1);
+		return;
 	}
 
-	if ((error = bus_dmamap_create(sc->sc_dmat, MACE_BUFSZ, 1, MACE_BUFSZ,
-	    0, BUS_DMA_NOWAIT | BUS_DMA_ALLOCNOW, &sc->sc_bufmap))) {
-		printf(": cannot create DMA map (%d)\n", error);
-		goto nodmacreate;
-	}
-
-	if ((error = bus_dmamap_load(sc->sc_dmat, sc->sc_bufmap, sc->sc_txbuf,
-	    MACE_BUFSZ, NULL, BUS_DMA_NOWAIT))) {
-		printf(": cannot load DMA map (%d)\n", error);
-		goto nodmaload;
+	error = bus_dmamap_load(sc->sc_dmat, sc->sc_bufmap, sc->sc_txbuf,
+	    MACE_BUFSZ, NULL, BUS_DMA_NOWAIT);
+	if (error) {
+		printf(": cannot load buffers dmamap (%d)\n", error);
+		bus_dmamap_destroy(sc->sc_dmat, sc->sc_bufmap);
+		bus_dmamem_unmap(sc->sc_dmat, sc->sc_txbuf, MACE_BUFSZ);
+		bus_dmamem_free(sc->sc_dmat, sc->sc_bufseg, nseg);
+		return;
 	}
 
 	sc->sc_txbuf_pa = sc->sc_bufmap->dm_segs->ds_addr;
 	sc->sc_rxbuf = sc->sc_txbuf + MACE_BUFLEN * MACE_TXBUFS;
 	sc->sc_rxbuf_pa = sc->sc_txbuf_pa + MACE_BUFLEN * MACE_TXBUFS;
 
-	printf(": irq %d,%d,%d", ca->ca_intr[0], ca->ca_intr[1],
-	    ca->ca_intr[2]);
+	printf(": irq %d,%d,%d",
+		ca->ca_intr[0], ca->ca_intr[1], ca->ca_intr[2]);
 
 	/* disable receive DMA */
 	dbdma_reset(sc->sc_rxdma);
@@ -471,24 +464,6 @@ mc_attach(struct device *parent, struct device *self, void *aux)
 
 	if_attach(ifp);
 	ether_ifattach(ifp);
-
-	return;
-nodmaload:
-	bus_dmamap_destroy(sc->sc_dmat, sc->sc_bufmap);
-nodmacreate:
-	bus_dmamem_unmap(sc->sc_dmat, sc->sc_txbuf, MACE_BUFSZ);
-nodmamap:
-	bus_dmamem_free(sc->sc_dmat, sc->sc_bufseg, 1);
-nodmamem:
-	dbdma_free(sc->sc_rxdbdma);
-norxdbdma:
-	dbdma_free(sc->sc_txdbdma);
-notxdbdma:
-	unmapiodev((void *)sc->sc_rxdma, ca->ca_reg[5]);
-norxdma:
-	unmapiodev((void *)sc->sc_txdma, ca->ca_reg[3]);
-notxdma:
-	unmapiodev(sc->sc_reg, ca->ca_reg[1]);
 }
 
 int

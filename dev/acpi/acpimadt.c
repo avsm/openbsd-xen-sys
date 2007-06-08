@@ -1,4 +1,4 @@
-/*	$OpenBSD: acpimadt.c,v 1.9 2007/02/14 22:45:37 kettenis Exp $	*/
+/*	$OpenBSD: acpimadt.c,v 1.7 2007/01/28 18:24:21 kettenis Exp $	*/
 /*
  * Copyright (c) 2006 Mark Kettenis <kettenis@openbsd.org>
  *
@@ -27,8 +27,6 @@
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
 #include <dev/acpi/acpidev.h>
-#include <dev/acpi/amltypes.h>
-#include <dev/acpi/dsdt.h>
 
 #include <machine/i8259.h>
 #include <machine/i82093reg.h>
@@ -120,13 +118,10 @@ static u_int8_t lapic_map[256];
 void
 acpimadt_attach(struct device *parent, struct device *self, void *aux)
 {
-	struct acpi_softc *acpi_sc = (struct acpi_softc *)parent;
 	struct device *mainbus = parent->dv_parent;
 	struct acpi_attach_args *aaa = aux;
 	struct acpi_madt *madt = (struct acpi_madt *)aaa->aaa_table;
 	caddr_t addr = (caddr_t)(madt + 1);
-	struct aml_node *node;
-	struct aml_value arg;
 	struct mp_intr_map *map;
 	struct ioapic_softc *apic;
 	int cpu_role = CPU_ROLE_BP;
@@ -137,15 +132,6 @@ acpimadt_attach(struct device *parent, struct device *self, void *aux)
 	if (madt->flags & ACPI_APIC_PCAT_COMPAT)
 		printf(": PC-AT compat");
 	printf("\n");
-
-	/* Tell the BIOS we will be using APIC mode. */
-	node = aml_searchname(NULL, "\\_PIC");
-	if (node == 0)
-		return;
-	memset(&arg, 0, sizeof(arg));
-	arg.type = AML_OBJTYPE_INTEGER;
-	arg.v_integer = 1;
-	aml_evalnode(acpi_sc, node, 1, &arg, NULL);
 
 	mp_busses = acpimadt_busses;
 	mp_isa_bus = &acpimadt_isa_bus;
@@ -158,8 +144,8 @@ acpimadt_attach(struct device *parent, struct device *self, void *aux)
 
 		switch (entry->madt_lapic.apic_type) {
 		case ACPI_MADT_LAPIC:
-			dprintf("%s: LAPIC: acpi_proc_id %x, apic_id %x, flags 0x%x\n",
-			    self->dv_xname, entry->madt_lapic.acpi_proc_id,
+			printf("LAPIC: acpi_proc_id %x, apic_id %x, flags 0x%x\n",
+			    entry->madt_lapic.acpi_proc_id,
 			    entry->madt_lapic.apic_id,
 			    entry->madt_lapic.flags);
 
@@ -189,8 +175,8 @@ acpimadt_attach(struct device *parent, struct device *self, void *aux)
 			}
 			break;
 		case ACPI_MADT_IOAPIC:
-			dprintf("%s: IOAPIC: acpi_ioapic_id %x, address 0x%x, global_int_base 0x%x\n",
-			    self->dv_xname, entry->madt_ioapic.acpi_ioapic_id,
+			printf("IOAPIC: acpi_ioapic_id %x, address 0x%x, global_int_base 0x%x\n",
+			    entry->madt_ioapic.acpi_ioapic_id,
 			    entry->madt_ioapic.address,
 			    entry->madt_ioapic.global_int_base);
 
@@ -228,8 +214,8 @@ acpimadt_attach(struct device *parent, struct device *self, void *aux)
 			break;
 
 		case ACPI_MADT_OVERRIDE:
-			dprintf("%s: OVERRIDE: bus %x, source %x, global_int %x, flags %x\n",
-			    self->dv_xname, entry->madt_override.bus,
+			printf("OVERRIDE: bus %x, source %x, global_int %x, flags %x\n",
+			    entry->madt_override.bus,
 			    entry->madt_override.source,
 			    entry->madt_override.global_int,
 			    entry->madt_override.flags);
@@ -262,8 +248,8 @@ acpimadt_attach(struct device *parent, struct device *self, void *aux)
 			break;
 
 		case ACPI_MADT_LAPIC_NMI:
-			dprintf("%s: LAPIC_NMI: acpi_proc_id %x, local_apic_lint %x, flags %x\n",
-			    self->dv_xname, entry->madt_lapic_nmi.acpi_proc_id,
+			printf("LAPIC_NMI: acpi_proc_id %x, local_apic_lint %x, flags %x\n",
+			    entry->madt_lapic_nmi.acpi_proc_id,
 			    entry->madt_lapic_nmi.local_apic_lint,
 			    entry->madt_lapic_nmi.flags);
 
@@ -281,8 +267,7 @@ acpimadt_attach(struct device *parent, struct device *self, void *aux)
 			break;
 
 		default:
-			printf("%s: unknown apic structure type %x\n",
-			    self->dv_xname, entry->madt_lapic.apic_type);
+			printf("apic_type %x\n", entry->madt_lapic.apic_type);
 		}
 
 		addr += entry->madt_lapic.length;

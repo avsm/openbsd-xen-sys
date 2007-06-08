@@ -1,4 +1,4 @@
-/*	$OpenBSD: trap.c,v 1.37 2007/03/15 10:22:30 art Exp $     */
+/*	$OpenBSD: trap.c,v 1.35 2006/12/24 20:29:19 miod Exp $     */
 /*	$NetBSD: trap.c,v 1.47 1999/08/21 19:26:20 matt Exp $     */
 /*
  * Copyright (c) 1994 Ludd, University of Lule}, Sweden.
@@ -126,6 +126,7 @@ arithflt(frame)
 	u_int	sig = 0, type = frame->trap, trapsig = 1;
 	u_int	rv, addr, umode;
 	struct	proc *p = curproc;
+	u_quad_t oticks = 0;
 	struct vm_map *map;
 	vm_prot_t ftype;
 	int typ;
@@ -135,6 +136,7 @@ arithflt(frame)
 	uvmexp.traps++;
 	if ((umode = USERMODE(frame))) {
 		type |= T_USER;
+		oticks = p->p_sticks;
 		p->p_addr->u_pcb.framep = frame; 
 	}
 
@@ -289,6 +291,7 @@ if(faultdebug)printf("trap accflt type %lx, code %lx, pc %lx, psl %lx\n",
 		mtpr(AST_NO,PR_ASTLVL);
 		trapsig = 0;
 		if (p->p_flag & P_OWEUPC) {
+			p->p_flag &= ~P_OWEUPC;
 			ADDUPROF(p);
 		}
 		if (want_resched)
@@ -357,6 +360,7 @@ syscall(frame)
 	struct	trapframe *frame;
 {
 	struct sysent *callp;
+	u_quad_t oticks;
 	int nsys;
 	int err, rval[2], args[8];
 	struct trapframe *exptr;
@@ -372,6 +376,7 @@ if(startsysc)printf("trap syscall %s pc %lx, psl %lx, sp %lx, pid %d, frame %p\n
 	exptr = p->p_addr->u_pcb.framep = frame;
 	callp = p->p_emul->e_sysent;
 	nsys = p->p_emul->e_nsysent;
+	oticks = p->p_sticks;
 
 	if(frame->code == SYS___syscall){
 		int g = *(int *)(frame->ap);

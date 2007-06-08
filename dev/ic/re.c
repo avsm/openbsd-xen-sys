@@ -1,4 +1,4 @@
-/*	$OpenBSD: re.c,v 1.68 2007/02/25 08:00:06 deraadt Exp $	*/
+/*	$OpenBSD: re.c,v 1.63 2007/01/26 15:29:10 jason Exp $	*/
 /*	$FreeBSD: if_re.c,v 1.31 2004/09/04 07:54:05 ru Exp $	*/
 /*
  * Copyright (c) 1997, 1998-2003
@@ -503,7 +503,7 @@ re_setmulti(struct rl_softc *sc)
 	struct ifnet		*ifp;
 	int			h = 0;
 	u_int32_t		hashes[2] = { 0, 0 };
-	u_int32_t		hwrev, rxfilt;
+	u_int32_t		rxfilt;
 	int			mcnt = 0;
 	struct arpcom		*ac = &sc->sc_arpcom;
 	struct ether_multi	*enm;
@@ -551,23 +551,8 @@ re_setmulti(struct rl_softc *sc)
 		rxfilt &= ~RL_RXCFG_RX_MULTI;
 
 	CSR_WRITE_4(sc, RL_RXCFG, rxfilt);
-
-	/*
-	 * For some unfathomable reason, RealTek decided to reverse
-	 * the order of the multicast hash registers in the PCI Express
-	 * parts. This means we have to write the hash pattern in reverse
-	 * order for those devices.
-	 */
-	hwrev = CSR_READ_4(sc, RL_TXCFG) & RL_TXCFG_HWREV;
-	if (hwrev == RL_HWREV_8100E_SPIN1 || hwrev == RL_HWREV_8100E_SPIN2 ||
-	    hwrev == RL_HWREV_8101E || hwrev == RL_HWREV_8168_SPIN1 ||
-	    hwrev == RL_HWREV_8168_SPIN2) {
-		CSR_WRITE_4(sc, RL_MAR0, swap32(hashes[1]));
-		CSR_WRITE_4(sc, RL_MAR4, swap32(hashes[0]));
-	} else {
-		CSR_WRITE_4(sc, RL_MAR0, hashes[0]);
-		CSR_WRITE_4(sc, RL_MAR4, hashes[1]);
-	}
+	CSR_WRITE_4(sc, RL_MAR0, hashes[0]);
+	CSR_WRITE_4(sc, RL_MAR4, hashes[1]);
 }
 
 void
@@ -876,11 +861,11 @@ re_attach(struct rl_softc *sc, const char *intrstr)
 	}
 
 	if (re_name == NULL)
-		printf(": unknown ASIC (0x%04x)", hwrev >> 16);
+		printf(", unknown ASIC (0x%04x)", hwrev >> 16);
 	else
-		printf(": %s (0x%04x)", re_name, hwrev >> 16);
+		printf(", %s (0x%04x)", re_name, hwrev >> 16);
 
-	printf(", %s, address %s\n", intrstr,
+	printf(": %s, address %s\n", intrstr,
 	    ether_sprintf(sc->sc_arpcom.ac_enaddr));
 
 	if (sc->rl_ldata.rl_tx_desc_cnt >
@@ -1002,7 +987,7 @@ re_attach(struct rl_softc *sc, const char *intrstr)
 	ifp->if_capabilities = IFCAP_VLAN_MTU | IFCAP_CSUM_IPv4 |
 			       IFCAP_CSUM_TCPv4 | IFCAP_CSUM_UDPv4;
 
-#if NVLAN > 0
+#ifdef RE_VLAN
 	ifp->if_capabilities |= IFCAP_VLAN_HWTAGGING;
 #endif
 
@@ -1149,7 +1134,6 @@ re_newbuf(struct rl_softc *sc, int idx, struct mbuf *m)
 
 	rxs->rxs_mbuf = m;
 
-	d->rl_vlanctl = 0;
 	cmdstat = map->dm_segs[0].ds_len;
 	if (idx == (RL_RX_DESC_CNT - 1))
 		cmdstat |= RL_RDESC_CMD_EOR;
@@ -1407,10 +1391,10 @@ re_txeof(struct rl_softc *sc)
 			ifp->if_opackets++;
 	}
 
-	sc->rl_ldata.rl_txq_considx = idx;
-
-	if (sc->rl_ldata.rl_tx_free > RL_NTXDESC_RSVD)
+	if (sc->rl_ldata.rl_tx_free) {
+		sc->rl_ldata.rl_txq_considx = idx;
 		ifp->if_flags &= ~IFF_OACTIVE;
+	}
 
 	if (sc->rl_ldata.rl_tx_free < RL_TX_DESC_CNT(sc)) {
 		/*
@@ -1523,16 +1507,12 @@ re_encap(struct rl_softc *sc, struct mbuf *m, int *idx)
 {
 	bus_dmamap_t	map;
 	int		error, seg, nsegs, uidx, startidx, curidx, lastidx, pad;
+#ifdef RE_VLAN
+	struct m_tag	*mtag;
+#endif
 	struct rl_desc	*d;
 	u_int32_t	cmdstat, rl_flags = 0;
 	struct rl_txq	*txq;
-#if NVLAN > 0
-	struct ifvlan	*ifv = NULL;
-
-	if ((m->m_flags & (M_PROTO1|M_PKTHDR)) == (M_PROTO1|M_PKTHDR) &&
-	    m->m_pkthdr.rcvif != NULL)
-		ifv = m->m_pkthdr.rcvif->if_softc;
-#endif
 
 	if (sc->rl_ldata.rl_tx_free <= RL_NTXDESC_RSVD)
 		return (EFBIG);
@@ -1624,7 +1604,6 @@ re_encap(struct rl_softc *sc, struct mbuf *m, int *idx)
 			goto fail_unload;
 		}
 
-		d->rl_vlanctl = 0;
 		re_set_bufaddr(d, map->dm_segs[seg].ds_addr);
 		cmdstat = rl_flags | map->dm_segs[seg].ds_len;
 		if (seg == 0)
@@ -1645,7 +1624,6 @@ re_encap(struct rl_softc *sc, struct mbuf *m, int *idx)
 		bus_addr_t paddaddr;
 
 		d = &sc->rl_ldata.rl_tx_list[curidx];
-		d->rl_vlanctl = 0;
 		paddaddr = RL_TXPADDADDR(sc);
 		re_set_bufaddr(d, paddaddr);
 		cmdstat = rl_flags |
@@ -1667,12 +1645,12 @@ re_encap(struct rl_softc *sc, struct mbuf *m, int *idx)
 	 * transmission attempt.
 	 */
 
-#if NVLAN > 0
-	if (ifv != NULL) {
-		sc->rl_ldata.rl_tx_list[startidx].rl_vlanctl =
-		    htole32(swap16(ifv->ifv_tag) |
+#ifdef RE_VLAN
+	if (sc->ethercom.ec_nvlans &&
+	    (mtag = m_tag_find(m_head, PACKET_TAG_VLAN, NULL)) != NULL)
+		sc->rl_ldata.rl_tx_list[*idx].rl_vlanctl =
+		    htole32(htons(*(u_int *)(mtag + 1)) |
 		    RL_TDESC_VLANCTL_TAG);
-	}
 #endif
 
 	/* Transfer ownership of packet to the chip. */
@@ -1923,7 +1901,7 @@ re_init(struct ifnet *ifp)
 
 	mii_mediachg(&sc->sc_mii);
 
-	CSR_WRITE_1(sc, RL_CFG1, CSR_READ_1(sc, RL_CFG1) | RL_CFG1_DRVLOAD);
+	CSR_WRITE_1(sc, RL_CFG1, RL_CFG1_DRVLOAD|RL_CFG1_FULLDUPLEX);
 
 	ifp->if_flags |= IFF_RUNNING;
 	ifp->if_flags &= ~IFF_OACTIVE;

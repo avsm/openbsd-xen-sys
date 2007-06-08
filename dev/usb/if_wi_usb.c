@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_wi_usb.c,v 1.33 2006/11/26 19:46:28 deraadt Exp $ */
+/*	$OpenBSD: if_wi_usb.c,v 1.32 2006/10/24 18:20:46 moritz Exp $ */
 
 /*
  * Copyright (c) 2003 Dale Rahn. All rights reserved.
@@ -182,7 +182,7 @@ struct wi_usb_softc {
 	void			*wi_info;
 	void			*wi_rxframe;
 
-	/* prevent multiple outstanding USB requests */
+	/* prevent multpile outstanding USB requests */
 	int			wi_lock;
 	int			wi_lockwait;
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_malloc.c,v 1.68 2007/04/11 12:10:42 art Exp $	*/
+/*	$OpenBSD: kern_malloc.c,v 1.65 2006/11/28 11:14:52 pedro Exp $	*/
 /*	$NetBSD: kern_malloc.c,v 1.15.4.2 1996/06/13 17:10:56 cgd Exp $	*/
 
 /*
@@ -43,7 +43,7 @@
 
 #include <uvm/uvm_extern.h>
 
-static struct vm_map kmem_map_store;
+static struct vm_map_intrsafe kmem_map_store;
 struct vm_map *kmem_map = NULL;
 
 #ifdef NKMEMCLUSTERS
@@ -101,11 +101,7 @@ const long addrmask[] = { 0,
  * The WEIRD_ADDR is used as known text to copy into free objects so
  * that modifications after frees can be detected.
  */
-#ifdef DEADBEEF0
-#define WEIRD_ADDR	((unsigned) DEADBEEF0)
-#else
 #define WEIRD_ADDR	((unsigned) 0xdeadbeef)
-#endif
 #define MAX_COPY	32
 
 /*
@@ -159,7 +155,7 @@ malloc(unsigned long size, int type, int flags)
 
 #ifdef MALLOC_DEBUG
 	if (debug_malloc(size, type, flags, (void **)&va))
-		return (va);
+		return ((void *) va);
 #endif
 
 	if (size > 65535 * PAGE_SIZE) {
@@ -181,7 +177,7 @@ malloc(unsigned long size, int type, int flags)
 	while (ksp->ks_memuse >= ksp->ks_limit) {
 		if (flags & M_NOWAIT) {
 			splx(s);
-			return (NULL);
+			return ((void *) NULL);
 		}
 		if (ksp->ks_limblocks < 65535)
 			ksp->ks_limblocks++;
@@ -199,7 +195,7 @@ malloc(unsigned long size, int type, int flags)
 		else
 			allocsize = 1 << indx;
 		npg = btoc(allocsize);
-		va = (caddr_t) uvm_km_kmemalloc(kmem_map, NULL,
+		va = (caddr_t) uvm_km_kmemalloc(kmem_map, uvmexp.kmem_object,
 		    (vsize_t)ctob(npg), 
 		    ((flags & M_NOWAIT) ? UVM_KMF_NOWAIT : 0) |
 		    ((flags & M_CANFAIL) ? UVM_KMF_CANFAIL : 0));
@@ -329,7 +325,7 @@ out:
 out:
 #endif
 	splx(s);
-	return (va);
+	return ((void *) va);
 }
 
 /*
@@ -519,7 +515,7 @@ kmeminit(void)
 	base = vm_map_min(kernel_map);
 	kmem_map = uvm_km_suballoc(kernel_map, &base, &limit,
 	    (vsize_t)(nkmempages * PAGE_SIZE), VM_MAP_INTRSAFE, FALSE,
-	    &kmem_map_store);
+	    &kmem_map_store.vmi_map);
 	kmembase = (char *)base;
 	kmemlimit = (char *)limit;
 	kmemusage = (struct kmemusage *) uvm_km_zalloc(kernel_map,

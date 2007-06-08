@@ -1,4 +1,4 @@
-#	$OpenBSD: files,v 1.396 2007/03/22 02:48:42 dlg Exp $
+#	$OpenBSD: files,v 1.391 2006/12/02 15:55:18 miod Exp $
 #	$NetBSD: files,v 1.87 1996/05/19 17:17:50 jonathan Exp $
 
 #	@(#)files.newconf	7.5 (Berkeley) 5/10/93
@@ -11,7 +11,6 @@ define	ifnet
 define	tty
 define	audio {}
 define	scsi {}
-define	atascsi {}
 define	ifmedia
 define	mii {[phy = -1]}
 define	midibus {}
@@ -184,10 +183,6 @@ file	dev/ic/isp_openbsd.c		isp
 # LSI Logic Fusion-MPT Message Passing Interface
 device	mpi: scsi
 file	dev/ic/mpi.c			mpi
-
-# Silicon Image 3124/3132/3531 SATALink
-device	sili: scsi, atascsi
-file	dev/ic/sili.c			sili
 
 # UltraStor SCSI controllers
 device	uha: scsi
@@ -391,6 +386,10 @@ file	dev/ic/aic6915.c		sf
 device	malo: ether, ifnet, ifmedia, firmload, wlan
 file	dev/ic/malo.c			malo
 
+# Broadcom BCM43xx
+device	bcw: ether, ifnet, ifmedia, wlan
+file	dev/ic/bcw.c			bcw
+
 # Attributes which machine-independent bus support can be attached to.
 # These should be defined here, because some of these busses can have
 # devices which provide these attributes, and we'd like to avoid hairy
@@ -430,11 +429,6 @@ file dev/radio.c			radio	needs-flag
 # IPMI
 device	ipmi
 file	dev/ipmi.c			ipmi	needs-flag
-
-# Software RAID
-device	softraid: scsi
-attach	softraid at root
-file	dev/softraid.c			softraid	needs-flag
 
 # legitimate pseudo-devices
 pseudo-device vnd: disk
@@ -489,6 +483,7 @@ file	dev/hotplug.c			hotplug	needs-flag
 
 pseudo-device pppoe: ifnet, ether, sppp
 file 	net/if_pppoe.c			pppoe	needs-flag
+
 
 # XXX machine-independent SCSI files should live somewhere here, maybe
 

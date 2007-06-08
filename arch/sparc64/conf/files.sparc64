@@ -1,4 +1,4 @@
-#	$OpenBSD: files.sparc64,v 1.81 2007/04/10 19:03:10 kettenis Exp $
+#	$OpenBSD: files.sparc64,v 1.74 2006/12/02 15:55:16 miod Exp $
 #	$NetBSD: files.sparc64,v 1.50 2001/08/10 20:53:50 eeh Exp $
 
 # maxpartitions must be first item in files.${ARCH}
@@ -34,6 +34,10 @@ device	clkbrd
 attach	clkbrd at fhc
 file	arch/sparc64/dev/clkbrd.c		clkbrd
 
+device	pcons
+attach	pcons at mainbus
+file	arch/sparc64/dev/pcons.c		pcons needs-flag
+
 # Sun HME Ethernet controllers
 device	hme: ether, ifnet, mii, ifmedia
 file	dev/ic/hme.c			hme
@@ -47,10 +51,6 @@ file	arch/sparc64/dev/fb.c
 include	"dev/wscons/files.wscons"
 include	"dev/rasops/files.rasops"
 include	"dev/wsfont/files.wsfont"
-
-device	pcons: wsemuldisplaydev
-attach	pcons at mainbus
-file	arch/sparc64/dev/pcons.c		pcons needs-flag
 
 include	"dev/sbus/files.sbus"
 include	"dev/i2o/files.i2o"
@@ -87,12 +87,7 @@ file	arch/sparc64/dev/psycho.c		psycho
 device	schizo: pcibus
 attach	schizo at mainbus
 file	arch/sparc64/dev/schizo.c		schizo
-
-device	pyro: pcibus
-attach	pyro at mainbus
-file	arch/sparc64/dev/pyro.c			pyro
-
-file	arch/sparc64/dev/pci_machdep.c		psycho | schizo | pyro
+file	arch/sparc64/dev/pci_machdep.c		psycho | schizo
 
 attach	hme at pci with hme_pci
 file	dev/pci/if_hme_pci.c			hme_pci
@@ -106,9 +101,7 @@ file	arch/sparc64/dev/iommu.c		sbus | psycho
 
 device	ebus {[addr = -1]}: pcibus
 attach	ebus at pci
-attach	ebus at mainbus with ebus_mainbus
 file	arch/sparc64/dev/ebus.c			ebus
-file	arch/sparc64/dev/ebus_mainbus.c		ebus_mainbus
 
 attach	uperf at ebus with uperf_ebus
 file	arch/sparc64/dev/uperf_ebus.c		uperf_ebus
@@ -117,6 +110,9 @@ device	clock: mk48txx
 attach	clock at mainbus, sbus with clock_sbus
 attach	clock at ebus with clock_ebus
 attach	clock at fhc with clock_fhc
+
+device	rtc
+attach	rtc at ebus with rtc_ebus
 
 device	timer
 attach	timer at mainbus, sbus
@@ -134,10 +130,6 @@ attach	auxio at ebus with auxio_ebus
 attach	auxio at sbus with auxio_sbus
 file	arch/sparc64/dev/auxio.c		auxio
 
-device	bbc
-attach	bbc at ebus
-file	arch/sparc64/dev/bbc.c			bbc
-
 device	beeper
 attach	beeper at ebus
 file	arch/sparc64/dev/beeper.c		beeper
@@ -146,10 +138,6 @@ device	beep
 attach	beep at ebus
 file	arch/sparc64/dev/beep.c			beep
 
-device	pmc
-attach	pmc at ebus
-file	arch/sparc64/dev/pmc.c			pmc
-
 device	ppm
 attach	ppm at ebus
 file	arch/sparc64/dev/ppm.c			ppm
@@ -157,10 +145,6 @@ file	arch/sparc64/dev/ppm.c			ppm
 device	power
 attach	power at ebus
 file	arch/sparc64/dev/power.c		power
-
-device	rtc
-attach	rtc at ebus
-file	arch/sparc64/dev/rtc.c			rtc
 
 device	sab {}
 attach	sab at ebus
@@ -236,7 +220,6 @@ file	arch/sparc64/sparc64/autoconf.c
 file	arch/sparc64/sparc64/busop.c
 file	arch/sparc64/sparc64/cache.c
 file	arch/sparc64/sparc64/conf.c
-file	arch/sparc64/sparc64/disksubr.c
 file	arch/sparc64/sparc64/emul.c
 file	arch/sparc64/sparc64/in_cksum.S		inet
 file	arch/sparc64/sparc64/in4_cksum.c	inet
@@ -246,19 +229,19 @@ file	arch/sparc64/sparc64/kgdb_machdep.c	kgdb
 # because it must come first in the "ld" command line.
 file	arch/sparc64/sparc64/locore2.c
 file	arch/sparc64/sparc64/machdep.c
+file	arch/sparc64/sparc64/process_machdep.c
 file	arch/sparc64/sparc64/mem.c
-file	arch/sparc64/sparc64/mutex.c
 file	arch/sparc64/sparc64/openprom.c
 file	arch/sparc64/sparc64/openfirm.c
 file	arch/sparc64/sparc64/ofw_machdep.c
 file	arch/sparc64/sparc64/pmap.c
-file	arch/sparc64/sparc64/process_machdep.c
 # the following overrides the generic "sys_process.c"
 # commented out by deraadt
 #file	arch/sparc64/sparc64/sys_process.c
 file	arch/sparc64/sparc64/sys_machdep.c
 file	arch/sparc64/sparc64/trap.c
 file	arch/sparc64/sparc64/vm_machdep.c
+file	arch/sparc64/sparc64/disksubr.c
 
 file	arch/sparc64/sparc64/db_interface.c	ddb | kgdb
 file	arch/sparc64/sparc64/db_trace.c	ddb

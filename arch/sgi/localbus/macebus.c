@@ -1,4 +1,4 @@
-/*	$OpenBSD: macebus.c,v 1.18 2006/01/04 20:23:07 miod Exp $ */
+/*	$OpenBSD: macebus.c,v 1.17 2006/01/04 20:20:16 miod Exp $ */
 
 /*
  * Copyright (c) 2000-2004 Opsycon AB  (www.opsycon.se)
@@ -51,7 +51,6 @@
 
 #include <machine/autoconf.h>
 #include <machine/intr.h>
-#include <machine/atomic.h>
 
 #include <sgi/localbus/macebus.h>
 #include <sgi/localbus/crimebus.h>
@@ -620,7 +619,7 @@ macebus_do_pending_int(int newcpl)
 	/* Get what interrupt we should process */
 	hwpend = ipending & ~newcpl;
 	hwpend &= ~SINT_ALLMASK;
-	atomic_clearbits_int(&ipending, hwpend);
+	clr_ipending(hwpend);
 
 	/* Enable all non pending non masked hardware interrupts */
 	cpl = (cpl & SINT_ALLMASK) | (newcpl & ~SINT_ALLMASK) | hwpend;
@@ -644,21 +643,21 @@ macebus_do_pending_int(int newcpl)
 	hw_setintrmask(cpl);
 
 	if ((ipending & SINT_CLOCKMASK) & ~newcpl) {
-		atomic_clearbits_int(&ipending, SINT_CLOCKMASK);
+		clr_ipending(SINT_CLOCKMASK);
 		softclock();
 	}
 	if ((ipending & SINT_NETMASK) & ~newcpl) {
 		extern int netisr;
 		int isr = netisr;
 		netisr = 0;
-		atomic_clearbits_int(&ipending, SINT_NETMASK);
+		clr_ipending(SINT_NETMASK);
 #define	DONETISR(b,f)	if (isr & (1 << (b)))	f();
 #include <net/netisr_dispatch.h>
 	}
 
 #ifdef NOTYET
 	if ((ipending & SINT_TTYMASK) & ~newcpl) {
-		atomic_clearbits_int(&ipending, SINT_TTYMASK);
+		clr_ipending(SINT_TTYMASK);
 		compoll(NULL);
 	}
 #endif
@@ -698,7 +697,7 @@ macebus_iointr(intrmask_t hwpend, struct trap_frame *cf)
 
 	/* Mask off masked interrupts and save them as pending */
 	if (intstat & cf->cpl) {
-		atomic_setbits_int(&ipending, intstat & cf->cpl);
+		set_ipending(intstat & cf->cpl);
 		mask = bus_space_read_8(&crimebus_tag, crime_h, CRIME_INT_MASK);
 		mask &= ~ipending;
 		bus_space_write_8(&crimebus_tag, crime_h, CRIME_INT_MASK, mask);
@@ -707,7 +706,7 @@ macebus_iointr(intrmask_t hwpend, struct trap_frame *cf)
 
 	/* Scan all unmasked. Scan the first 16 for now */
 	pending = intstat & ~cf->cpl;
-	atomic_clearbits_int(&ipending, pending);
+	clr_ipending(pending);
 
 	for (v = 0, vm = 1; pending != 0 && v < 16 ; v++, vm <<= 1) {
 		if (pending & vm) {

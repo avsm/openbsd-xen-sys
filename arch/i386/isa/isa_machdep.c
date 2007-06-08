@@ -1,5 +1,7 @@
-/*	$OpenBSD: isa_machdep.c,v 1.58 2007/03/22 19:31:59 miod Exp $	*/
+/*	$OpenBSD: isa_machdep.c,v 1.56 2006/11/11 21:47:52 kettenis Exp $	*/
 /*	$NetBSD: isa_machdep.c,v 1.22 1997/06/12 23:57:32 thorpej Exp $	*/
+
+#define ISA_DMA_STATS
 
 /*-
  * Copyright (c) 1996, 1997 The NetBSD Foundation, Inc.
@@ -333,7 +335,6 @@ intr_calculatemasks(void)
 	/*
 	 * Initialize soft interrupt masks to block themselves.
 	 */
-	IMASK(IPL_SOFTAST) |= 1 << SIR_AST;
 	IMASK(IPL_SOFTCLOCK) |= 1 << SIR_CLOCK;
 	IMASK(IPL_SOFTNET) |= 1 << SIR_NET;
 	IMASK(IPL_SOFTTTY) |= 1 << SIR_TTY;

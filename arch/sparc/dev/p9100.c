@@ -1,4 +1,4 @@
-/*	$OpenBSD: p9100.c,v 1.43 2007/02/18 18:40:35 miod Exp $	*/
+/*	$OpenBSD: p9100.c,v 1.41 2006/12/02 11:24:02 miod Exp $	*/
 
 /*
  * Copyright (c) 2003, 2005, 2006, Miodrag Vallat.
@@ -265,11 +265,8 @@ p9100attach(struct device *parent, struct device *self, void *args)
 	struct rasops_info *ri = &sc->sc_sunfb.sf_ro;
 	struct confargs *ca = args;
 	struct romaux *ra = &ca->ca_ra;
-	int node, pri, scr, force_reset;
+	int node, scr, force_reset;
 	int isconsole, fontswitch, clear = 0;
-
-	pri = ca->ca_ra.ra_intr[0].int_pri;
-	printf(" pri %d", pri);
 
 #ifdef DIAGNOSTIC
 	if (ra->ra_nreg < P9100_NREG) {
@@ -366,7 +363,8 @@ p9100attach(struct device *parent, struct device *self, void *args)
 
 	sc->sc_ih.ih_fun = p9100_intr;
 	sc->sc_ih.ih_arg = sc;
-	intr_establish(pri, &sc->sc_ih, IPL_FB, self->dv_xname);
+	intr_establish(ra->ra_intr[0].int_pri, &sc->sc_ih, IPL_FB,
+	    self->dv_xname);
 
 	/*
 	 * Try to get a copy of the PROM font.
@@ -408,8 +406,7 @@ p9100attach(struct device *parent, struct device *self, void *args)
 	/*
 	 * Plug-in accelerated console operations.
 	 */
-	if (sc->sc_sunfb.sf_dev.dv_cfdata->cf_flags != 0)
-		p9100_ras_init(sc);
+	p9100_ras_init(sc);
 
 	/* enable video */
 	p9100_burner(sc, 1, 0);
@@ -459,8 +456,7 @@ p9100_ioctl(void *v, u_long cmd, caddr_t data, int flags, struct proc *p)
 #endif
 			fbwscons_setcolormap(&sc->sc_sunfb, p9100_setcolor);
 			/* Restore proper acceleration state as well */
-			if (sc->sc_sunfb.sf_dev.dv_cfdata->cf_flags != 0)
-				p9100_ras_init(sc);
+			p9100_ras_init(sc);
 			break;
 		}
 		break;
@@ -1351,8 +1347,7 @@ p9100_prom(void *v)
 	    sc->sc_mapmode != WSDISPLAYIO_MODE_EMUL) {
 		p9100_initialize_ramdac(sc, LCD_WIDTH, 8);
 		fbwscons_setcolormap(&sc->sc_sunfb, p9100_setcolor);
-		if (sc->sc_sunfb.sf_dev.dv_cfdata->cf_flags != 0)
-			p9100_ras_init(sc);
+		p9100_ras_init(sc);
 	}
 }
 #endif	/* NTCTRL > 0 */

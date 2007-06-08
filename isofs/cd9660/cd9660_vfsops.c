@@ -1,4 +1,4 @@
-/*	$OpenBSD: cd9660_vfsops.c,v 1.43 2007/03/21 13:44:04 pedro Exp $	*/
+/*	$OpenBSD: cd9660_vfsops.c,v 1.40 2006/06/28 15:07:00 pedro Exp $	*/
 /*	$NetBSD: cd9660_vfsops.c,v 1.26 1997/06/13 15:38:58 pk Exp $	*/
 
 /*-
@@ -236,7 +236,7 @@ iso_mountfs(devvp, mp, p, argp)
 	struct iso_supplementary_descriptor *sup = NULL;
 	struct iso_directory_record *rootp;
 	int logical_block_size;
-	int sess;
+	int sess = 0;
 	
 	if (!ronly)
 		return (EROFS);
@@ -259,25 +259,16 @@ iso_mountfs(devvp, mp, p, argp)
 		return (error);
 	needclose = 1;
 	
-	/*
-	 * This is the "logical sector size".  The standard says this
+	/* This is the "logical sector size".  The standard says this
 	 * should be 2048 or the physical sector size on the device,
 	 * whichever is greater.  For now, we'll just use a constant.
 	 */
 	iso_bsize = ISO_DEFAULT_BLOCK_SIZE;
 
-	if (argp->flags & ISOFSMNT_SESS) {
-		sess = argp->sess;
-		if (sess < 0)
-			sess = 0;
-	} else {
+	error = VOP_IOCTL(devvp, CDIOREADMSADDR, (caddr_t)&sess, 0, FSCRED, p);
+	if (error)
 		sess = 0;
-		error = VOP_IOCTL(devvp, CDIOREADMSADDR, (caddr_t)&sess, 0,
-		    FSCRED, p);
-		if (error)
-			sess = 0;
-	}
-
+	
 	joliet_level = 0;
 	for (iso_blknum = 16; iso_blknum < 100; iso_blknum++) {
 		if ((error = bread(devvp,
@@ -359,11 +350,7 @@ iso_mountfs(devvp, mp, p, argp)
 	isomp->root_extent = isonum_733 (rootp->extent);
 	isomp->root_size = isonum_733 (rootp->size);
 	isomp->joliet_level = 0;
-	/*                                                                  
-	 * Since an ISO9660 multi-session CD can also access previous sessions,
-	 * we have to include them into the space considerations.
-	 */
-	isomp->volume_space_size += sess;
+	
 	isomp->im_bmask = logical_block_size - 1;
 	isomp->im_bshift = ffs(logical_block_size) - 1;
 

@@ -1,4 +1,4 @@
-/*	$OpenBSD: disksubr.c,v 1.29 2007/02/18 13:49:22 krw Exp $	*/
+/*	$OpenBSD: disksubr.c,v 1.26 2006/10/21 20:10:39 krw Exp $	*/
 
 /*
  * Copyright (c) 1999 Michael Shalayeff
@@ -52,8 +52,10 @@
 
 char   *readbsdlabel(struct buf *, void (*)(struct buf *), int, int,
     int, struct disklabel *, int);
+#if defined(DISKLABEL_I386)
 char   *readdoslabel(struct buf *, void (*)(struct buf *),
     struct disklabel *, struct cpu_disklabel *, int *, int *, int);
+#endif
 char   *readliflabel(struct buf *, void (*)(struct buf *),
     struct disklabel *, struct cpu_disklabel *, int *, int *, int);
 
@@ -164,6 +166,7 @@ readdisklabel(dev, strat, lp, osdep, spoofonly)
 	msg = readliflabel(bp, strat, lp, osdep, 0, 0, spoofonly);
 	if (msg)
 		*lp = minilabel;
+#if defined(DISKLABEL_I386)
 	if (msg) {
 		msg = readdoslabel(bp, strat, lp, osdep, 0, 0, spoofonly);
 		if (msg) {
@@ -172,6 +175,7 @@ readdisklabel(dev, strat, lp, osdep, spoofonly)
 			*lp = minilabel;
 		}
 	}
+#endif
 	/* Record metainformation about the disklabel.  */
 	if (msg == NULL) {
 		osdep->labelsector = bp->b_blkno;
@@ -193,6 +197,7 @@ readdisklabel(dev, strat, lp, osdep, spoofonly)
 	return (msg);
 }
 
+#if defined(DISKLABEL_I386)
 /*
  * If dos partition table requested, attempt to load it and
  * find disklabel inside a DOS partition. Return buffer
@@ -215,7 +220,6 @@ readdoslabel(bp, strat, lp, osdep, partoffp, cylp, spoofonly)
 	struct dos_partition dp[NDOSPART], *dp2;
 	struct partition *pp;
 	unsigned long extoff = 0;
-	unsigned int fattest;
 	daddr_t part_blkno = DOSBBSECTOR;
 	char *msg = NULL;
 	int dospartoff, cyl, i, ourpart = -1;
@@ -302,8 +306,6 @@ donot:
 				continue;
 			if (letoh32(dp2->dp_size) > lp->d_secperunit)
 				continue;
-			if (letoh32(dp2->dp_start) > lp->d_secperunit)
-				continue;
 			if (letoh32(dp2->dp_size) == 0)
 				continue;
 			if (letoh32(dp2->dp_start))
@@ -351,34 +353,7 @@ donot:
 	}
 	lp->d_bbsize = 8192;
 	lp->d_sbsize = 64*1024;		/* XXX ? */
-	lp->d_npartitions = MAXPARTITIONS;
-
-	if (n == 0 && part_blkno == DOSBBSECTOR) {
-		/* Check for a short jump instruction. */
-		fattest = ((bp->b_data[0] << 8) & 0xff00) | (bp->b_data[2] &
-		    0xff);
-		if (fattest != 0xeb90 && fattest != 0xe900)
-			goto notfat;
-
-		/* Check for a valid bytes per sector value. */
-		fattest = ((bp->b_data[12] << 8) & 0xff00) | (bp->b_data[11] &
-		    0xff);
-		if (fattest < 512 || fattest > 4096 || (fattest % 512 != 0))
-			goto notfat;
-
-		/* Check the end of sector marker. */
-		fattest = ((bp->b_data[510] << 8) & 0xff00) | (bp->b_data[511] &
-		    0xff);
-		if (fattest != 0x55aa)
-			goto notfat;
-
-		/* Looks like a FAT filesystem. Spoof 'i'. */
-		lp->d_partitions['i' - 'a'].p_size =
-		    lp->d_partitions[RAW_PART].p_size;
-		lp->d_partitions['i' - 'a'].p_offset = 0;
-		lp->d_partitions['i' - 'a'].p_fstype = FS_MSDOS;
-	}
-notfat:
+	lp->d_npartitions = n > 0 ? n + 8 : 3;
 
 	/* record the OpenBSD partition's placement for the caller */
 	if (partoffp)
@@ -392,6 +367,7 @@ notfat:
 
 	return (msg);
 }
+#endif
 
 char *
 readliflabel (bp, strat, lp, osdep, partoffp, cylp, spoofonly)
@@ -649,11 +625,13 @@ writedisklabel(dev, strat, lp, osdep)
 	dl = *lp;
 	msg = readliflabel(bp, strat, &dl, &cdl, &partoff, &cyl, 0);
 	labeloffset = HPPA_LABELOFFSET;
+#if defined(DISKLABEL_I386)
 	if (msg) {	
 		dl = *lp;
 		msg = readdoslabel(bp, strat, &dl, &cdl, &partoff, &cyl, 0);
 		labeloffset = I386_LABELOFFSET;
 	}
+#endif
 	if (msg) {
 		if (partoff == -1)
 			return EIO;

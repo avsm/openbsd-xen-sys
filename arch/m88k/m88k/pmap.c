@@ -1,4 +1,4 @@
-/*	$OpenBSD: pmap.c,v 1.29 2007/02/11 12:49:37 miod Exp $	*/
+/*	$OpenBSD: pmap.c,v 1.27 2006/06/01 06:25:51 miod Exp $	*/
 /*
  * Copyright (c) 2001-2004, Miodrag Vallat
  * Copyright (c) 1998-2001 Steve Murphree, Jr.
@@ -657,7 +657,9 @@ pmap_bootstrap(vaddr_t load_start)
 	vaddr = pmap_map(0, 0, s_text, VM_PROT_WRITE | VM_PROT_READ, CACHE_INH);
 
 	/* map the kernel text read only */
-	vaddr = pmap_map(s_text, s_text, e_text, VM_PROT_READ, 0);
+	vaddr = pmap_map(s_text, s_text, e_text,
+	    VM_PROT_WRITE | VM_PROT_READ,	/* shouldn't it be RO? XXX*/
+	    0);
 
 	vaddr = pmap_map(vaddr, e_text, (paddr_t)kmap,
 	    VM_PROT_WRITE | VM_PROT_READ, 0);
@@ -840,7 +842,7 @@ pmap_zero_page(struct vm_page *pg)
 	 * So be sure to have the pa flushed after the filling.
 	 */
 	bzero((void *)va, PAGE_SIZE);
-	cmmu_flush_data_page(cpu, pa);
+	cmmu_flush_data_cache(cpu, pa, PAGE_SIZE);
 
 	splx(spl);
 }
@@ -2113,9 +2115,9 @@ pmap_copy_page(struct vm_page *srcpg, struct vm_page *dstpg)
 	 * So be sure to have the source pa flushed before the copy is
 	 * attempted, and the destination pa flushed afterwards.
 	 */
-	cmmu_flush_data_page(cpu, src);
+	cmmu_flush_data_cache(cpu, src, PAGE_SIZE);
 	bcopy((const void *)srcva, (void *)dstva, PAGE_SIZE);
-	cmmu_flush_data_page(cpu, dst);
+	cmmu_flush_data_cache(cpu, dst, PAGE_SIZE);
 
 	splx(spl);
 }
@@ -2561,21 +2563,22 @@ void
 pmap_proc_iflush(struct proc *p, vaddr_t va, vsize_t len)
 {
 	pmap_t pmap = vm_map_pmap(&p->p_vmspace->vm_map);
+	vaddr_t eva;
 	paddr_t pa;
-	vsize_t count;
 	u_int32_t users;
 	int cpu;
 
-	while (len != 0) {
-		count = min(len, PAGE_SIZE - (va & PAGE_MASK));
+	eva = round_page(va + len);
+	va = trunc_page(va);
+
+	while (va != eva) {
 		if (pmap_extract(pmap, va, &pa)) {
 			users = pmap->pm_cpus;
 			while ((cpu = ff1(users)) != 32) {
-				cmmu_flush_inst_cache(cpu, pa, count);
+				cmmu_flush_inst_cache(cpu, pa, PAGE_SIZE);
 				users &= ~(1 << cpu);
 			}
 		}
-		va += count;
-		len -= count;
+		va += PAGE_SIZE;
 	}
 }

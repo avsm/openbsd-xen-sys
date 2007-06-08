@@ -1,4 +1,4 @@
-/*	$OpenBSD: ofw_machdep.c,v 1.17 2007/04/06 22:38:14 kettenis Exp $	*/
+/*	$OpenBSD: ofw_machdep.c,v 1.15 2006/08/31 21:28:35 kettenis Exp $	*/
 /*	$NetBSD: ofw_machdep.c,v 1.16 2001/07/20 00:07:14 eeh Exp $	*/
 
 /*
@@ -677,8 +677,7 @@ find_pci_host_node(int node)
 				 &dev_type, sizeof(dev_type));
 		if (len <= 0)
 			continue;
-		if (strcmp(dev_type, "pci") == 0 ||
-		    strcmp(dev_type, "pciex") == 0)
+		if (!strcmp(dev_type, "pci"))
 			pch = node;
 	}
 	return pch;
@@ -728,7 +727,8 @@ OF_mapintr(int node, int *interrupt, int validlen, int buflen)
 	}
 
 	phc_node = find_pci_host_node(node);
-	while (node) {
+
+	for (; node; node = OF_parent(node)) {
 #ifdef DEBUG
 		char name[40];
 
@@ -746,8 +746,7 @@ OF_mapintr(int node, int *interrupt, int validlen, int buflen)
 			/* Swizzle interrupt if this is a PCI bridge. */
 			if (((len = OF_getprop(node, "device_type", &dev_type,
 					      sizeof(dev_type))) > 0) &&
-			    (strcmp(dev_type, "pci") == 0 ||
-			     strcmp(dev_type, "pciex") == 0) &&
+			    !strcmp(dev_type, "pci") &&
 			    (node != phc_node)) {
 				*interrupt = ((*interrupt +
 				    OFW_PCI_PHYS_HI_DEVICE(reg[0]) - 1) & 3) + 1;
@@ -758,8 +757,6 @@ OF_mapintr(int node, int *interrupt, int validlen, int buflen)
 			/* Get reg for next level compare. */
 			reg[0] = 0;
 			OF_getprop(node, "reg", &reg, sizeof(reg));
-
-			node = OF_parent(node);
 			continue;
 		}
 		/* Convert from bytes to cells. */
@@ -802,9 +799,9 @@ OF_mapintr(int node, int *interrupt, int validlen, int buflen)
 
 #endif
 
-		/* Finally we can attempt the compare. */
-		i = 0;
-		while (i < interrupt_map_len + address_cells + interrupt_cells) {
+		/* finally we can attempt the compare */
+		i=0;
+		while ( i < interrupt_map_len + address_cells + interrupt_cells) {
 			int pintr_cells;
 			int *imap = &interrupt_map[i];
 			int *parent = &imap[address_cells + interrupt_cells];
@@ -839,7 +836,6 @@ OF_mapintr(int node, int *interrupt, int validlen, int buflen)
 					/* Error -- ran out of storage. */
 					return (-1);
 				}
-				node = *parent;
 				parent++;
 #ifdef DEBUG
 				DPRINTF(("Match! using "));
@@ -849,8 +845,6 @@ OF_mapintr(int node, int *interrupt, int validlen, int buflen)
 				for (i=0; i<pintr_cells; i++)
 					interrupt[i] = parent[i];
 				rc = validlen = pintr_cells;
-				if (node == phc_node)
-					return (rc);
 				break;
 			}
 			/* Move on to the next interrupt_map entry. */
@@ -866,12 +860,12 @@ OF_mapintr(int node, int *interrupt, int validlen, int buflen)
 		}
 
 		/* Get reg for the next level search. */
-		if ((len = OF_getprop(node, "reg", &reg, sizeof(reg))) <= 0)
+		if ((len = OF_getprop(node, "reg", &reg, sizeof(reg))) <= 0) {
 			DPRINTF(("OF_mapintr: no reg property?\n"));
-		else
-			DPRINTF(("reg len %d\n", len));
+			continue;
+		}
+		DPRINTF(("reg len %d\n", len));
 
-		node = OF_parent(node);
 	} 
 	return (rc);
 }

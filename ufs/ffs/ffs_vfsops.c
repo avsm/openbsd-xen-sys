@@ -1,4 +1,4 @@
-/*	$OpenBSD: ffs_vfsops.c,v 1.102 2007/03/31 15:30:07 pedro Exp $	*/
+/*	$OpenBSD: ffs_vfsops.c,v 1.97 2006/10/20 13:01:10 pedro Exp $	*/
 /*	$NetBSD: ffs_vfsops.c,v 1.19 1996/02/09 22:22:26 christos Exp $	*/
 
 /*
@@ -68,9 +68,6 @@ int ffs_sbupdate(struct ufsmount *, int);
 int ffs_reload_vnode(struct vnode *, void *);
 int ffs_sync_vnode(struct vnode *, void *);
 int ffs_validate(struct fs *);
-
-void ffs1_compat_read(struct fs *, struct ufsmount *, ufs2_daddr_t);
-void ffs1_compat_write(struct fs *, struct ufsmount *);
 
 const struct vfsops ffs_vfsops = {
 	ffs_mount,
@@ -480,7 +477,7 @@ ffs_reload_vnode(struct vnode *vp, void *args)
 	/*
 	 * Step 5: invalidate all cached file data.
 	 */
-	if (vget(vp, LK_EXCLUSIVE, fra->p))
+	if (vget(vp, LK_EXCLUSIVE | LK_INTERLOCK, fra->p))
 		return (0);
 
 	if (vinvalbuf(vp, 0, fra->cred, fra->p, 0, 0))
@@ -560,9 +557,11 @@ ffs_reload(struct mount *mountp, struct ucred *cred, struct proc *p)
 	}
 
 	newfs = (struct fs *)bp->b_data;
-	if (ffs_validate(newfs) == 0) {
+	if (newfs->fs_magic != FS_MAGIC || (u_int)newfs->fs_bsize > MAXBSIZE ||
+	    newfs->fs_bsize < sizeof(struct fs) ||
+	    (u_int)newfs->fs_sbsize > SBSIZE) {
 		brelse(bp);
-		return (EINVAL);
+		return (EIO);		/* XXX needs translation */
 	}
 	fs = VFSTOUFS(mountp)->um_fs;
 	/*
@@ -578,7 +577,6 @@ ffs_reload(struct mount *mountp, struct ucred *cred, struct proc *p)
 		bp->b_flags |= B_INVAL;
 	brelse(bp);
 	mountp->mnt_maxsymlinklen = fs->fs_maxsymlinklen;
-	ffs1_compat_read(fs, VFSTOUFS(mountp), SBOFF);
 	ffs_oldfscompat(fs);
 	(void)ffs_statfs(mountp, &mountp->mnt_stat, p);
 	/*
@@ -721,13 +719,11 @@ ffs_mountfs(struct vnode *devvp, struct mount *mp, struct proc *p)
 		fs = (struct fs *) bp->b_data;
 		sbloc = sbtry[i];
 
-#if 0
 		if (fs->fs_magic == FS_UFS2_MAGIC) {
 			printf("ffs_mountfs(): Sorry, no UFS2 support (yet)\n");
 			error = EFTYPE;
 			goto out;
 		}
-#endif
 
 		/*
 		 * Do not look for an FFS1 file system at SBLOCK_UFS2. Doing so
@@ -803,8 +799,6 @@ ffs_mountfs(struct vnode *devvp, struct mount *mp, struct proc *p)
 	brelse(bp);
 	bp = NULL;
 	fs = ump->um_fs;
-
-	ffs1_compat_read(fs, ump, sbloc);
 
 	fs->fs_ronly = ronly;
 	size = fs->fs_cssize;
@@ -952,48 +946,6 @@ ffs_oldfscompat(struct fs *fs)
 	if (fs->fs_avgfpdir <= 0)				/* XXX */
 		fs->fs_avgfpdir = AFPDIR;			/* XXX */
 	return (0);
-}
-
-/*
- * Auxiliary function for reading FFS1 super blocks.
- */
-void
-ffs1_compat_read(struct fs *fs, struct ufsmount *ump, ufs2_daddr_t sbloc)
-{
-	if (fs->fs_magic == FS_UFS2_MAGIC)
-		return; /* UFS2 */
-#if 0
-	if (fs->fs_ffs1_flags & FS_FLAGS_UPDATED)
-		return; /* Already updated */
-#endif
-	fs->fs_flags = fs->fs_ffs1_flags;
-	fs->fs_sblockloc = sbloc;
-	fs->fs_maxbsize = fs->fs_bsize;
-	fs->fs_time = fs->fs_ffs1_time;
-	fs->fs_size = fs->fs_ffs1_size;
-	fs->fs_dsize = fs->fs_ffs1_dsize;
-	fs->fs_csaddr = fs->fs_ffs1_csaddr;
-	fs->fs_cstotal.cs_ndir = fs->fs_ffs1_cstotal.cs_ndir;
-	fs->fs_cstotal.cs_nbfree = fs->fs_ffs1_cstotal.cs_nbfree;
-	fs->fs_cstotal.cs_nifree = fs->fs_ffs1_cstotal.cs_nifree;
-	fs->fs_cstotal.cs_nffree = fs->fs_ffs1_cstotal.cs_nffree;
-	fs->fs_ffs1_flags |= FS_FLAGS_UPDATED;
-}
-
-/*
- * Auxiliary function for writing FFS1 super blocks.
- */
-void
-ffs1_compat_write(struct fs *fs, struct ufsmount *ump)
-{
-	if (fs->fs_magic != FS_UFS1_MAGIC)
-		return; /* UFS2 */
-
-	fs->fs_ffs1_time = fs->fs_time;
-	fs->fs_ffs1_cstotal.cs_ndir = fs->fs_cstotal.cs_ndir;
-	fs->fs_ffs1_cstotal.cs_nbfree = fs->fs_cstotal.cs_nbfree;
-	fs->fs_ffs1_cstotal.cs_nifree = fs->fs_cstotal.cs_nifree;
-	fs->fs_ffs1_cstotal.cs_nffree = fs->fs_cstotal.cs_nffree;
 }
 
 /*
@@ -1147,10 +1099,11 @@ ffs_sync_vnode(struct vnode *vp, void *arg) {
 	    ((ip->i_flag &
 		(IN_ACCESS | IN_CHANGE | IN_MODIFIED | IN_UPDATE)) == 0	&&
 		LIST_EMPTY(&vp->v_dirtyblkhd)) ) {
+		simple_unlock(&vp->v_interlock);
 		return (0);
 	}
 
-	if (vget(vp, LK_EXCLUSIVE | LK_NOWAIT, fsa->p))
+	if (vget(vp, LK_EXCLUSIVE | LK_NOWAIT | LK_INTERLOCK, fsa->p))
 		return (0);
 
 	if ((error = VOP_FSYNC(vp, fsa->cred, fsa->waitfor, fsa->p)))
@@ -1241,8 +1194,8 @@ ffs_sync(struct mount *mp, int waitfor, struct ucred *cred, struct proc *p)
 int
 ffs_vget(struct mount *mp, ino_t ino, struct vnode **vpp)
 {
-	struct fs *fs;
-	struct inode *ip;
+	register struct fs *fs;
+	register struct inode *ip;
 	struct ufs1_dinode *dp1;
 #ifdef FFS2
 	struct ufs2_dinode *dp2;
@@ -1473,8 +1426,6 @@ ffs_sbupdate(struct ufsmount *mp, int waitfor)
 		lp[0] = tmp;					/* XXX */
 	}							/* XXX */
 	dfs->fs_maxfilesize = mp->um_savedmaxfilesize;		/* XXX */
-
-	ffs1_compat_write(dfs, mp);
 
 	if (waitfor != MNT_WAIT)
 		bawrite(bp);

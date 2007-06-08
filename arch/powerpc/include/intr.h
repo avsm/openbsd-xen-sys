@@ -1,4 +1,4 @@
-/*	$OpenBSD: intr.h,v 1.31 2006/03/12 02:55:58 brad Exp $ */
+/*	$OpenBSD: intr.h,v 1.30 2006/03/11 15:07:29 miod Exp $ */
 
 /*
  * Copyright (c) 1997 Per Fogelstrom, Opsycon AB and RTMX Inc, USA.
@@ -68,6 +68,7 @@ int  splsoftnet(void);
 void do_pending_int(void);
 
 
+volatile extern int cpl, ipending, astpending;
 extern int imask[IPL_NUM];
 
 /* SPL asserts */
@@ -81,12 +82,11 @@ extern int imask[IPL_NUM];
 volatile static __inline int
 splraise(int newcpl)
 {
-	struct cpu_info *ci = curcpu();
 	int oldcpl;
 
 	__asm__ volatile("":::"memory");	/* don't reorder.... */
-	oldcpl = ci->ci_cpl;
-	ci->ci_cpl = oldcpl | newcpl;
+	oldcpl = cpl;
+	cpl = oldcpl | newcpl;
 	__asm__ volatile("":::"memory");	/* don't reorder.... */
 	return(oldcpl);
 }
@@ -94,11 +94,9 @@ splraise(int newcpl)
 volatile static __inline void
 splx(int newcpl)
 {
-	struct cpu_info *ci = curcpu();
-
 	__asm__ volatile("":::"memory");	/* reorder protect */
-	ci->ci_cpl = newcpl;
-	if(ci->ci_ipending & ~newcpl)
+	cpl = newcpl;
+	if(ipending & ~newcpl)
 		do_pending_int();
 	__asm__ volatile("":::"memory");	/* reorder protect */
 }
@@ -106,13 +104,12 @@ splx(int newcpl)
 volatile static __inline int
 spllower(int newcpl)
 {
-	struct cpu_info *ci = curcpu();
 	int oldcpl;
 
 	__asm__ volatile("":::"memory");	/* reorder protect */
-	oldcpl = ci->ci_cpl;
-	ci->ci_cpl = newcpl;
-	if(ci->ci_ipending & ~newcpl)
+	oldcpl = cpl;
+	cpl = newcpl;
+	if(ipending & ~newcpl)
 		do_pending_int();
 	__asm__ volatile("":::"memory");	/* reorder protect */
 	return(oldcpl);
@@ -123,12 +120,11 @@ spllower(int newcpl)
 static __inline void
 set_sint(int pending)
 {
-	struct cpu_info *ci = curcpu();
 	int	msrsave;
 
 	__asm__ ("mfmsr %0" : "=r"(msrsave));
 	__asm__ volatile ("mtmsr %0" :: "r"(msrsave & ~PSL_EE));
-	ci->ci_ipending |= pending;
+	ipending |= pending;
 	__asm__ volatile ("mtmsr %0" :: "r"(msrsave));
 }
 
@@ -144,8 +140,6 @@ set_sint(int pending)
 #define splaudio()	splraise(imask[IPL_AUDIO])
 #define splclock()	splraise(imask[IPL_CLOCK])
 #define splvm()		splraise(imask[IPL_VM])
-#define splsched()	splhigh()
-#define spllock()	splhigh()
 #define splstatclock()	splhigh()
 #define	splsoftclock()	splraise(SINT_CLOCK)
 #define	splsoftnet()	splraise(SINT_NET|SINT_CLOCK)

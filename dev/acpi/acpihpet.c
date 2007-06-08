@@ -1,4 +1,4 @@
-/*	$OpenBSD: acpihpet.c,v 1.3 2007/02/20 22:25:45 marco Exp $	*/
+/*	$OpenBSD: hpet.c,v 1.3 2005/12/16 21:11:51 marco Exp $	*/
 /*
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>
  *
@@ -86,19 +86,42 @@ void
 acpihpet_attach(struct device *parent, struct device *self, void *aux)
 {
 	struct acpihpet_softc *sc = (struct acpihpet_softc *) self;
-	struct acpi_softc *psc = (struct acpi_softc *)parent;
-	struct acpi_attach_args *aaa = aux;
-	struct acpi_hpet *hpet = (struct acpi_hpet *)aaa->aaa_table;
+	struct acpi_attach_args *aa = aux;
+	struct acpi_hpet *hpet = (struct acpi_hpet *)aa->aaa_table;
 	u_int64_t period, freq;	/* timer period in femtoseconds (10^-15) */
 
-	if (acpi_map_address(psc, &hpet->base_address, 0, HPET_REG_SIZE,
-	    &sc->sc_ioh, &sc->sc_iot))	{
+	switch (hpet->base_address.address_space_id) {
+	case GAS_SYSTEM_MEMORY:
+		sc->sc_iot = aa->aaa_memt;
+		break;
+
+	case GAS_SYSTEM_IOSPACE:
+		sc->sc_iot = aa->aaa_iot;
+		break;
+
+#if 0
+	case GAS_SYSTEM_PCI_CFG_SPACE:
+		sc->sc_iot = aa->aaa_pcit;
+		break;
+
+	case GAS_SYSTEM_SMBUS:
+		sc->sc_iot = aa->aaa_smbust;
+		break;
+#endif
+
+	default:
+		printf(": can't identify bus\n");
+		return;
+	}
+
+	if (bus_space_map(sc->sc_iot, hpet->base_address.address,
+	    HPET_REG_SIZE, 0, &sc->sc_ioh)) {
 		printf(": can't map i/o space\n");
 		return;
 	}
 
 	period = bus_space_read_4(sc->sc_iot, sc->sc_ioh,
-	    HPET_CAPABILITIES + sizeof(u_int32_t));
+				  HPET_CAPABILITIES + sizeof(u_int32_t));
 	freq =  1000000000000000ull / period;
 	printf(": %lld Hz\n", freq);
 
@@ -106,7 +129,6 @@ acpihpet_attach(struct device *parent, struct device *self, void *aux)
 	hpet_timecounter.tc_frequency = (u_int32_t)freq;
 	hpet_timecounter.tc_priv = sc;
 	hpet_timecounter.tc_name = sc->sc_dev.dv_xname;
-	bus_space_write_4(sc->sc_iot, sc->sc_ioh, HPET_CONFIGURATION, 1);
 	tc_init(&hpet_timecounter);
 #endif
 }

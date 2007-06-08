@@ -1,4 +1,4 @@
-/*	$OpenBSD: ioapic.c,v 1.11 2007/02/22 03:47:15 marco Exp $	*/
+/*	$OpenBSD: ioapic.c,v 1.9 2007/01/15 23:19:05 jsg Exp $	*/
 /* 	$NetBSD: ioapic.c,v 1.6 2003/05/15 13:30:31 fvdl Exp $	*/
 
 /*-

@@ -1,4 +1,4 @@
-/*	$OpenBSD: acpi.c,v 1.86 2007/03/26 03:52:49 marco Exp $	*/
+/*	$OpenBSD: acpi.c,v 1.75 2007/01/02 00:51:15 marco Exp $	*/
 /*
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>
  * Copyright (c) 2005 Jordan Hargrave <jordan@openbsd.org>
@@ -38,6 +38,8 @@
 #include <dev/acpi/acpidev.h>
 #include <dev/acpi/dsdt.h>
 
+#include "ioapic.h"
+
 #include <machine/apmvar.h>
 
 #ifdef ACPI_DEBUG
@@ -45,7 +47,6 @@ int acpi_debug = 16;
 #endif
 int acpi_enabled = 0;
 int acpi_poll_enabled = 0;
-int acpi_hasprocfvs = 0;
 
 #define ACPIEN_RETRIES 15
 
@@ -74,6 +75,7 @@ void	acpi_init_states(struct acpi_softc *);
 void	acpi_init_gpes(struct acpi_softc *);
 void	acpi_init_pm(struct acpi_softc *);
 
+void	acpi_init_pic(struct acpi_softc *);
 void	acpi_foundprt(struct aml_node *, void *);
 
 void	acpi_filtdetach(struct knote *);
@@ -239,38 +241,426 @@ acpi_gasio(struct acpi_softc *sc, int iodir, int iospace, uint64_t address,
 	case GAS_EMBEDDED:
 		if (sc->sc_ec == NULL)
 			break;
-#ifndef SMALL_KERNEL
 		if (iodir == ACPI_IOREAD)
 			acpiec_read(sc->sc_ec, (u_int8_t)address, len, buffer);
 		else
 			acpiec_write(sc->sc_ec, (u_int8_t)address, len, buffer);
-#endif
 		break;
 	}
 	return (0);
+}
+
+/* Map Power Management registers */
+void
+acpi_map_pmregs(struct acpi_softc *sc)
+{
+	bus_addr_t addr;
+	bus_size_t size;
+	const char *name;
+	int reg;
+
+	for (reg = 0; reg < ACPIREG_MAXREG; reg++) {
+		size = 0;
+		switch (reg) {
+		case ACPIREG_SMICMD:
+			name = "smi";
+			size = 1;
+			addr = sc->sc_fadt->smi_cmd;
+			break;
+		case ACPIREG_PM1A_STS:
+		case ACPIREG_PM1A_EN:
+			name = "pm1a_sts";
+			size = sc->sc_fadt->pm1_evt_len >> 1;
+			addr = sc->sc_fadt->pm1a_evt_blk;
+			if (reg == ACPIREG_PM1A_EN && addr) {
+				addr += size;
+				name = "pm1a_en";
+			}
+			break;
+		case ACPIREG_PM1A_CNT:
+			name = "pm1a_cnt";
+			size = sc->sc_fadt->pm1_cnt_len;
+			addr = sc->sc_fadt->pm1a_cnt_blk;
+			break;
+		case ACPIREG_PM1B_STS:
+		case ACPIREG_PM1B_EN:
+			name = "pm1b_sts";
+			size = sc->sc_fadt->pm1_evt_len >> 1;
+			addr = sc->sc_fadt->pm1b_evt_blk;
+			if (reg == ACPIREG_PM1B_EN && addr) {
+				addr += size;
+				name = "pm1b_en";
+			}
+			break;
+		case ACPIREG_PM1B_CNT:
+			name = "pm1b_cnt";
+			size = sc->sc_fadt->pm1_cnt_len;
+			addr = sc->sc_fadt->pm1b_cnt_blk;
+			break;
+		case ACPIREG_PM2_CNT:
+			name = "pm2_cnt";
+			size = sc->sc_fadt->pm2_cnt_len;
+			addr = sc->sc_fadt->pm2_cnt_blk;
+			break;
+#if 0
+		case ACPIREG_PM_TMR:
+			/* Allocated in acpitimer */
+			name = "pm_tmr";
+			size = sc->sc_fadt->pm_tmr_len;
+			addr = sc->sc_fadt->pm_tmr_blk;
+			break;
+#endif
+		case ACPIREG_GPE0_STS:
+		case ACPIREG_GPE0_EN:
+			name = "gpe0_sts";
+			size = sc->sc_fadt->gpe0_blk_len >> 1;
+			addr = sc->sc_fadt->gpe0_blk;
+
+			dnprintf(20, "gpe0 block len : %x\n",
+			    sc->sc_fadt->gpe0_blk_len >> 1);
+			dnprintf(20, "gpe0 block addr: %x\n",
+			    sc->sc_fadt->gpe0_blk);
+			if (reg == ACPIREG_GPE0_EN && addr) {
+				addr += size;
+				name = "gpe0_en";
+			}
+			break;
+		case ACPIREG_GPE1_STS:
+		case ACPIREG_GPE1_EN:
+			name = "gpe1_sts";
+			size = sc->sc_fadt->gpe1_blk_len >> 1;
+			addr = sc->sc_fadt->gpe1_blk;
+
+			dnprintf(20, "gpe1 block len : %x\n",
+			    sc->sc_fadt->gpe1_blk_len >> 1);
+			dnprintf(20, "gpe1 block addr: %x\n",
+			    sc->sc_fadt->gpe1_blk);
+			if (reg == ACPIREG_GPE1_EN && addr) {
+				addr += size;
+				name = "gpe1_en";
+			}
+			break;
+		}
+		if (size && addr) {
+			dnprintf(50, "mapping: %.4x %.4x %s\n",
+			    addr, size, name);
+
+			/* Size and address exist; map register space */
+			bus_space_map(sc->sc_iot, addr, size, 0,
+			    &sc->sc_pmregs[reg].ioh);
+
+			sc->sc_pmregs[reg].name = name;
+			sc->sc_pmregs[reg].size = size;
+			sc->sc_pmregs[reg].addr = addr;
+		}
+	}
+}
+
+/* Read from power management register */
+int
+acpi_read_pmreg(struct acpi_softc *sc, int reg, int offset)
+{
+	bus_space_handle_t ioh;
+	bus_size_t size, __size;
+	int regval;
+
+	__size = 0;
+	/* Special cases: 1A/1B blocks can be OR'ed together */
+	switch (reg) {
+	case ACPIREG_PM1_EN:
+		return (acpi_read_pmreg(sc, ACPIREG_PM1A_EN, offset) |
+		    acpi_read_pmreg(sc, ACPIREG_PM1B_EN, offset));
+	case ACPIREG_PM1_STS:
+		return (acpi_read_pmreg(sc, ACPIREG_PM1A_STS, offset) |
+		    acpi_read_pmreg(sc, ACPIREG_PM1B_STS, offset));
+	case ACPIREG_PM1_CNT:
+		return (acpi_read_pmreg(sc, ACPIREG_PM1A_CNT, offset) |
+		    acpi_read_pmreg(sc, ACPIREG_PM1B_CNT, offset));
+	case ACPIREG_GPE_STS:
+		__size = 1;
+		dnprintf(50, "read GPE_STS  offset: %.2x %.2x %.2x\n", offset,
+		    sc->sc_fadt->gpe0_blk_len>>1, sc->sc_fadt->gpe1_blk_len>>1);
+		if (offset < (sc->sc_fadt->gpe0_blk_len >> 1)) {
+			reg = ACPIREG_GPE0_STS;
+		}
+		break;
+	case ACPIREG_GPE_EN:
+		__size = 1;
+		dnprintf(50, "read GPE_EN   offset: %.2x %.2x %.2x\n",
+		    offset, sc->sc_fadt->gpe0_blk_len>>1,
+		    sc->sc_fadt->gpe1_blk_len>>1);
+		if (offset < (sc->sc_fadt->gpe0_blk_len >> 1)) {
+			reg = ACPIREG_GPE0_EN;
+		}
+		break;
+	}
+
+	if (reg >= ACPIREG_MAXREG || sc->sc_pmregs[reg].size == 0)
+		return (0);
+
+	regval = 0;
+	ioh = sc->sc_pmregs[reg].ioh;
+	size = sc->sc_pmregs[reg].size;
+	if (__size)
+		size = __size;
+	if (size > 4)
+		size = 4;
+
+	switch (size) {
+	case 1:
+		regval = bus_space_read_1(sc->sc_iot, ioh, offset);
+		break;
+	case 2:
+		regval = bus_space_read_2(sc->sc_iot, ioh, offset);
+		break;
+	case 4:
+		regval = bus_space_read_4(sc->sc_iot, ioh, offset);
+		break;
+	}
+
+	dnprintf(30, "acpi_readpm: %s = %.4x:%.4x %x\n",
+	    sc->sc_pmregs[reg].name,
+	    sc->sc_pmregs[reg].addr, offset, regval);
+	return (regval);
+}
+
+/* Write to power management register */
+void
+acpi_write_pmreg(struct acpi_softc *sc, int reg, int offset, int regval)
+{
+	bus_space_handle_t ioh;
+	bus_size_t size, __size;
+
+	__size = 0;
+	/* Special cases: 1A/1B blocks can be written with same value */
+	switch (reg) {
+	case ACPIREG_PM1_EN:
+		acpi_write_pmreg(sc, ACPIREG_PM1A_EN, offset, regval);
+		acpi_write_pmreg(sc, ACPIREG_PM1B_EN, offset, regval);
+		break;
+	case ACPIREG_PM1_STS:
+		acpi_write_pmreg(sc, ACPIREG_PM1A_STS, offset, regval);
+		acpi_write_pmreg(sc, ACPIREG_PM1B_STS, offset, regval);
+		break;
+	case ACPIREG_PM1_CNT:
+		acpi_write_pmreg(sc, ACPIREG_PM1A_CNT, offset, regval);
+		acpi_write_pmreg(sc, ACPIREG_PM1B_CNT, offset, regval);
+		break;
+	case ACPIREG_GPE_STS:
+		__size = 1;
+		dnprintf(50, "write GPE_STS offset: %.2x %.2x %.2x %.2x\n",
+		    offset, sc->sc_fadt->gpe0_blk_len>>1,
+		    sc->sc_fadt->gpe1_blk_len>>1, regval);
+		if (offset < (sc->sc_fadt->gpe0_blk_len >> 1)) {
+			reg = ACPIREG_GPE0_STS;
+		}
+		break;
+	case ACPIREG_GPE_EN:
+		__size = 1;
+		dnprintf(50, "write GPE_EN  offset: %.2x %.2x %.2x %.2x\n",
+		    offset, sc->sc_fadt->gpe0_blk_len>>1,
+		    sc->sc_fadt->gpe1_blk_len>>1, regval);
+		if (offset < (sc->sc_fadt->gpe0_blk_len >> 1)) {
+			reg = ACPIREG_GPE0_EN;
+		}
+		break;
+	}
+
+	/* All special case return here */
+	if (reg >= ACPIREG_MAXREG)
+		return;
+
+	ioh = sc->sc_pmregs[reg].ioh;
+	size = sc->sc_pmregs[reg].size;
+	if (__size)
+		size = __size;
+	if (size > 4)
+		size = 4;
+	switch (size) {
+	case 1:
+		bus_space_write_1(sc->sc_iot, ioh, offset, regval);
+		break;
+	case 2:
+		bus_space_write_2(sc->sc_iot, ioh, offset, regval);
+		break;
+	case 4:
+		bus_space_write_4(sc->sc_iot, ioh, offset, regval);
+		break;
+	}
+
+	dnprintf(30, "acpi_writepm: %s = %.4x:%.4x %x\n",
+	    sc->sc_pmregs[reg].name, sc->sc_pmregs[reg].addr, offset, regval);
 }
 
 void
 acpi_inidev(struct aml_node *node, void *arg)
 {
 	struct acpi_softc	*sc = (struct acpi_softc *)arg;
-	struct aml_value	res;
 
-	/*
-	 * XXX per the ACPI spec 6.5.1 only run _INI when device is there
-	 * or when there is no _STA.
-	 * The tricky bit is that the parent can have a _STA that is disabled
-	 * and the children do not have a _STA.  In that case the _INI will
-	 * execute!  This needs to be fixed.
-	 */
+	aml_evalnode(sc, node, 0, NULL, NULL);
+}
 
-	memset(&res, 0, sizeof res);
-	if (aml_evalname(sc, node, "_STA", 0, NULL, &res)) 
-		res.v_integer = STA_PRESENT; /* no _STA, fake it */
+void
+acpi_foundtmp(struct aml_node *node, void *arg)
+{
+	struct acpi_softc	*sc = (struct acpi_softc *)arg;
+	struct device		*self = (struct device *)arg;
+	const char		*dev;
+	struct acpi_attach_args	aaa;
 
-	if (res.v_integer & STA_PRESENT)
-		aml_evalnode(sc, node, 0, NULL, NULL);
+	dnprintf(10, "found thermal zone entry: %s\n", node->parent->name);
+
+	memset(&aaa, 0, sizeof(aaa));
+	aaa.aaa_iot = sc->sc_iot;
+	aaa.aaa_memt = sc->sc_memt;
+	aaa.aaa_node = node->parent;
+	aaa.aaa_dev = dev;
+	aaa.aaa_name = "acpitz";
+
+	config_found(self, &aaa, acpi_print);
+}
+
+void
+acpi_foundpss(struct aml_node *node, void *arg)
+{
+	struct acpi_softc	*sc = (struct acpi_softc *)arg;
+	struct device		*self = (struct device *)arg;
+	const char		*dev;
+	struct acpi_attach_args	aaa;
+
+	dnprintf(10, "found pss entry: %s\n", node->parent->name);
+
+	memset(&aaa, 0, sizeof(aaa));
+	aaa.aaa_iot = sc->sc_iot;
+	aaa.aaa_memt = sc->sc_memt;
+	aaa.aaa_node = node->parent;
+	aaa.aaa_dev = dev;
+	aaa.aaa_name = "acpicpu";
+
+	config_found(self, &aaa, acpi_print);
+}
+
+void
+acpi_foundec(struct aml_node *node, void *arg)
+{
+	struct acpi_softc	*sc = (struct acpi_softc *)arg;
+	struct device		*self = (struct device *)arg;
+	const char		*dev;
+	struct aml_value	 res;
+	struct acpi_attach_args	aaa;
+
+	if (aml_evalnode(sc, node, 0, NULL, &res) != 0)
+		return;
+
+	switch (res.type) {
+	case AML_OBJTYPE_STRING:
+		dev = res.v_string;
+		break;
+	case AML_OBJTYPE_INTEGER:
+		dev = aml_eisaid(aml_val2int(&res));
+		break;
+	default:
+		dev = "unknown";
+		break;
+	}
+
+	if (strcmp(dev, ACPI_DEV_ECD))
+		return;
+
+	memset(&aaa, 0, sizeof(aaa));
+	aaa.aaa_iot = sc->sc_iot;
+	aaa.aaa_memt = sc->sc_memt;
+	aaa.aaa_node = node->parent;
+	aaa.aaa_dev = dev;
+	aaa.aaa_name = "acpiec";
+	config_found(self, &aaa, acpi_print);
 	aml_freevalue(&res);
+}
+
+void
+acpi_foundhid(struct aml_node *node, void *arg)
+{
+	struct acpi_softc	*sc = (struct acpi_softc *)arg;
+	struct device		*self = (struct device *)arg;
+	const char		*dev;
+	struct aml_value	 res;
+	struct acpi_attach_args	aaa;
+
+	dnprintf(10, "found hid device: %s ", node->parent->name);
+	if (aml_evalnode(sc, node, 0, NULL, &res) != 0)
+		return;
+
+	switch (res.type) {
+	case AML_OBJTYPE_STRING:
+		dev = res.v_string;
+		break;
+	case AML_OBJTYPE_INTEGER:
+		dev = aml_eisaid(aml_val2int(&res));
+		break;
+	default:
+		dev = "unknown";
+		break;
+	}
+	dnprintf(10, "	device: %s\n", dev);
+
+	memset(&aaa, 0, sizeof(aaa));
+	aaa.aaa_iot = sc->sc_iot;
+	aaa.aaa_memt = sc->sc_memt;
+	aaa.aaa_node = node->parent;
+	aaa.aaa_dev = dev;
+
+	if (!strcmp(dev, ACPI_DEV_AC))
+		aaa.aaa_name = "acpiac";
+	else if (!strcmp(dev, ACPI_DEV_CMB))
+		aaa.aaa_name = "acpibat";
+	else if (!strcmp(dev, ACPI_DEV_LD) ||
+	    !strcmp(dev, ACPI_DEV_PBD) ||
+	    !strcmp(dev, ACPI_DEV_SBD))
+		aaa.aaa_name = "acpibtn";
+
+	if (aaa.aaa_name)
+		config_found(self, &aaa, acpi_print);
+	aml_freevalue(&res);
+}
+
+void
+acpi_founddock(struct aml_node *node, void *arg)
+{
+	struct acpi_softc	*sc = (struct acpi_softc *)arg;
+	struct device		*self = (struct device *)arg;
+	const char		*dev;
+	struct acpi_attach_args	aaa;
+
+	dnprintf(10, "found dock entry: %s\n", node->parent->name);
+
+	memset(&aaa, 0, sizeof(aaa));
+	aaa.aaa_iot = sc->sc_iot;
+	aaa.aaa_memt = sc->sc_memt;
+	aaa.aaa_node = node->parent;
+	aaa.aaa_dev = dev;
+	aaa.aaa_name = "acpidock";
+
+	config_found(self, &aaa, acpi_print);
+}
+
+void
+acpi_init_pic(struct acpi_softc *sc)
+{
+	struct aml_node		*node;
+	struct aml_value	arg;
+
+	node = aml_searchname(&aml_root, "\\_PIC");
+	if (node == 0)
+		return;
+
+	memset(&arg, 0, sizeof(arg));
+	arg.type = AML_OBJTYPE_INTEGER;
+#if NIOAPIC > 0
+	arg.v_integer = 1;
+#else
+	arg.v_integer = 0;
+#endif
+	aml_evalnode(sc, node, 1, &arg, NULL);
 }
 
 void
@@ -309,37 +699,6 @@ acpi_match(struct device *parent, void *match, void *aux)
 	return (1);
 }
 
-int acpi_add_device(struct aml_node *node, void *arg);
-
-int
-acpi_add_device(struct aml_node *node, void *arg)
-{
-	struct device *self = arg;
-	struct acpi_softc *sc = arg;
-	struct acpi_attach_args aaa;
-
-	memset(&aaa, 0, sizeof(aaa));
-	aaa.aaa_node = node;
-	aaa.aaa_dev = "";
-	aaa.aaa_iot = sc->sc_iot;
-	aaa.aaa_memt = sc->sc_memt;
-	if (node == NULL || node->value == NULL)
-		return 0;
-
-	switch (node->value->type) {
-	case AML_OBJTYPE_PROCESSOR:
-		aaa.aaa_name = "acpicpu";
-		break;
-	case AML_OBJTYPE_THERMZONE:
-		aaa.aaa_name = "acpitz";
- 		break;
-        default:
-		return 0;
-	}
-	config_found(self, &aaa, acpi_print);
-	return 0;
-}
-
 void
 acpi_attach(struct device *parent, struct device *self, void *aux)
 {
@@ -349,15 +708,13 @@ acpi_attach(struct device *parent, struct device *self, void *aux)
 	struct acpi_rsdp *rsdp;
 	struct acpi_q *entry;
 	struct acpi_dsdt *p_dsdt;
-#ifndef SMALL_KERNEL
 	struct device *dev;
 	struct acpi_ac *ac;
 	struct acpi_bat *bat;
 	paddr_t facspa;
-#endif
+
 	sc->sc_iot = aaa->aaa_iot;
 	sc->sc_memt = aaa->aaa_memt;
-
 
 	if (acpi_map(aaa->aaa_pbase, sizeof(struct acpi_rsdp), &handle)) {
 		printf(": can't map memory\n");
@@ -416,9 +773,6 @@ acpi_attach(struct device *parent, struct device *self, void *aux)
 	}
 #endif
 
-	/* Create opcode hashtable */
-	aml_hashopcodes();
-
 	acpi_enabled=1;
 
 	/* Create Default AML objects */
@@ -455,9 +809,8 @@ acpi_attach(struct device *parent, struct device *self, void *aux)
 	aml_postparse();
 
 	/* Walk AML Tree */
-	/* aml_walkroot(); */
+	//aml_walkroot();
 
-#ifndef SMALL_KERNEL
 	/* Find available sleeping states */
 	acpi_init_states(sc);
 
@@ -485,7 +838,6 @@ acpi_attach(struct device *parent, struct device *self, void *aux)
 
 	/* some devices require periodic polling */
 	timeout_set(&sc->sc_dev_timeout, acpi_poll, sc);
-#endif /* SMALL_KERNEL */
 
 	/*
 	 * Take over ACPI control.  Note that once we do this, we
@@ -509,6 +861,10 @@ acpi_attach(struct device *parent, struct device *self, void *aux)
 	} while (!(acpi_read_pmreg(sc, ACPIREG_PM1_CNT, 0) & ACPI_PM1_SCI_EN));
 #endif
 
+	acpi_init_pic(sc);
+
+	acpi_attach_machdep(sc);
+
 	printf("\n");
 
 	printf("%s: tables ", DEVNAME(sc));
@@ -517,7 +873,6 @@ acpi_attach(struct device *parent, struct device *self, void *aux)
 	}
 	printf("\n");
 
-#ifndef SMALL_KERNEL
 	/*
 	 * ACPI is enabled now -- attach timer
 	 */
@@ -534,7 +889,6 @@ acpi_attach(struct device *parent, struct device *self, void *aux)
 #endif
 		config_found(self, &aaa, acpi_print);
 	}
-#endif /* SMALL_KERNEL */
 
 	/*
 	 * Attach table-defined devices
@@ -561,19 +915,20 @@ acpi_attach(struct device *parent, struct device *self, void *aux)
 	/* attach pci interrupt routing tables */
 	aml_find_node(aml_root.child, "_PRT", acpi_foundprt, sc);
 
-#ifndef SMALL_KERNEL
 	 /* XXX EC needs to be attached first on some systems */
 	aml_find_node(aml_root.child, "_HID", acpi_foundec, sc);
-
-	aml_walknodes(&aml_root, AML_WALK_PRE, acpi_add_device, sc);
 
 	/* attach battery, power supply and button devices */
 	aml_find_node(aml_root.child, "_HID", acpi_foundhid, sc);
 
-#if 0
+	/* attach cpu devices */
+	aml_find_node(aml_root.child, "_PSS", acpi_foundpss, sc);
+
 	/* attach docks */
 	aml_find_node(aml_root.child, "_DCK", acpi_founddock, sc);
-#endif
+
+	/* attach thermal zone devices, XXX MUST be last entry */
+	aml_find_node(aml_root.child, "_TMP", acpi_foundtmp, sc);
 
 	/* create list of devices we want to query when APM come in */
 	SLIST_INIT(&sc->sc_ac);
@@ -600,7 +955,6 @@ acpi_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_thread->running = 1;
 
 	kthread_create_deferred(acpi_create_thread, sc);
-#endif /* SMALL_KERNEL */
 }
 
 int
@@ -759,173 +1113,6 @@ acpi_load_dsdt(paddr_t pa, struct acpi_q **dsdt)
 	}
 }
 
-int
-acpiopen(dev_t dev, int flag, int mode, struct proc *p)
-{
-	struct acpi_softc *sc;
-	int error = 0;
-
-	if (!acpi_cd.cd_ndevs || minor(dev) != 0 ||
-	    !(sc = acpi_cd.cd_devs[minor(dev)]))
-		return (ENXIO);
-
-	return (error);
-}
-
-int
-acpiclose(dev_t dev, int flag, int mode, struct proc *p)
-{
-	struct acpi_softc *sc;
-
-	if (!acpi_cd.cd_ndevs || minor(dev) != 0 ||
-	    !(sc = acpi_cd.cd_devs[minor(dev)]))
-		return (ENXIO);
-
-	return (0);
-}
-
-int
-acpiioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
-{
-	int error = 0;
-#ifndef SMALL_KERNEL
-	struct acpi_softc *sc;
-	struct acpi_ac *ac;
-	struct acpi_bat *bat;
-	struct apm_power_info *pi = (struct apm_power_info *)data;
-	int bats;
-	unsigned int remaining, rem, minutes, rate;
-
-	if (!acpi_cd.cd_ndevs || minor(dev) != 0 ||
-	    !(sc = acpi_cd.cd_devs[minor(dev)]))
-		return (ENXIO);
-
-	ACPI_LOCK(sc);
-	/* fake APM */
-	switch (cmd) {
-	case APM_IOC_GETPOWER:
-		/* A/C */
-		pi->ac_state = APM_AC_UNKNOWN;
-		SLIST_FOREACH(ac, &sc->sc_ac, aac_link) {
-			if (ac->aac_softc->sc_ac_stat == PSR_ONLINE)
-				pi->ac_state = APM_AC_ON;
-			else if (ac->aac_softc->sc_ac_stat == PSR_OFFLINE)
-				if (pi->ac_state == APM_AC_UNKNOWN)
-					pi->ac_state = APM_AC_OFF;
-		}
-
-		/* battery */
-		pi->battery_state = APM_BATT_UNKNOWN;
-		pi->battery_life = 0;
-		pi->minutes_left = 0;
-		bats = 0;
-		remaining = rem = 0;
-		minutes = 0;
-		rate = 0;
-		SLIST_FOREACH(bat, &sc->sc_bat, aba_link) {
-			if (bat->aba_softc->sc_bat_present == 0)
-				continue;
-
-			if (bat->aba_softc->sc_bif.bif_last_capacity == 0)
-				continue;
-
-			bats++;
-			rem = (bat->aba_softc->sc_bst.bst_capacity * 100) /
-			    bat->aba_softc->sc_bif.bif_last_capacity;
-			if (rem > 100)
-				rem = 100;
-			remaining += rem;
-
-			if (bat->aba_softc->sc_bst.bst_rate == BST_UNKNOWN)
-				continue;
-			else if (bat->aba_softc->sc_bst.bst_rate > 1)
-				rate = bat->aba_softc->sc_bst.bst_rate;
-
-			minutes += bat->aba_softc->sc_bst.bst_capacity;
-		}
-
-		if (bats == 0) {
-			pi->battery_state = APM_BATTERY_ABSENT;
-			pi->battery_life = 0;
-			pi->minutes_left = (unsigned int)-1;
-			break;
-		}
-
-		if (pi->ac_state == APM_AC_ON || rate == 0)
-			pi->minutes_left = (unsigned int)-1;
-		else
-			pi->minutes_left = 100 * minutes / rate;
-
-		/* running on battery */
-		pi->battery_life = remaining / bats;
-		if (pi->battery_life > 50)
-			pi->battery_state = APM_BATT_HIGH;
-		else if (pi->battery_life > 25)
-			pi->battery_state = APM_BATT_LOW;
-		else
-			pi->battery_state = APM_BATT_CRITICAL;
-
-		break;
-
-	default:
-		error = ENOTTY;
-	}
-
-	ACPI_UNLOCK(sc);
-#else
-	error = ENXIO;
-#endif /* SMALL_KERNEL */
-	return (error);
-}
-
-void
-acpi_filtdetach(struct knote *kn)
-{
-	struct acpi_softc *sc = kn->kn_hook;
-
-	ACPI_LOCK(sc);
-	SLIST_REMOVE(sc->sc_note, kn, knote, kn_selnext);
-	ACPI_UNLOCK(sc);
-}
-
-int
-acpi_filtread(struct knote *kn, long hint)
-{
-	/* XXX weird kqueue_scan() semantics */
-	if (hint & !kn->kn_data)
-		kn->kn_data = hint;
-
-	return (1);
-}
-
-int
-acpikqfilter(dev_t dev, struct knote *kn)
-{
-	struct acpi_softc *sc;
-
-	if (!acpi_cd.cd_ndevs || minor(dev) != 0 ||
-	    !(sc = acpi_cd.cd_devs[minor(dev)]))
-		return (ENXIO);
-
-	switch (kn->kn_filter) {
-	case EVFILT_READ:
-		kn->kn_fop = &acpiread_filtops;
-		break;
-	default:
-		return (1);
-	}
-
-	kn->kn_hook = sc;
-
-	ACPI_LOCK(sc);
-	SLIST_INSERT_HEAD(sc->sc_note, kn, kn_selnext);
-	ACPI_UNLOCK(sc);
-
-	return (0);
-}
-
-/* move all stuff that doesn't go on the boot media in here */
-#ifndef SMALL_KERNEL
 int
 acpi_interrupt(void *arg)
 {
@@ -1247,14 +1434,172 @@ acpi_powerdown(void)
 	acpi_enter_sleep_state(acpi_softc, ACPI_STATE_S5);
 }
 
+int
+acpiopen(dev_t dev, int flag, int mode, struct proc *p)
+{
+	struct acpi_softc *sc;
+	int error = 0;
+
+	if (!acpi_cd.cd_ndevs || minor(dev) != 0 ||
+	    !(sc = acpi_cd.cd_devs[minor(dev)]))
+		return (ENXIO);
+
+	return (error);
+}
+
+int
+acpiclose(dev_t dev, int flag, int mode, struct proc *p)
+{
+	struct acpi_softc *sc;
+
+	if (!acpi_cd.cd_ndevs || minor(dev) != 0 ||
+	    !(sc = acpi_cd.cd_devs[minor(dev)]))
+		return (ENXIO);
+
+	return (0);
+}
+
+int
+acpiioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
+{
+	struct acpi_softc *sc;
+	struct acpi_ac *ac;
+	struct acpi_bat *bat;
+	struct apm_power_info *pi = (struct apm_power_info *)data;
+	int error = 0, bats;
+	unsigned int remaining, rem, minutes, rate;
+
+	if (!acpi_cd.cd_ndevs || minor(dev) != 0 ||
+	    !(sc = acpi_cd.cd_devs[minor(dev)]))
+		return (ENXIO);
+
+	ACPI_LOCK(sc);
+	/* fake APM */
+	switch (cmd) {
+	case APM_IOC_GETPOWER:
+		/* A/C */
+		pi->ac_state = APM_AC_UNKNOWN;
+		SLIST_FOREACH(ac, &sc->sc_ac, aac_link) {
+			if (ac->aac_softc->sc_ac_stat == PSR_ONLINE)
+				pi->ac_state = APM_AC_ON;
+			else if (ac->aac_softc->sc_ac_stat == PSR_OFFLINE)
+				if (pi->ac_state == APM_AC_UNKNOWN)
+					pi->ac_state = APM_AC_OFF;
+		}
+
+		/* battery */
+		pi->battery_state = APM_BATT_UNKNOWN;
+		pi->battery_life = 0;
+		pi->minutes_left = 0;
+		bats = 0;
+		remaining = rem = 0;
+		minutes = 0;
+		rate = 0;
+		SLIST_FOREACH(bat, &sc->sc_bat, aba_link) {
+			if (bat->aba_softc->sc_bat_present == 0)
+				continue;
+
+			if (bat->aba_softc->sc_bif.bif_last_capacity == 0)
+				continue;
+
+			bats++;
+			rem = (bat->aba_softc->sc_bst.bst_capacity * 100) /
+			    bat->aba_softc->sc_bif.bif_last_capacity;
+			if (rem > 100)
+				rem = 100;
+			remaining += rem;
+
+			if (bat->aba_softc->sc_bst.bst_rate == BST_UNKNOWN)
+				continue;
+			else if (bat->aba_softc->sc_bst.bst_rate > 1)
+				rate = bat->aba_softc->sc_bst.bst_rate;
+
+			minutes += bat->aba_softc->sc_bst.bst_capacity;
+		}
+
+		if (bats == 0) {
+			pi->battery_state = APM_BATTERY_ABSENT;
+			pi->battery_life = 0;
+			pi->minutes_left = (unsigned int)-1;
+			break;
+		}
+
+		if (pi->ac_state == APM_AC_ON || rate == 0)
+			pi->minutes_left = (unsigned int)-1;
+		else
+			pi->minutes_left = minutes / rate * 100;
+
+		/* running on battery */
+		pi->battery_life = remaining / bats;
+		if (pi->battery_life > 50)
+			pi->battery_state = APM_BATT_HIGH;
+		else if (pi->battery_life > 25)
+			pi->battery_state = APM_BATT_LOW;
+		else
+			pi->battery_state = APM_BATT_CRITICAL;
+
+		break;
+
+	default:
+		error = ENOTTY;
+	}
+
+	ACPI_UNLOCK(sc);
+	return (error);
+}
+
+void
+acpi_filtdetach(struct knote *kn)
+{
+	struct acpi_softc *sc = kn->kn_hook;
+
+	ACPI_LOCK(sc);
+	SLIST_REMOVE(sc->sc_note, kn, knote, kn_selnext);
+	ACPI_UNLOCK(sc);
+}
+
+int
+acpi_filtread(struct knote *kn, long hint)
+{
+	/* XXX weird kqueue_scan() semantics */
+	if (hint & !kn->kn_data)
+		kn->kn_data = hint;
+
+	return (1);
+}
+
+int
+acpikqfilter(dev_t dev, struct knote *kn)
+{
+	struct acpi_softc *sc;
+
+	if (!acpi_cd.cd_ndevs || minor(dev) != 0 ||
+	    !(sc = acpi_cd.cd_devs[minor(dev)]))
+		return (ENXIO);
+
+	switch (kn->kn_filter) {
+	case EVFILT_READ:
+		kn->kn_fop = &acpiread_filtops;
+		break;
+	default:
+		return (1);
+	}
+
+	kn->kn_hook = sc;
+
+	ACPI_LOCK(sc);
+	SLIST_INSERT_HEAD(sc->sc_note, kn, kn_selnext);
+	ACPI_UNLOCK(sc);
+
+	return (0);
+}
+
 void
 acpi_isr_thread(void *arg)
 {
 	struct acpi_thread *thread = arg;
 	struct acpi_softc  *sc = thread->sc;
 	u_int32_t gpe;
-
-	acpi_attach_machdep(sc);
 
 	/*
 	 * If we have an interrupt handler, we can get notification
@@ -1348,376 +1693,3 @@ acpi_create_thread(void *arg)
 		return;
 	}
 }
-
-int
-acpi_map_address(struct acpi_softc *sc, struct acpi_gas *gas,  bus_addr_t base, bus_size_t size, 
-		 bus_space_handle_t *pioh, bus_space_tag_t *piot)
-{
-	int iospace = GAS_SYSTEM_IOSPACE;
-
-	/* No GAS structure, default to I/O space */
-	if (gas != NULL) {
-		base += gas->address;
-		iospace = gas->address_space_id;
-	}
-	switch (iospace) {
-	case GAS_SYSTEM_MEMORY:
-		*piot = sc->sc_memt;
-		break;
-	case GAS_SYSTEM_IOSPACE:
-		*piot = sc->sc_iot;
-		break;
-	default:
-		return -1;
-	}
-	if (bus_space_map(*piot, base, size, 0, pioh))
-		return -1;
-
-	return 0;
-}
-
-/* Map Power Management registers */
-void
-acpi_map_pmregs(struct acpi_softc *sc)
-{
-	bus_addr_t addr;
-	bus_size_t size;
-	const char *name;
-	int reg;
-
-	for (reg = 0; reg < ACPIREG_MAXREG; reg++) {
-		size = 0;
-		switch (reg) {
-		case ACPIREG_SMICMD:
-			name = "smi";
-			size = 1;
-			addr = sc->sc_fadt->smi_cmd;
-			break;
-		case ACPIREG_PM1A_STS:
-		case ACPIREG_PM1A_EN:
-			name = "pm1a_sts";
-			size = sc->sc_fadt->pm1_evt_len >> 1;
-			addr = sc->sc_fadt->pm1a_evt_blk;
-			if (reg == ACPIREG_PM1A_EN && addr) {
-				addr += size;
-				name = "pm1a_en";
-			}
-			break;
-		case ACPIREG_PM1A_CNT:
-			name = "pm1a_cnt";
-			size = sc->sc_fadt->pm1_cnt_len;
-			addr = sc->sc_fadt->pm1a_cnt_blk;
-			break;
-		case ACPIREG_PM1B_STS:
-		case ACPIREG_PM1B_EN:
-			name = "pm1b_sts";
-			size = sc->sc_fadt->pm1_evt_len >> 1;
-			addr = sc->sc_fadt->pm1b_evt_blk;
-			if (reg == ACPIREG_PM1B_EN && addr) {
-				addr += size;
-				name = "pm1b_en";
-			}
-			break;
-		case ACPIREG_PM1B_CNT:
-			name = "pm1b_cnt";
-			size = sc->sc_fadt->pm1_cnt_len;
-			addr = sc->sc_fadt->pm1b_cnt_blk;
-			break;
-		case ACPIREG_PM2_CNT:
-			name = "pm2_cnt";
-			size = sc->sc_fadt->pm2_cnt_len;
-			addr = sc->sc_fadt->pm2_cnt_blk;
-			break;
-#if 0
-		case ACPIREG_PM_TMR:
-			/* Allocated in acpitimer */
-			name = "pm_tmr";
-			size = sc->sc_fadt->pm_tmr_len;
-			addr = sc->sc_fadt->pm_tmr_blk;
-			break;
-#endif
-		case ACPIREG_GPE0_STS:
-		case ACPIREG_GPE0_EN:
-			name = "gpe0_sts";
-			size = sc->sc_fadt->gpe0_blk_len >> 1;
-			addr = sc->sc_fadt->gpe0_blk;
-
-			dnprintf(20, "gpe0 block len : %x\n",
-			    sc->sc_fadt->gpe0_blk_len >> 1);
-			dnprintf(20, "gpe0 block addr: %x\n",
-			    sc->sc_fadt->gpe0_blk);
-			if (reg == ACPIREG_GPE0_EN && addr) {
-				addr += size;
-				name = "gpe0_en";
-			}
-			break;
-		case ACPIREG_GPE1_STS:
-		case ACPIREG_GPE1_EN:
-			name = "gpe1_sts";
-			size = sc->sc_fadt->gpe1_blk_len >> 1;
-			addr = sc->sc_fadt->gpe1_blk;
-
-			dnprintf(20, "gpe1 block len : %x\n",
-			    sc->sc_fadt->gpe1_blk_len >> 1);
-			dnprintf(20, "gpe1 block addr: %x\n",
-			    sc->sc_fadt->gpe1_blk);
-			if (reg == ACPIREG_GPE1_EN && addr) {
-				addr += size;
-				name = "gpe1_en";
-			}
-			break;
-		}
-		if (size && addr) {
-			dnprintf(50, "mapping: %.4x %.4x %s\n",
-			    addr, size, name);
-
-			/* Size and address exist; map register space */
-			bus_space_map(sc->sc_iot, addr, size, 0,
-			    &sc->sc_pmregs[reg].ioh);
-
-			sc->sc_pmregs[reg].name = name;
-			sc->sc_pmregs[reg].size = size;
-			sc->sc_pmregs[reg].addr = addr;
-		}
-	}
-}
-
-/* Read from power management register */
-int
-acpi_read_pmreg(struct acpi_softc *sc, int reg, int offset)
-{
-	bus_space_handle_t ioh;
-	bus_size_t size, __size;
-	int regval;
-
-	__size = 0;
-	/* Special cases: 1A/1B blocks can be OR'ed together */
-	switch (reg) {
-	case ACPIREG_PM1_EN:
-		return (acpi_read_pmreg(sc, ACPIREG_PM1A_EN, offset) |
-		    acpi_read_pmreg(sc, ACPIREG_PM1B_EN, offset));
-	case ACPIREG_PM1_STS:
-		return (acpi_read_pmreg(sc, ACPIREG_PM1A_STS, offset) |
-		    acpi_read_pmreg(sc, ACPIREG_PM1B_STS, offset));
-	case ACPIREG_PM1_CNT:
-		return (acpi_read_pmreg(sc, ACPIREG_PM1A_CNT, offset) |
-		    acpi_read_pmreg(sc, ACPIREG_PM1B_CNT, offset));
-	case ACPIREG_GPE_STS:
-		__size = 1;
-		dnprintf(50, "read GPE_STS  offset: %.2x %.2x %.2x\n", offset,
-		    sc->sc_fadt->gpe0_blk_len>>1, sc->sc_fadt->gpe1_blk_len>>1);
-		if (offset < (sc->sc_fadt->gpe0_blk_len >> 1)) {
-			reg = ACPIREG_GPE0_STS;
-		}
-		break;
-	case ACPIREG_GPE_EN:
-		__size = 1;
-		dnprintf(50, "read GPE_EN   offset: %.2x %.2x %.2x\n",
-		    offset, sc->sc_fadt->gpe0_blk_len>>1,
-		    sc->sc_fadt->gpe1_blk_len>>1);
-		if (offset < (sc->sc_fadt->gpe0_blk_len >> 1)) {
-			reg = ACPIREG_GPE0_EN;
-		}
-		break;
-	}
-
-	if (reg >= ACPIREG_MAXREG || sc->sc_pmregs[reg].size == 0)
-		return (0);
-
-	regval = 0;
-	ioh = sc->sc_pmregs[reg].ioh;
-	size = sc->sc_pmregs[reg].size;
-	if (__size)
-		size = __size;
-	if (size > 4)
-		size = 4;
-
-	switch (size) {
-	case 1:
-		regval = bus_space_read_1(sc->sc_iot, ioh, offset);
-		break;
-	case 2:
-		regval = bus_space_read_2(sc->sc_iot, ioh, offset);
-		break;
-	case 4:
-		regval = bus_space_read_4(sc->sc_iot, ioh, offset);
-		break;
-	}
-
-	dnprintf(30, "acpi_readpm: %s = %.4x:%.4x %x\n",
-	    sc->sc_pmregs[reg].name,
-	    sc->sc_pmregs[reg].addr, offset, regval);
-	return (regval);
-}
-
-/* Write to power management register */
-void
-acpi_write_pmreg(struct acpi_softc *sc, int reg, int offset, int regval)
-{
-	bus_space_handle_t ioh;
-	bus_size_t size, __size;
-
-	__size = 0;
-	/* Special cases: 1A/1B blocks can be written with same value */
-	switch (reg) {
-	case ACPIREG_PM1_EN:
-		acpi_write_pmreg(sc, ACPIREG_PM1A_EN, offset, regval);
-		acpi_write_pmreg(sc, ACPIREG_PM1B_EN, offset, regval);
-		break;
-	case ACPIREG_PM1_STS:
-		acpi_write_pmreg(sc, ACPIREG_PM1A_STS, offset, regval);
-		acpi_write_pmreg(sc, ACPIREG_PM1B_STS, offset, regval);
-		break;
-	case ACPIREG_PM1_CNT:
-		acpi_write_pmreg(sc, ACPIREG_PM1A_CNT, offset, regval);
-		acpi_write_pmreg(sc, ACPIREG_PM1B_CNT, offset, regval);
-		break;
-	case ACPIREG_GPE_STS:
-		__size = 1;
-		dnprintf(50, "write GPE_STS offset: %.2x %.2x %.2x %.2x\n",
-		    offset, sc->sc_fadt->gpe0_blk_len>>1,
-		    sc->sc_fadt->gpe1_blk_len>>1, regval);
-		if (offset < (sc->sc_fadt->gpe0_blk_len >> 1)) {
-			reg = ACPIREG_GPE0_STS;
-		}
-		break;
-	case ACPIREG_GPE_EN:
-		__size = 1;
-		dnprintf(50, "write GPE_EN  offset: %.2x %.2x %.2x %.2x\n",
-		    offset, sc->sc_fadt->gpe0_blk_len>>1,
-		    sc->sc_fadt->gpe1_blk_len>>1, regval);
-		if (offset < (sc->sc_fadt->gpe0_blk_len >> 1)) {
-			reg = ACPIREG_GPE0_EN;
-		}
-		break;
-	}
-
-	/* All special case return here */
-	if (reg >= ACPIREG_MAXREG)
-		return;
-
-	ioh = sc->sc_pmregs[reg].ioh;
-	size = sc->sc_pmregs[reg].size;
-	if (__size)
-		size = __size;
-	if (size > 4)
-		size = 4;
-	switch (size) {
-	case 1:
-		bus_space_write_1(sc->sc_iot, ioh, offset, regval);
-		break;
-	case 2:
-		bus_space_write_2(sc->sc_iot, ioh, offset, regval);
-		break;
-	case 4:
-		bus_space_write_4(sc->sc_iot, ioh, offset, regval);
-		break;
-	}
-
-	dnprintf(30, "acpi_writepm: %s = %.4x:%.4x %x\n",
-	    sc->sc_pmregs[reg].name, sc->sc_pmregs[reg].addr, offset, regval);
-}
-
-void
-acpi_foundec(struct aml_node *node, void *arg)
-{
-	struct acpi_softc	*sc = (struct acpi_softc *)arg;
-	struct device		*self = (struct device *)arg;
-	const char		*dev;
-	struct aml_value	 res;
-	struct acpi_attach_args	aaa;
-
-	if (aml_evalnode(sc, node, 0, NULL, &res) != 0)
-		return;
-
-	switch (res.type) {
-	case AML_OBJTYPE_STRING:
-		dev = res.v_string;
-		break;
-	case AML_OBJTYPE_INTEGER:
-		dev = aml_eisaid(aml_val2int(&res));
-		break;
-	default:
-		dev = "unknown";
-		break;
-	}
-
-	if (strcmp(dev, ACPI_DEV_ECD))
-		return;
-
-	memset(&aaa, 0, sizeof(aaa));
-	aaa.aaa_iot = sc->sc_iot;
-	aaa.aaa_memt = sc->sc_memt;
-	aaa.aaa_node = node->parent;
-	aaa.aaa_dev = dev;
-	aaa.aaa_name = "acpiec";
-	config_found(self, &aaa, acpi_print);
-	aml_freevalue(&res);
-}
-
-void
-acpi_foundhid(struct aml_node *node, void *arg)
-{
-	struct acpi_softc	*sc = (struct acpi_softc *)arg;
-	struct device		*self = (struct device *)arg;
-	const char		*dev;
-	struct aml_value	 res;
-	struct acpi_attach_args	aaa;
-
-	dnprintf(10, "found hid device: %s ", node->parent->name);
-	if (aml_evalnode(sc, node, 0, NULL, &res) != 0)
-		return;
-
-	switch (res.type) {
-	case AML_OBJTYPE_STRING:
-		dev = res.v_string;
-		break;
-	case AML_OBJTYPE_INTEGER:
-		dev = aml_eisaid(aml_val2int(&res));
-		break;
-	default:
-		dev = "unknown";
-		break;
-	}
-	dnprintf(10, "	device: %s\n", dev);
-
-	memset(&aaa, 0, sizeof(aaa));
-	aaa.aaa_iot = sc->sc_iot;
-	aaa.aaa_memt = sc->sc_memt;
-	aaa.aaa_node = node->parent;
-	aaa.aaa_dev = dev;
-
-	if (!strcmp(dev, ACPI_DEV_AC))
-		aaa.aaa_name = "acpiac";
-	else if (!strcmp(dev, ACPI_DEV_CMB))
-		aaa.aaa_name = "acpibat";
-	else if (!strcmp(dev, ACPI_DEV_LD) ||
-	    !strcmp(dev, ACPI_DEV_PBD) ||
-	    !strcmp(dev, ACPI_DEV_SBD))
-		aaa.aaa_name = "acpibtn";
-
-	if (aaa.aaa_name)
-		config_found(self, &aaa, acpi_print);
-	aml_freevalue(&res);
-}
-
-void
-acpi_founddock(struct aml_node *node, void *arg)
-{
-	struct acpi_softc	*sc = (struct acpi_softc *)arg;
-	struct device		*self = (struct device *)arg;
-	const char		*dev;
-	struct acpi_attach_args	aaa;
-
-	dnprintf(10, "found dock entry: %s\n", node->parent->name);
-
-	memset(&aaa, 0, sizeof(aaa));
-	aaa.aaa_iot = sc->sc_iot;
-	aaa.aaa_memt = sc->sc_memt;
-	aaa.aaa_node = node->parent;
-	aaa.aaa_dev = dev;
-	aaa.aaa_name = "acpidock";
-
-	config_found(self, &aaa, acpi_print);
-}
-#endif /* SMALL_KERNEL */

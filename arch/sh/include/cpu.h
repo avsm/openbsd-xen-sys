@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.h,v 1.6 2007/03/03 21:37:27 miod Exp $	*/
+/*	$OpenBSD: cpu.h,v 1.3 2006/11/29 12:26:14 miod Exp $	*/
 /*	$NetBSD: cpu.h,v 1.41 2006/01/21 04:24:12 uwe Exp $	*/
 
 /*-
@@ -88,7 +88,11 @@ do {									\
  * buffer pages are invalid.  On the MIPS, request an ast to send us
  * through trap, marking the proc as needing a profiling tick.
  */
-#define	need_proftick(p)	aston(p)
+#define	need_proftick(p)						\
+do {									\
+	(p)->p_flag |= P_OWEUPC;					\
+	aston(p);							\
+} while (/*CONSTCOND*/0)
 
 /*
  * Notify the current process (p) that it has a signal pending,
@@ -200,12 +204,6 @@ void _cpu_spin(uint32_t);	/* for delay loop. */
 void delay(int);
 struct pcb;
 void savectx(struct pcb *);
-struct fpreg;
-void fpu_save(struct fpreg *);
-void fpu_restore(struct fpreg *);
-u_int cpu_dump(int (*)(dev_t, daddr_t, caddr_t, size_t), daddr_t *);
-u_int cpu_dumpsize(void);
-void dumpconf(void);
 void dumpsys(void);
 #endif /* _KERNEL */
 #endif /* !_SH_CPU_H_ */

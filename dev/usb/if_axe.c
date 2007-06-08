@@ -1,20 +1,4 @@
-/*	$OpenBSD: if_axe.c,v 1.62 2007/04/09 08:42:55 jsg Exp $	*/
-
-/*
- * Copyright (c) 2005, 2006, 2007 Jonathan Gray <jsg@openbsd.org>
- *
- * Permission to use, copy, modify, and distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
+/*	$OpenBSD: if_axe.c,v 1.58 2007/01/18 04:36:57 jsg Exp $	*/
 
 /*
  * Copyright (c) 1997, 1998, 1999, 2000-2003
@@ -158,13 +142,11 @@ Static const struct axe_type axe_devs[] = {
 	{ { USB_VENDOR_DLINK, USB_PRODUCT_DLINK_DUBE100}, 0 },
 	{ { USB_VENDOR_DLINK, USB_PRODUCT_DLINK_DUBE100B1 }, AX772 },
 	{ { USB_VENDOR_GOODWAY, USB_PRODUCT_GOODWAY_GWUSB2E}, 0 },
-	{ { USB_VENDOR_IODATA, USB_PRODUCT_IODATA_ETGUS2 }, AX178 },
 	{ { USB_VENDOR_JVC, USB_PRODUCT_JVC_MP_PRX1}, 0 },
 	{ { USB_VENDOR_LINKSYS2, USB_PRODUCT_LINKSYS2_USB200M}, 0 },
 	{ { USB_VENDOR_LINKSYS4, USB_PRODUCT_LINKSYS4_USB1000 }, AX178 },
 	{ { USB_VENDOR_MELCO, USB_PRODUCT_MELCO_LUAU2KTX}, 0 },
 	{ { USB_VENDOR_NETGEAR, USB_PRODUCT_NETGEAR_FA120}, 0 },
-	{ { USB_VENDOR_OQO, USB_PRODUCT_OQO_ETHER01PLUS }, AX772 },
 	{ { USB_VENDOR_PLANEX3, USB_PRODUCT_PLANEX3_GU1000T }, AX178 },
 	{ { USB_VENDOR_SYSTEMTALKS, USB_PRODUCT_SYSTEMTALKS_SGCX2UL}, 0 },
 	{ { USB_VENDOR_SITECOM, USB_PRODUCT_SITECOM_LN029}, 0 },
@@ -458,8 +440,6 @@ axe_ax88178_init(struct axe_softc *sc)
 	/* XXX magic */
 	axe_cmd(sc, AXE_CMD_SROM_READ, 0, 0x0017, &eeprom);
 	axe_cmd(sc, AXE_CMD_SROM_WR_DISABLE, 0, 0, NULL);
-
-	eeprom = letoh16(eeprom);
 
 	DPRINTF((" EEPROM is 0x%x\n", eeprom));
 
@@ -966,6 +946,9 @@ axe_rxeof(usbd_xfer_handle xfer, usbd_private_handle priv, usbd_status status)
 				goto done;
 			}
 
+			if ((pktlen % 2) != 0)
+				pktlen++;
+
 			buf += pktlen;
 
 			memcpy(&hdr, buf, sizeof(hdr));
@@ -982,14 +965,7 @@ axe_rxeof(usbd_xfer_handle xfer, usbd_private_handle priv, usbd_status status)
 			}
 
 			buf += sizeof(hdr);
-
-			if ((pktlen % 2) != 0)
-				pktlen++;
-
-			if ((total_len - pktlen) < 0)
-				total_len = 0;
-			else
-				total_len -= pktlen;
+			total_len -= pktlen + (pktlen % 2);
 		} else {
 			pktlen = total_len; /* crc on the end? */
 			total_len = 0;

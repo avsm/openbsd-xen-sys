@@ -1,4 +1,4 @@
-/*	$OpenBSD: ufs_vnops.c,v 1.77 2007/04/10 17:47:56 miod Exp $	*/
+/*	$OpenBSD: ufs_vnops.c,v 1.72 2006/01/09 12:43:17 pedro Exp $	*/
 /*	$NetBSD: ufs_vnops.c,v 1.18 1996/05/11 18:28:04 mycroft Exp $	*/
 
 /*
@@ -95,6 +95,9 @@ union _qcvt {
 	tmp.val[_QUAD_LOWWORD] = (l); \
 	(q) = tmp.qcvt; \
 }
+#define VN_KNOTE(vp, b) \
+	KNOTE(&vp->v_selectinfo.vsi_selinfo.si_note, (b))
+
 
 /*
  * A virgin directory (no blushing please).
@@ -223,12 +226,14 @@ ufs_close(void *v)
 	struct vnode *vp = ap->a_vp;
 	struct inode *ip = VTOI(vp);
 
+	simple_lock(&vp->v_interlock);
 	if (vp->v_usecount > 1) {
 		struct timeval tv;
 
 		getmicrotime(&tv);
 		ITIMES(ip, &tv, &tv);
 	}
+	simple_unlock(&vp->v_interlock);
 	return (0);
 }
 
@@ -933,15 +938,12 @@ abortit:
 		 */
 		vref(tdvp);
 		/* Only tdvp is locked */
-		if ((error = ufs_checkpath(ip, dp, tcnp->cn_cred)) != 0) {
-			vrele(tdvp);
+		if ((error = ufs_checkpath(ip, dp, tcnp->cn_cred)) != 0)
 			goto out;
-		}
 		if ((tcnp->cn_flags & SAVESTART) == 0)
 			panic("ufs_rename: lost to startdir");
 		if ((error = relookup(tdvp, &tvp, tcnp)) != 0)
 			goto out;
-		vrele(tdvp); /* relookup() acquired a reference */
 		dp = VTOI(tdvp);
 		xp = NULL;
 		if (tvp)
@@ -1276,7 +1278,7 @@ ufs_mkdir(void *v)
 	}
 
 	/*
-         * Directory set up, now install its entry in the parent directory.
+         * Directory set up, now install it's entry in the parent directory.
          *
          * If we are not doing soft dependencies, then we must write out the
          * buffer containing the new directory body before entering the new
@@ -1621,7 +1623,7 @@ ufs_lock(void *v)
 	} */ *ap = v;
 	struct vnode *vp = ap->a_vp;
 
-	return (lockmgr(&VTOI(vp)->i_lock, ap->a_flags, NULL));
+	return (lockmgr(&VTOI(vp)->i_lock, ap->a_flags, &vp->v_interlock));
 }
 
 /*
@@ -1637,7 +1639,8 @@ ufs_unlock(void *v)
 	} */ *ap = v;
 	struct vnode *vp = ap->a_vp;
 
-	return (lockmgr(&VTOI(vp)->i_lock, ap->a_flags | LK_RELEASE, NULL));
+	return (lockmgr(&VTOI(vp)->i_lock, ap->a_flags | LK_RELEASE,
+		&vp->v_interlock));
 }
 
 /*
@@ -1788,12 +1791,14 @@ ufsspec_close(void *v)
 	struct vnode *vp = ap->a_vp;
 	struct inode *ip = VTOI(vp);
 
+	simple_lock(&vp->v_interlock);
 	if (ap->a_vp->v_usecount > 1) {
 		struct timeval tv;
 
 		getmicrotime(&tv);
 		ITIMES(ip, &tv, &tv);
 	}
+	simple_unlock(&vp->v_interlock);
 	return (VOCALL (spec_vnodeop_p, VOFFSET(vop_close), ap));
 }
 
@@ -1858,12 +1863,14 @@ ufsfifo_close(void *v)
 	struct vnode *vp = ap->a_vp;
 	struct inode *ip = VTOI(vp);
 
+	simple_lock(&vp->v_interlock);
 	if (ap->a_vp->v_usecount > 1) {
 		struct timeval tv;
 
 		getmicrotime(&tv);
 		ITIMES(ip, &tv, &tv);
 	}
+	simple_unlock(&vp->v_interlock);
 	return (VOCALL (fifo_vnodeop_p, VOFFSET(vop_close), ap));
 }
 #endif /* FIFO */

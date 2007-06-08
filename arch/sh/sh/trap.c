@@ -1,4 +1,4 @@
-/*	$OpenBSD: trap.c,v 1.11 2007/03/13 19:29:33 miod Exp $	*/
+/*	$OpenBSD: trap.c,v 1.5 2006/11/03 17:52:27 drahn Exp $	*/
 /*	$NetBSD: exception.c,v 1.32 2006/09/04 23:57:52 uwe Exp $	*/
 /*	$NetBSD: syscall.c,v 1.6 2006/03/07 07:21:50 thorpej Exp $	*/
 
@@ -100,7 +100,6 @@
 
 #include <uvm/uvm_extern.h>
 
-#include <sh/cache.h>
 #include <sh/cpu.h>
 #include <sh/mmu.h>
 #include <sh/trap.h>
@@ -151,7 +150,6 @@ void general_exception(struct proc *, struct trapframe *, uint32_t);
 void tlb_exception(struct proc *, struct trapframe *, uint32_t);
 void ast(struct proc *, struct trapframe *);
 void syscall(struct proc *, struct trapframe *);
-void cachectl(struct proc *, struct trapframe *);
 
 /*
  * void general_exception(struct proc *p, struct trapframe *tf):
@@ -168,12 +166,6 @@ general_exception(struct proc *p, struct trapframe *tf, uint32_t va)
 	union sigval sv;
 
 	uvmexp.traps++;
-
-	/*
-	 * This function is entered at splhigh. Restore the interrupt
-	 * level to what it was when the trap occured.
-	 */
-	splx(tf->tf_ssr & PSL_IMASK);
 
 	if (usermode) {
 		if (p == NULL)
@@ -210,9 +202,6 @@ general_exception(struct proc *p, struct trapframe *tf, uint32_t va)
 			goto out;
 		case _SH_TRA_SYSCALL << 2:
 			syscall(p, tf);
-			return;
-		case _SH_TRA_CACHECTL << 2:
-			cachectl(p, tf);
 			return;
 		default:
 			sv.sival_ptr = (void *)tf->tf_spc;
@@ -302,8 +291,7 @@ do_panic:
 	else
 		printf("EXPEVT 0x%03x", expevt);
 	printf(" in %s mode\n", expevt & EXP_USER ? "user" : "kernel");
-	printf("va %p spc %p ssr %p pr %p \n",
-	    va, tf->tf_spc, tf->tf_ssr, tf->tf_pr);
+	printf(" spc %x ssr %x pr %x \n", tf->tf_spc, tf->tf_ssr, tf->tf_pr);
 
 	panic("general_exception");
 	/* NOTREACHED */
@@ -334,11 +322,6 @@ tlb_exception(struct proc *p, struct trapframe *tf, uint32_t va)
 			}				\
 		} while(/*CONSTCOND*/0)
 
-	/*
-	 * This function is entered at splhigh. Restore the interrupt
-	 * level to what it was when the trap occured.
-	 */
-	splx(tf->tf_ssr & PSL_IMASK);
 
 	usermode = !KERNELMODE(tf->tf_ssr);
 	if (usermode) {
@@ -414,16 +397,30 @@ tlb_exception(struct proc *p, struct trapframe *tf, uint32_t va)
 		return;
 	}
 
+	/* Page not found. call fault handler */
+	if (!usermode && pmap != pmap_kernel() &&
+	    p->p_md.md_pcb->pcb_faultbail) {
+		TLB_ASSERT(p->p_md.md_pcb->pcb_onfault != NULL,
+		    "no copyin/out fault handler (interrupt context)");
+		tf->tf_spc = (int)p->p_md.md_pcb->pcb_onfault;
+		return;
+	}
+
 	err = uvm_fault(map, va, 0, ftype);
 
 	/* User stack extension */
 	if (map != kernel_map &&
 	    (va >= (vaddr_t)p->p_vmspace->vm_maxsaddr) &&
 	    (va < USRSTACK)) {
-		if (err == 0)
-			uvm_grow(p, va);
-		else if (err == EACCES)
+		if (err == 0) {
+			struct vmspace *vm = p->p_vmspace;
+			uint32_t nss;
+			nss = btoc(USRSTACK - va);
+			if (nss > vm->vm_ssize)
+				vm->vm_ssize = nss;
+		} else if (err == EACCES) {
 			err = EFAULT;
+		}
 	}
 
 	/* Page in. load PTE to TLB. */
@@ -488,6 +485,7 @@ ast(struct proc *p, struct trapframe *tf)
 		p->p_md.md_astpending = 0;
 
 		if (p->p_flag & P_OWEUPC) {
+			p->p_flag &= ~P_OWEUPC;
 			ADDUPROF(p);
 		}
 
@@ -498,27 +496,6 @@ ast(struct proc *p, struct trapframe *tf)
 
 		userret(p);
 	}
-}
-
-void
-cachectl(struct proc *p, struct trapframe *tf)
-{
-	vaddr_t va;
-	vsize_t len;
-
-	if (!SH_HAS_UNIFIED_CACHE) {
-		va = (vaddr_t)tf->tf_r4;
-		len = (vsize_t)tf->tf_r5;
-
-		if (/* va < VM_MIN_ADDRESS || */ va >= VM_MAXUSER_ADDRESS ||
-		    va + len <= va || va + len >= VM_MAXUSER_ADDRESS)
-			len = 0;
-
-		if (len != 0)
-			sh_icache_sync_range_index(va, len);
-	}
-
-	userret(p);
 }
 
 void

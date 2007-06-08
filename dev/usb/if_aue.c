@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_aue.c,v 1.50 2007/02/11 20:29:22 miod Exp $ */
+/*	$OpenBSD: if_aue.c,v 1.48 2006/06/23 06:27:11 miod Exp $ */
 /*	$NetBSD: if_aue.c,v 1.82 2003/03/05 17:37:36 shiba Exp $	*/
 /*
  * Copyright (c) 1997, 1998, 1999, 2000
@@ -76,6 +76,12 @@
  * investigate short rx problem
  * proper cleanup on errors
  */
+
+#if defined(__NetBSD__)
+#include "opt_inet.h"
+#include "opt_ns.h"
+#include "rnd.h"
+#endif
 
 #include "bpfilter.h"
 
@@ -175,7 +181,7 @@ Static const struct aue_type aue_devs[] = {
  {{ USB_VENDOR_AEI,		USB_PRODUCT_AEI_FASTETHERNET},	  PII },
  {{ USB_VENDOR_ALLIEDTELESYN,   USB_PRODUCT_ALLIEDTELESYN_ATUSB100}, PII },
  {{ USB_VENDOR_ATEN,		USB_PRODUCT_ATEN_UC110T},	  PII },
- {{ USB_VENDOR_BELKIN,		USB_PRODUCT_BELKIN_F5D5050},	  PII },
+ {{ USB_VENDOR_BELKIN,		USB_PRODUCT_BELKIN_USB2LAN},	  PII },
  {{ USB_VENDOR_BILLIONTON,	USB_PRODUCT_BILLIONTON_USB100},	  0 },
  {{ USB_VENDOR_BILLIONTON,	USB_PRODUCT_BILLIONTON_USBLP100}, PNA },
  {{ USB_VENDOR_BILLIONTON,	USB_PRODUCT_BILLIONTON_USBEL100}, 0 },

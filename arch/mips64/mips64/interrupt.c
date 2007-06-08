@@ -1,4 +1,4 @@
-/*	$OpenBSD: interrupt.c,v 1.23 2007/03/15 10:22:29 art Exp $ */
+/*	$OpenBSD: interrupt.c,v 1.21 2006/05/11 19:57:45 miod Exp $ */
 
 /*
  * Copyright (c) 2001-2004 Opsycon AB  (www.opsycon.se / www.opsycon.com)
@@ -46,7 +46,6 @@
 #include <machine/autoconf.h>
 #include <machine/frame.h>
 #include <machine/regnum.h>
-#include <machine/atomic.h>
 
 #include <mips64/rm7000.h>
 
@@ -199,21 +198,21 @@ printf("Unhandled interrupt %x:%x\n", cause, pending);
 
 	xcpl = splsoftnet();
 	if ((ipending & SINT_CLOCKMASK) & ~xcpl) {
-		atomic_clearbits_int(&ipending, SINT_CLOCKMASK);
+		clr_ipending(SINT_CLOCKMASK);
 		softclock();
 	}
 	if ((ipending & SINT_NETMASK) & ~xcpl) {
 		extern int netisr;
 		int isr = netisr;
 		netisr = 0;
-		atomic_clearbits_int(&ipending, SINT_NETMASK);
+		clr_ipending(SINT_NETMASK);
 #define DONETISR(b,f)   if (isr & (1 << (b)))   f();
 #include <net/netisr_dispatch.h>
 	}
 
 #ifdef NOTYET
 	if ((ipending & SINT_TTYMASK) & ~xcpl) {
-		atomic_clearbits_int(&ipending, SINT_TTYMASK);
+		clr_ipending(SINT_TTYMASK);
 		compoll(NULL);
 	}
 #endif
@@ -268,6 +267,7 @@ softintr()
 
 	astpending = 0;
 	if (p->p_flag & P_OWEUPC) {
+		p->p_flag &= ~P_OWEUPC;
 		ADDUPROF(p);
 	}
 	if (want_resched)
@@ -481,7 +481,7 @@ generic_do_pending_int(int newcpl)
 
 	hwpend = ipending & ~newcpl;	/* Do pendings being unmasked */
 	hwpend &= ~(SINT_ALLMASK);
-	atomic_clearbits_int(&ipending, hwpend);
+	clr_ipending(hwpend);
 	intem |= hwpend;
 	while (hwpend) {
 		vector = ffs(hwpend) - 1;
@@ -496,20 +496,20 @@ generic_do_pending_int(int newcpl)
 		}
 	}
 	if ((ipending & SINT_CLOCKMASK) & ~newcpl) {
-		atomic_clearbits_int(&ipending, SINT_CLOCKMASK);
+		clr_ipending(SINT_CLOCKMASK);
 		softclock();
 	}
 	if ((ipending & SINT_NETMASK) & ~newcpl) {
 		int isr = netisr;
 		netisr = 0;
-		atomic_clearbits_int(&ipending, SINT_NETMASK);
+		clr_ipending(SINT_NETMASK);
 #define	DONETISR(b,f)	if (isr & (1 << (b)))   f();
 #include <net/netisr_dispatch.h>
 	}
 
 #ifdef NOTYET
 	if ((ipending & SINT_TTYMASK) & ~newcpl) {
-		atomic_clearbits_int(&ipending, SINT_TTYMASK);
+		clr_ipending(SINT_TTYMASK);
 		compoll(NULL);
 	}
 #endif
@@ -558,7 +558,7 @@ generic_iointr(intrmask_t pending, struct trap_frame *cf)
 
 	caught = 0;
 
-	atomic_setbits_int(&ipending, (pending >> 8) & cpl);
+	set_ipending((pending >> 8) & cpl);
 	pending &= ~(cpl << 8);
 	cf->sr &= ~((ipending << 8) & SR_INT_MASK);
 	cf->ic &= ~(ipending & IC_INT_MASK);

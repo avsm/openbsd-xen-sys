@@ -1,4 +1,4 @@
-/*	$OpenBSD: ufs_quota.c,v 1.26 2007/02/14 00:53:48 jsg Exp $	*/
+/*	$OpenBSD: ufs_quota.c,v 1.24 2006/06/14 20:01:50 sturm Exp $	*/
 /*	$NetBSD: ufs_quota.c,v 1.8 1996/02/09 22:36:09 christos Exp $	*/
 
 /*
@@ -462,10 +462,12 @@ quotaon_vnode(struct vnode *vp, void *arg)
 	int error;
 	struct proc *p = (struct proc *)arg;
 
-	if (vp->v_type == VNON || vp->v_writecount == 0)
+	if (vp->v_type == VNON || vp->v_writecount == 0) {
+		simple_unlock(&vp->v_interlock);
 		return (0);
+	}
 
-	if (vget(vp, LK_EXCLUSIVE, p)) {
+	if (vget(vp, LK_EXCLUSIVE | LK_INTERLOCK, p)) {
 		return (0);
 	}
 
@@ -548,11 +550,12 @@ quotaoff_vnode(struct vnode *vp, void *arg)
 	struct inode *ip;
 	struct dquot *dq;
 
-	if (vp->v_type == VNON)
+	if (vp->v_type == VNON) {
+		simple_unlock(&vp->v_interlock);
 		return (0);
+	}
 
-
-	if (vget(vp, LK_EXCLUSIVE, qa->p))
+	if (vget(vp, LK_EXCLUSIVE | LK_INTERLOCK, qa->p))
 		return (0);
 	ip = VTOI(vp);
 	dq = ip->i_dquot[qa->type];
@@ -723,10 +726,12 @@ qsync_vnode(struct vnode *vp, void *arg)
 	struct proc *p = curproc;
 	struct dquot *dq;
 	    
-	if (vp->v_type == VNON)
+	if (vp->v_type == VNON) {
+		simple_unlock(&vp->v_interlock);
 		return (0);
+	}
 
-	if (vget(vp, LK_EXCLUSIVE | LK_NOWAIT, p))
+	if (vget(vp, LK_EXCLUSIVE | LK_NOWAIT | LK_INTERLOCK, p))
 		return (0);
 
 	for (i = 0; i < MAXQUOTAS; i++) {
@@ -1013,7 +1018,7 @@ ufs_quotactl(struct mount *mp, int cmds, uid_t uid, caddr_t arg,
 	case Q_GETQUOTA:
 		if (uid == p->p_cred->p_ruid)
 			break;
-		/* FALLTHROUGH */
+		/* fall through */
 	default:
 		if ((error = suser(p, 0)) != 0)
 			return (error);

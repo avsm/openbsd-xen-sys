@@ -1,4 +1,4 @@
-/*	$OpenBSD: advnops.c,v 1.34 2007/03/21 17:29:31 thib Exp $	*/
+/*	$OpenBSD: advnops.c,v 1.32 2006/01/20 23:27:24 miod Exp $	*/
 /*	$NetBSD: advnops.c,v 1.32 1996/10/13 02:52:09 christos Exp $	*/
 
 /*
@@ -499,7 +499,7 @@ adosfs_lock(v)
 	advopprint(ap);
 #endif
 
-	rv = lockmgr(&VTOA(vp)->a_lock, ap->a_flags, NULL);
+	rv = lockmgr(&VTOA(vp)->a_lock, ap->a_flags, &vp->v_interlock);
 
 #ifdef ADOSFS_DIAGNOSTIC
 	printf(" %d)", rv);
@@ -524,7 +524,8 @@ adosfs_unlock(v)
 	advopprint(ap);
 #endif
 
-	rv = lockmgr(&VTOA(vp)->a_lock, ap->a_flags | LK_RELEASE, NULL);
+	rv = lockmgr(&VTOA(vp)->a_lock, ap->a_flags | LK_RELEASE,
+	    &vp->v_interlock);
 
 #ifdef ADOSFS_DIAGNOSTIC
 	printf(" %d)", rv);
@@ -943,7 +944,7 @@ adosfs_inactive(v)
 	VOP_UNLOCK(sp->a_vp, 0, sp->a_p);
 
 	if (sp->a_vp->v_usecount == 0 /* && check for file gone? */)
-		vrecycle(sp->a_vp, sp->a_p);
+		vrecycle(sp->a_vp, (struct simplelock *)0, sp->a_p);
 
 #ifdef ADOSFS_DIAGNOSTIC
 	printf(" 0)");

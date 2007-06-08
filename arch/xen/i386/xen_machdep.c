@@ -504,7 +504,7 @@ find_pmap_mem_end(vaddr_t va)
 		panic("find_pmap_mem_end: va 0x%08x already in use: 0x%08x",
 		    va, old);
 
-	while (start < end) {
+	while ((start + 1) < end) {
 		r.val = (((start + end) / 2) << PAGE_SHIFT) | PG_V;
 
 		if (HYPERVISOR_mmu_update_self(&r, 1, &ok) < 0)
@@ -513,9 +513,11 @@ find_pmap_mem_end(vaddr_t va)
 			start = (start + end) / 2;
 	}
 	r.val = old;
-	HYPERVISOR_mmu_update_self(&r, 1, &ok);
+	if (HYPERVISOR_mmu_update_self(&r, 1, &ok) < 0)
+		printf("pmap_mem_end find: old update failed 0x%08x\n",
+			old);
 
-	return xpmap_ptom(((end  - 1) << PAGE_SHIFT) + XPMAP_OFFSET);
+	return end << PAGE_SHIFT;
 }
 
 

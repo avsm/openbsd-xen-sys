@@ -1,4 +1,4 @@
-/*	$OpenBSD: usbf_subr.c,v 1.2 2007/02/07 16:26:49 drahn Exp $	*/
+/*	$OpenBSD$	*/
 
 /*
  * Copyright (c) 2006 Uwe Stuehler <uwe@openbsd.org>
@@ -33,6 +33,7 @@
 #include <dev/usb/usbf.h>
 #include <dev/usb/usbfvar.h>
 
+#define USBF_DEBUG
 #ifndef USBF_DEBUG
 #define DPRINTF(l, x)	do {} while (0)
 #else
@@ -58,7 +59,7 @@ usbf_errstr(usbf_status err)
 {
 	static char buffer[5];
 
-	if (err < USBF_ERROR_MAX)
+	if (err < USBD_ERROR_MAX)
 		return usbf_error_strs[err];
 
 	snprintf(buffer, sizeof buffer, "%d", err);
@@ -571,6 +572,7 @@ usbf_end_config(usbf_config_handle uc)
 		ui->idesc = (usb_interface_descriptor_t *)d;
 
 		SIMPLEQ_FOREACH(ue, &ui->endpoint_head, next) {
+			ue->edesc->bEndpointAddress |= 1; /* XXX humbug */
 			err = usbf_add_config_desc(uc,
 			    (usb_descriptor_t *)ue->edesc, &d);
 			if (err)

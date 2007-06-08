@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_clock.c,v 1.61 2007/03/15 10:22:30 art Exp $	*/
+/*	$OpenBSD: kern_clock.c,v 1.59 2006/06/14 19:52:07 otto Exp $	*/
 /*	$NetBSD: kern_clock.c,v 1.34 1996/06/09 04:51:03 briggs Exp $	*/
 
 /*-
@@ -317,6 +317,10 @@ hardclock(struct clockframe *frame)
 	tc_ticktock();
 #endif
 
+#ifdef CPU_CLOCKUPDATE
+	CPU_CLOCKUPDATE();
+#endif
+
 	/*
 	 * Update real-time timeout queue.
 	 * Process callouts at a very low cpu priority, so we don't keep the
@@ -442,7 +446,7 @@ startprofclock(struct proc *p)
 	int s;
 
 	if ((p->p_flag & P_PROFIL) == 0) {
-		atomic_setbits_int(&p->p_flag, P_PROFIL);
+		p->p_flag |= P_PROFIL;
 		if (++profprocs == 1 && stathz != 0) {
 			s = splstatclock();
 			psdiv = pscnt = psratio;
@@ -461,7 +465,7 @@ stopprofclock(struct proc *p)
 	int s;
 
 	if (p->p_flag & P_PROFIL) {
-		atomic_clearbits_int(&p->p_flag, P_PROFIL);
+		p->p_flag &= ~P_PROFIL;
 		if (--profprocs == 0 && stathz != 0) {
 			s = splstatclock();
 			psdiv = pscnt = 1;

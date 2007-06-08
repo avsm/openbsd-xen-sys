@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bge.c,v 1.208 2007/03/19 02:27:40 krw Exp $	*/
+/*	$OpenBSD: if_bge.c,v 1.203 2007/01/10 23:04:53 kettenis Exp $	*/
 
 /*
  * Copyright (c) 2001 Wind River Systems
@@ -352,11 +352,6 @@ static const struct bge_revision {
 	{ BGE_CHIPID_BCM5715_A0, "BCM5715 A0" },
 	{ BGE_CHIPID_BCM5715_A1, "BCM5715 A1" },
 	{ BGE_CHIPID_BCM5715_A3, "BCM5715 A3" },
-	{ BGE_CHIPID_BCM5755_A0, "BCM5755 A0" },
-	{ BGE_CHIPID_BCM5755_A1, "BCM5755 A1" },
-	{ BGE_CHIPID_BCM5755_A2, "BCM5755 A2" },
-	{ BGE_CHIPID_BCM5787_A0, "BCM5787 A0" },
-	{ BGE_CHIPID_BCM5787_A1, "BCM5787 A1" },
 	{ BGE_CHIPID_BCM5787_A2, "BCM5787 A2" },
 	{ BGE_CHIPID_BCM5906_A1, "BCM5906 A1" },
 
@@ -370,7 +365,6 @@ static const struct bge_revision {
 static const struct bge_revision bge_majorrevs[] = {
 	{ BGE_ASICREV_BCM5700, "unknown BCM5700" },
 	{ BGE_ASICREV_BCM5701, "unknown BCM5701" },
-	/* 5702 and 5703 share the same ASIC ID */
 	{ BGE_ASICREV_BCM5703, "unknown BCM5703" },
 	{ BGE_ASICREV_BCM5704, "unknown BCM5704" },
 	{ BGE_ASICREV_BCM5705, "unknown BCM5705" },
@@ -380,7 +374,6 @@ static const struct bge_revision bge_majorrevs[] = {
 	{ BGE_ASICREV_BCM5780, "unknown BCM5780" },
 	{ BGE_ASICREV_BCM5714, "unknown BCM5714" },
 	{ BGE_ASICREV_BCM5755, "unknown BCM5755" },
-	/* 5754 and 5787 share the same ASIC ID */
 	{ BGE_ASICREV_BCM5787, "unknown BCM5787" },
 	{ BGE_ASICREV_BCM5906, "unknown BCM5906" },
 
@@ -809,7 +802,8 @@ bge_newbuf_std(struct bge_softc *sc, int i, struct mbuf *m,
 			m_freem(m_new);
 			sc->bge_cdata.bge_rx_std_chain[i] = NULL;
 		}
-		return (ENOBUFS);
+		return (ENOMEM);
+
 	}
 
 	sc->bge_cdata.bge_rx_std_chain[i] = m_new;
@@ -1844,13 +1838,9 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 
 	if (BGE_IS_5705_OR_BEYOND(sc)) {
 		if (BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5755 ||
-		    BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5787) {
-			if (PCI_PRODUCT(pa->pa_id) != PCI_PRODUCT_BROADCOM_BCM5722 &&
-			    PCI_PRODUCT(pa->pa_id) != PCI_PRODUCT_BROADCOM_BCM5756)
-				sc->bge_flags |= BGE_PHY_JITTER_BUG;
-			if (PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_BROADCOM_BCM5755M)
-				sc->bge_flags |= BGE_PHY_ADJUST_TRIM;
-		} else if (BGE_ASICREV(sc->bge_chipid) != BGE_ASICREV_BCM5906)
+		    BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5787)
+			sc->bge_flags |= BGE_PHY_JITTER_BUG;
+		else if (BGE_ASICREV(sc->bge_chipid) != BGE_ASICREV_BCM5906)
 			sc->bge_flags |= BGE_PHY_BER_BUG;
 	}
 
@@ -1860,29 +1850,19 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 
 	bge_chipinit(sc);
 
-#ifdef __sparc64__
-	if (!gotenaddr) {
-		if (OF_getprop(PCITAG_NODE(pa->pa_tag), "local-mac-address",
-		    sc->arpcom.ac_enaddr, ETHER_ADDR_LEN) == ETHER_ADDR_LEN)
-			gotenaddr = 1;
-	}
-#endif
-
 	/*
 	 * Get station address from the EEPROM.
 	 */
-	if (!gotenaddr) {
-		mac_addr = bge_readmem_ind(sc, 0x0c14);
-		if ((mac_addr >> 16) == 0x484b) {
-			sc->arpcom.ac_enaddr[0] = (u_char)(mac_addr >> 8);
-			sc->arpcom.ac_enaddr[1] = (u_char)mac_addr;
-			mac_addr = bge_readmem_ind(sc, 0x0c18);
-			sc->arpcom.ac_enaddr[2] = (u_char)(mac_addr >> 24);
-			sc->arpcom.ac_enaddr[3] = (u_char)(mac_addr >> 16);
-			sc->arpcom.ac_enaddr[4] = (u_char)(mac_addr >> 8);
-			sc->arpcom.ac_enaddr[5] = (u_char)mac_addr;
-			gotenaddr = 1;
-		}
+	mac_addr = bge_readmem_ind(sc, 0x0c14);
+	if ((mac_addr >> 16) == 0x484b) {
+		sc->arpcom.ac_enaddr[0] = (u_char)(mac_addr >> 8);
+		sc->arpcom.ac_enaddr[1] = (u_char)mac_addr;
+		mac_addr = bge_readmem_ind(sc, 0x0c18);
+		sc->arpcom.ac_enaddr[2] = (u_char)(mac_addr >> 24);
+		sc->arpcom.ac_enaddr[3] = (u_char)(mac_addr >> 16);
+		sc->arpcom.ac_enaddr[4] = (u_char)(mac_addr >> 8);
+		sc->arpcom.ac_enaddr[5] = (u_char)mac_addr;
+		gotenaddr = 1;
 	}
 	if (!gotenaddr && (!(sc->bge_flags & BGE_NO_EEPROM))) {
 		if (bge_read_eeprom(sc, (caddr_t)&sc->arpcom.ac_enaddr,
@@ -1891,6 +1871,11 @@ bge_attach(struct device *parent, struct device *self, void *aux)
 	}
 
 #ifdef __sparc64__
+	if (!gotenaddr) {
+		if (OF_getprop(PCITAG_NODE(pa->pa_tag), "local-mac-address",
+		    sc->arpcom.ac_enaddr, ETHER_ADDR_LEN) == ETHER_ADDR_LEN)
+			gotenaddr = 1;
+	}
 	if (!gotenaddr) {
 		extern void myetheraddr(u_char *);
 

@@ -1,4 +1,4 @@
-#	$OpenBSD: RAMDISK,v 1.61 2007/04/04 20:47:54 kettenis Exp $
+#	$OpenBSD: RAMDISK,v 1.57 2006/11/26 19:10:16 dlg Exp $
 
 # Machine architecture; required by config(8)
 machine		sparc64
@@ -30,7 +30,6 @@ option		BOOT_CONFIG	# add support for boot -c
 
 option		WSEMUL_SUN	# provide sun terminal emulation; required
 option		WSEMUL_NO_VT100	# do not provide vt100 terminal emulation
-option		WSEMUL_DUMB
 
 # Generic swap; second partition of root disk or network.
 config		bsd	root on rd0a
@@ -39,27 +38,24 @@ config		bsd	root on rd0a
 mainbus0 at root
 cpu0	at mainbus0
 
-# Bus types found on SPARC systems.
-sbus*	at mainbus0
-upa0	at mainbus0
 central0 at mainbus0
 fhc0	at central0
 fhc*	at mainbus0
-psycho*	at mainbus0
-pci*	at psycho?
+
+# Bus types found on SPARC systems.
 schizo*	at mainbus0
 pci*	at schizo?
-pyro*	at mainbus0
-pci*	at pyro?
+sbus*	at mainbus0		# Ultra 1/E4500
+psycho*	at mainbus0
+upa0	at mainbus0
+pci*	at psycho?		# Ultra 5
 pci*	at ppb?
 ppb*	at pci?
-ebus*	at mainbus0
 ebus*	at pci?
 
 # PCI Ethernet
-hme*	at pci?			# Sun Happy Meal 10/100
-gem*	at pci?			# Sun GEM 10/100/Gigabit
-cas*	at pci?			# Sun Cassini 100/Gigabit
+hme*	at pci?
+gem*	at pci?
 ti*	at pci?			# Alteon Tigon 1Gb ethernet
 skc*	at pci?			# SysKonnect GEnesis 984x
 sk*	at skc?			#  each port of above
@@ -127,13 +123,11 @@ scsibus* at esp?
 siop*	at pci?
 isp*	at pci?
 mpi*	at pci?
-sili*	at pci?
 
 option ISP_COMPILE_FW=1
 scsibus*	at siop?
 scsibus*	at isp?
 scsibus*	at mpi?
-scsibus*	at sili?
 
 # These entries find devices on all SCSI busses and assign
 # unit numers dynamically.
@@ -233,7 +227,6 @@ sbus*		at xbox?
 
 ## PROM console driver -- if all else fails
 pcons0	at mainbus0			# PROM console
-wsdisplay* at pcons?
 
 pseudo-device	rd	2	# ramdisk
 pseudo-device	loop	1	# network loopback

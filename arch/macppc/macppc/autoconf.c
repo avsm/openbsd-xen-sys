@@ -1,4 +1,4 @@
-/*	$OpenBSD: autoconf.c,v 1.22 2005/12/27 18:31:09 miod Exp $	*/
+/*	$OpenBSD: autoconf.c,v 1.21 2005/11/25 02:42:25 brad Exp $	*/
 /*
  * Copyright (c) 1996, 1997 Per Fogelstrom
  * Copyright (c) 1995 Theo de Raadt
@@ -37,7 +37,7 @@
  * from: Utah Hdr: autoconf.c 1.31 91/01/21
  *
  *	from: @(#)autoconf.c	8.1 (Berkeley) 6/10/93
- *      $Id: autoconf.c,v 1.24 2007/03/28 06:17:37 dlg Exp $
+ *      $Id: autoconf.c,v 1.22 2005/12/27 18:31:09 miod Exp $
  */
 
 /*
@@ -59,12 +59,6 @@
 #include <uvm/uvm_extern.h>
 #include <machine/autoconf.h>
 #include <machine/powerpc.h>
-
-#include <sys/disk.h>
-#include <scsi/scsi_all.h>
-#include <scsi/scsi_disk.h>
-#include <scsi/scsiconf.h>
-#include <scsi/sdvar.h>
 
 struct  device *parsedisk(char *, int, int, dev_t *);
 void    setroot(void);
@@ -277,10 +271,10 @@ setroot()
 	}
 
 	/* Lookup boot device from boot if not set by configuration */
-	if (bootdv == NULL) {
+	if(bootdv == NULL) {
 		bootdv = parsedisk(bootdev, strlen(bootdev), 0, &temp);
 	}
-	if (bootdv == NULL) {
+	if(bootdv == NULL) {
 		printf("boot device: lookup '%s' failed.\n", bootdev);
 		boothowto |= RB_ASKNAME; /* Don't Panic :-) */
 		/* boothowto |= RB_SINGLE; */
@@ -501,7 +495,6 @@ findtype(char **s)
 		{ "/mac-io@",		NULL, T_BUS },
 		{ "/mac-io",		NULL, T_BUS },
 		{ "/@",			NULL, T_BUS },
-		{ "/LSILogic,sas@",	"sd", T_SCSI },
 		{ "/scsi@",		"sd", T_SCSI },
 		{ "/ide",		"wd", T_IDE },
 		{ "/ata",		"wd", T_IDE },
@@ -539,7 +532,7 @@ findtype(char **s)
 void
 makebootdev(char *bp)
 {
-	int	unit, ptype;
+	int	unit;
 	char   *dev, *cp;
 	struct devmap *dp;
 
@@ -562,26 +555,9 @@ makebootdev(char *bp)
 	dev = dp->dev;
 	while(*cp && *cp != '/')
 		cp++;
-	ptype = dp->type;
 	dp = findtype(&cp);
 	if (dp->att && dp->type == T_DISK) {
 		unit = getpno(&cp);
-		if (ptype == T_SCSI) {
-			struct device *dv;
-			struct sd_softc *sd;
-
-			TAILQ_FOREACH(dv, &alldevs, dv_list) {
-				if (dv->dv_class != DV_DISK ||
-				    strcmp(dv->dv_cfdata->cf_driver->cd_name, "sd"))
-					continue;
-				sd = (struct sd_softc *)dv;
-				if (sd->sc_link->target != unit)
-					continue;
-				snprintf(bootdev, sizeof bootdev,
-				    "%s%c", dv->dv_xname, 'a');
-				return;
-			}
-		}
 		snprintf(bootdev, sizeof bootdev, "%s%d%c", dev, unit, 'a');
 		return;
 	}
@@ -592,19 +568,13 @@ makebootdev(char *bp)
 int
 getpno(char **cp)
 {
-	int val = 0, digit;
+	int val = 0;
 	char *cx = *cp;
 
-	while (*cx) {
-		if (*cx >= '0' && *cx <= '9')
-			digit = *cx - '0';
-		else if (*cx >= 'a' && *cx <= 'f')
-			digit = *cx - 'a' + 0x0a;
-		else
-			break;
-		val = val * 16 + digit;
+	while(*cx && *cx >= '0' && *cx <= '9') {
+		val = val * 10 + *cx - '0';
 		cx++;
 	}
 	*cp = cx;
-	return (val);
+	return val;
 }

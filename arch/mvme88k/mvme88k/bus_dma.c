@@ -1,4 +1,4 @@
-/*      $OpenBSD: bus_dma.c,v 1.4 2005/11/25 22:18:18 miod Exp $	*/
+/*      $OpenBSD: bus_dma.c,v 1.3 2004/12/25 23:02:25 miod Exp $	*/
 /*      $NetBSD: bus_dma.c,v 1.2 2001/06/10 02:31:25 briggs Exp $        */
 
 /*-
@@ -433,14 +433,17 @@ bus_dmamap_sync(t, map, offset, len, op)
 	u_int nsegs;
 	bus_dma_segment_t *seg;
 
-	if (op & BUS_DMASYNC_PREREAD)
-		op = DMA_CACHE_SYNC_INVAL;
-	else if (op & BUS_DMASYNC_PREWRITE)
+	switch (op) {
+	case BUS_DMASYNC_PREWRITE:
 		op = DMA_CACHE_SYNC;
-	else if (op & BUS_DMASYNC_POSTREAD)
-		op = DMA_CACHE_INV;
-	else
+		break;
+	case BUS_DMASYNC_PREREAD:
+	case BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE:
+		op = DMA_CACHE_SYNC_INVAL;
+		break;
+	default:
 		return;
+	}
 
 	nsegs = map->dm_nsegs;
 	seg = map->dm_segs;
@@ -456,7 +459,8 @@ bus_dmamap_sync(t, map, offset, len, op)
 			if (sublen > len)
 				sublen = len;
 
-			dma_cachectl_pa(addr, sublen, op);
+			if (dma_cachectl_pa(addr, sublen, op) != 0)
+				break;
 
 			offset = 0;
 			len -= sublen;

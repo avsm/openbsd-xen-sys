@@ -1,4 +1,4 @@
-/*	$OpenBSD: uvm_aobj.c,v 1.33 2007/04/12 18:59:55 art Exp $	*/
+/*	$OpenBSD: uvm_aobj.c,v 1.30 2006/07/26 23:15:55 mickey Exp $	*/
 /*	$NetBSD: uvm_aobj.c,v 1.39 2001/02/18 21:19:08 chs Exp $	*/
 
 /*
@@ -692,8 +692,8 @@ uao_detach_locked(uobj)
 	busybody = FALSE;
 	for (pg = TAILQ_FIRST(&uobj->memq); pg != NULL; pg = next) {
 		next = TAILQ_NEXT(pg, listq);
-		if (pg->pg_flags & PG_BUSY) {
-			atomic_setbits_int(&pg->pg_flags, PG_RELEASED);
+		if (pg->flags & PG_BUSY) {
+			pg->flags |= PG_RELEASED;
 			busybody = TRUE;
 			continue;
 		}
@@ -905,8 +905,8 @@ uao_flush(uobj, start, stop, flags)
 			/*
 			 * mark the page as released if its busy.
 			 */
-			if (pp->pg_flags & PG_BUSY) {
-				atomic_setbits_int(&pp->pg_flags, PG_RELEASED);
+			if (pp->flags & PG_BUSY) {
+				pp->flags |= PG_RELEASED;
 				continue;
 			}
 
@@ -1005,10 +1005,8 @@ uao_get(uobj, offset, pps, npagesp, centeridx, access_type, advice, flags)
 				    NULL, UVM_PGA_ZERO);
 				if (ptmp) {
 					/* new page */
-					atomic_clearbits_int(&ptmp->pg_flags,
-					    PG_BUSY|PG_FAKE);
-					atomic_setbits_int(&ptmp->pg_flags,
-					    PQ_AOBJ);
+					ptmp->flags &= ~(PG_BUSY|PG_FAKE);
+					ptmp->pqflags |= PQ_AOBJ;
 					UVM_PAGE_OWN(ptmp, NULL);
 				}
 			}
@@ -1017,7 +1015,7 @@ uao_get(uobj, offset, pps, npagesp, centeridx, access_type, advice, flags)
 			 * to be useful must get a non-busy, non-released page
 			 */
 			if (ptmp == NULL ||
-			    (ptmp->pg_flags & (PG_BUSY|PG_RELEASED)) != 0) {
+			    (ptmp->flags & (PG_BUSY|PG_RELEASED)) != 0) {
 				if (lcv == centeridx ||
 				    (flags & PGO_ALLPAGES) != 0)
 					/* need to do a wait or I/O! */
@@ -1030,7 +1028,7 @@ uao_get(uobj, offset, pps, npagesp, centeridx, access_type, advice, flags)
 			 * result array
 			 */
 			/* caller must un-busy this page */
-			atomic_setbits_int(&ptmp->pg_flags, PG_BUSY);
+			ptmp->flags |= PG_BUSY;	
 			UVM_PAGE_OWN(ptmp, "uao_get1");
 			pps[lcv] = ptmp;
 			gotpages++;
@@ -1114,7 +1112,7 @@ uao_get(uobj, offset, pps, npagesp, centeridx, access_type, advice, flags)
 				 * safe with PQ's unlocked: because we just
 				 * alloc'd the page
 				 */
-				atomic_setbits_int(&ptmp->pg_flags, PQ_AOBJ);
+				ptmp->pqflags |= PQ_AOBJ;
 
 				/* 
 				 * got new page ready for I/O.  break pps while
@@ -1124,11 +1122,11 @@ uao_get(uobj, offset, pps, npagesp, centeridx, access_type, advice, flags)
 			}
 
 			/* page is there, see if we need to wait on it */
-			if ((ptmp->pg_flags & (PG_BUSY|PG_RELEASED)) != 0) {
-				atomic_setbits_int(&ptmp->pg_flags, PG_WANTED);
+			if ((ptmp->flags & (PG_BUSY|PG_RELEASED)) != 0) {
+				ptmp->flags |= PG_WANTED;
 				UVMHIST_LOG(pdhist,
 				    "sleeping, ptmp->flags 0x%lx\n",
-				    ptmp->pg_flags,0,0,0);
+				    ptmp->flags,0,0,0);
 				UVM_UNLOCK_AND_WAIT(ptmp, &uobj->vmobjlock,
 				    FALSE, "uao_get", 0);
 				simple_lock(&uobj->vmobjlock);
@@ -1142,7 +1140,7 @@ uao_get(uobj, offset, pps, npagesp, centeridx, access_type, advice, flags)
 			 * loop).
  			 */
 			/* we own it, caller must un-busy */
-			atomic_setbits_int(&ptmp->pg_flags, PG_BUSY);
+			ptmp->flags |= PG_BUSY;
 			UVM_PAGE_OWN(ptmp, "uao_get2");
 			pps[lcv] = ptmp;
 		}
@@ -1188,7 +1186,7 @@ uao_get(uobj, offset, pps, npagesp, centeridx, access_type, advice, flags)
 			{
 				UVMHIST_LOG(pdhist, "<- done (error=%ld)",
 				    rv,0,0,0);
-				if (ptmp->pg_flags & PG_WANTED)
+				if (ptmp->flags & PG_WANTED)
 					wakeup(ptmp);
 
 				/*
@@ -1201,8 +1199,7 @@ uao_get(uobj, offset, pps, npagesp, centeridx, access_type, advice, flags)
 							SWSLOT_BAD);
 				uvm_swap_markbad(swslot, 1);
 
-				atomic_clearbits_int(&ptmp->pg_flags,
-				    PG_WANTED|PG_BUSY);
+				ptmp->flags &= ~(PG_WANTED|PG_BUSY);
 				UVM_PAGE_OWN(ptmp, NULL);
 				uvm_lock_pageq();
 				uvm_pagefree(ptmp);
@@ -1224,8 +1221,7 @@ uao_get(uobj, offset, pps, npagesp, centeridx, access_type, advice, flags)
  		 * => activate the page
  		 */
 
-		/* data is valid ... */
-		atomic_clearbits_int(&ptmp->pg_flags, PG_FAKE);
+		ptmp->flags &= ~PG_FAKE;		/* data is valid ... */
 		pmap_clear_modify(ptmp);		/* ... and clean */
 		pps[lcv] = ptmp;
 
@@ -1263,7 +1259,7 @@ uao_releasepg(pg, nextpgp)
 {
 	struct uvm_aobj *aobj = (struct uvm_aobj *) pg->uobject;
 
-	KASSERT(pg->pg_flags & PG_RELEASED);
+	KASSERT(pg->flags & PG_RELEASED);
 
 	/*
  	 * dispose of the page [caller handles PG_WANTED] and swap slot.
@@ -1510,7 +1506,7 @@ uao_pagein_page(aobj, pageidx)
 		return FALSE;
 
 	}
-	KASSERT((pg->pg_flags & PG_RELEASED) == 0);
+	KASSERT((pg->flags & PG_RELEASED) == 0);
 
 	/*
 	 * ok, we've got the page now.
@@ -1518,7 +1514,7 @@ uao_pagein_page(aobj, pageidx)
 	 */
 	slot = uao_set_swslot(&aobj->u_obj, pageidx, 0);
 	uvm_swap_free(slot, 1);
-	atomic_clearbits_int(&pg->pg_flags, PG_BUSY|PG_CLEAN|PG_FAKE);
+	pg->flags &= ~(PG_BUSY|PG_CLEAN|PG_FAKE);
 	UVM_PAGE_OWN(pg, NULL);
 
 	/*

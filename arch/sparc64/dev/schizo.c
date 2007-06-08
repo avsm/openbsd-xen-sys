@@ -1,4 +1,4 @@
-/*	$OpenBSD: schizo.c,v 1.46 2007/02/23 21:52:01 kettenis Exp $	*/
+/*	$OpenBSD: schizo.c,v 1.44 2007/01/20 16:26:53 kettenis Exp $	*/
 
 /*
  * Copyright (c) 2002 Jason L. Wright (jason@thought.net)
@@ -236,6 +236,13 @@ schizo_init(struct schizo_softc *sc, int busa)
 	schizo_cfg_write(pbm, PCI_COMMAND_STATUS_REG,
 	    schizo_cfg_read(pbm, PCI_COMMAND_STATUS_REG));
 
+	if (busa)
+		schizo_set_intr(sc, pbm, PIL_HIGH, schizo_pci_error,
+		   pbm, SCZ_PCIERR_A_INO, "pci_a");
+	else
+		schizo_set_intr(sc, pbm, PIL_HIGH, schizo_pci_error,
+		   pbm, SCZ_PCIERR_B_INO, "pci_b");
+
 	reg = schizo_pbm_read(pbm, SCZ_PCI_CTRL);
 	/* enable/disable error interrupts and arbiter */
 	reg |= SCZ_PCICTRL_EEN | SCZ_PCICTRL_MMU_INT | SCZ_PCICTRL_ARB;
@@ -246,13 +253,6 @@ schizo_init(struct schizo_softc *sc, int busa)
 	reg &= ~(SCZ_PCIDIAG_D_RTRYARB | SCZ_PCIDIAG_D_RETRY |
 	    SCZ_PCIDIAG_D_INTSYNC);
 	schizo_pbm_write(pbm, SCZ_PCI_DIAG, reg);
-
-	if (busa)
-		schizo_set_intr(sc, pbm, PIL_HIGH, schizo_pci_error,
-		   pbm, SCZ_PCIERR_A_INO, "pci_a");
-	else
-		schizo_set_intr(sc, pbm, PIL_HIGH, schizo_pci_error,
-		   pbm, SCZ_PCIERR_B_INO, "pci_b");
 
 	/* double mapped */
 	schizo_set_intr(sc, pbm, PIL_HIGH, schizo_ue, sc, SCZ_UE_INO,
@@ -343,11 +343,7 @@ schizo_safari_error(void *vsc)
 {
 	struct schizo_softc *sc = vsc;
 
-	printf("%s: safari error\n", sc->sc_dv.dv_xname);
-
-	printf("ERRLOG=%lx\n", schizo_read(sc, SCZ_SAFARI_ERRLOG));
-
-	panic("%s: fatal", sc->sc_dv.dv_xname);
+	panic("%s: safari error", sc->sc_dv.dv_xname);
 	return (1);
 }
 

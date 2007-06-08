@@ -1,4 +1,4 @@
-/*	$OpenBSD: vm_machdep.c,v 1.41 2006/11/29 12:26:14 miod Exp $	*/
+/*	$OpenBSD: vm_machdep.c,v 1.40 2005/12/17 07:31:27 miod Exp $	*/
 /*	$NetBSD: vm_machdep.c,v 1.1 1996/09/30 16:34:57 ws Exp $	*/
 
 /*
@@ -59,15 +59,14 @@ cpu_fork(struct proc *p1, struct proc *p2, void *stack, size_t stacksize,
 	caddr_t stktop1, stktop2;
 	extern void fork_trampoline(void);
 	struct pcb *pcb = &p2->p_addr->u_pcb;
-	struct cpu_info *ci = curcpu();
 
-	if (p1 == ci->ci_fpuproc)
+	if (p1 == fpuproc)
 		save_fpu();
 	*pcb = p1->p_addr->u_pcb;
 	
 #ifdef ALTIVEC
 	if (p1->p_addr->u_pcb.pcb_vr != NULL) {
-		if (p1 == ci->ci_vecproc)
+		if (p1 == ppc_vecproc)
 			save_vec(p1);
 		pcb->pcb_vr = pool_get(&ppc_vecpl, PR_WAITOK);
 		*pcb->pcb_vr = *p1->p_addr->u_pcb.pcb_vr;
@@ -158,24 +157,21 @@ pagemove(caddr_t from, caddr_t to, size_t size)
 void
 cpu_exit(struct proc *p)
 {
-	struct cpu_info *ci = curcpu();
 #ifdef ALTIVEC
 	struct pcb *pcb = &p->p_addr->u_pcb;
 #endif /* ALTIVEC */
 	
-	/* XXX What if the state is on the other cpu? */
-	if (p == ci->ci_fpuproc) 	/* release the fpu */
-		ci->ci_fpuproc = NULL;
+	if (p == fpuproc) 	/* release the fpu */
+		fpuproc = NULL;
 
 #ifdef ALTIVEC
-	/* XXX What if the state is on the other cpu? */
-	if (p == ci->ci_vecproc)
-		ci->ci_vecproc = NULL; 	/* release the Altivec Unit */
+	if (p == ppc_vecproc)
+		ppc_vecproc = NULL; 	/* release the Altivec Unit */
 	if (pcb->pcb_vr != NULL)
 		pool_put(&ppc_vecpl, pcb->pcb_vr);
 #endif /* ALTIVEC */
 	
-	(void)splsched();
+	(void)splhigh();
 	switchexit(p);
 }
 

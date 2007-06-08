@@ -1,4 +1,4 @@
-/*	$OpenBSD: if.c,v 1.156 2007/03/18 23:23:17 mpf Exp $	*/
+/*	$OpenBSD: if.c,v 1.152 2006/11/24 20:57:46 canacar Exp $	*/
 /*	$NetBSD: if.c,v 1.35 1996/05/07 05:26:04 thorpej Exp $	*/
 
 /*
@@ -1329,7 +1329,6 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 			return (EINVAL);
 	        switch (ifp->if_type) {
 		case IFT_ETHER:
-		case IFT_CARP:
 		case IFT_FDDI:
 		case IFT_XETHER:
 		case IFT_ISO88025:
@@ -1337,7 +1336,7 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 	                bcopy((caddr_t)ifr->ifr_addr.sa_data,
 			      (caddr_t)((struct arpcom *)ifp)->ac_enaddr,
 			      ETHER_ADDR_LEN);
-			/* FALLTHROUGH */
+			/* fall through */
 		case IFT_ARCNET:
                         bcopy((caddr_t)ifr->ifr_addr.sa_data,
 			      LLADDR(sdl), ETHER_ADDR_LEN);
@@ -1346,14 +1345,11 @@ ifioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 	                return (ENODEV);
 		}
 		if (ifp->if_flags & IFF_UP) {
-			struct ifreq ifrq;
 		        int s = splnet();
 			ifp->if_flags &= ~IFF_UP;
-			ifrq.ifr_flags = ifp->if_flags;
-			(*ifp->if_ioctl)(ifp, SIOCSIFFLAGS, (caddr_t)&ifrq);
+			(*ifp->if_ioctl)(ifp, SIOCSIFFLAGS, (caddr_t)&ifr);
 			ifp->if_flags |= IFF_UP;
-			ifrq.ifr_flags = ifp->if_flags;
-			(*ifp->if_ioctl)(ifp, SIOCSIFFLAGS, (caddr_t)&ifrq);
+			(*ifp->if_ioctl)(ifp, SIOCSIFFLAGS, (caddr_t)&ifr);
 			splx(s);
 			TAILQ_FOREACH(ifa, &ifp->if_addrlist, ifa_list) {
 			        if (ifa->ifa_addr != NULL &&
@@ -1788,7 +1784,6 @@ if_setgroupattribs(caddr_t data)
 {
 	struct ifgroupreq	*ifgr = (struct ifgroupreq *)data;
 	struct ifg_group	*ifg;
-	struct ifg_member	*ifgm;
 	int			 demote;
 
 	TAILQ_FOREACH(ifg, &ifg_head, ifg_next)
@@ -1804,10 +1799,6 @@ if_setgroupattribs(caddr_t data)
 
 	ifg->ifg_carp_demoted += demote;
 
-	TAILQ_FOREACH(ifgm, &ifg->ifg_members, ifgm_next)
-		if (ifgm->ifgm_ifp->if_ioctl)
-			ifgm->ifgm_ifp->if_ioctl(ifgm->ifgm_ifp,
-			    SIOCSIFGATTR, data);
 	return (0);
 }
 

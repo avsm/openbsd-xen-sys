@@ -1,8 +1,7 @@
-/*	$OpenBSD: sensors.h,v 1.22 2007/02/23 22:55:40 deraadt Exp $	*/
+/*	$OpenBSD: sensors.h,v 1.20 2006/12/23 17:40:39 deraadt Exp $	*/
 
 /*
  * Copyright (c) 2003, 2004 Alexander Yurchenko <grange@openbsd.org>
- * Copyright (c) 2006 Constantine A. Murenin <cnst+openbsd@bugmail.mojo.ru>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -68,6 +67,7 @@ static const char * const sensor_type_s[SENSOR_MAX_TYPES + 1] = {
 	"timedelta",
 	"undefined"
 };
+
 #endif	/* !_KERNEL */
 
 #define SENSOR_DRIVE_EMPTY	1
@@ -90,10 +90,9 @@ enum sensor_status {
 	SENSOR_S_UNKNOWN		/* status is unknown */
 };
 
-/* Sensor data:
- * New fields should be added at the end to encourage backwards compat
- */
+/* Sensor data */
 struct sensor {
+	SLIST_ENTRY(sensor) list;	/* device-scope list */
 	char desc[32];			/* sensor description, may be empty */
 	struct timeval tv;		/* sensor value last change time */
 	int64_t value;			/* current value */
@@ -104,53 +103,31 @@ struct sensor {
 #define SENSOR_FINVALID		0x0001	/* sensor is invalid */
 #define SENSOR_FUNKNOWN		0x0002	/* sensor value is unknown */
 };
+SLIST_HEAD(sensors_head, sensor);
 
-/* Sensor device data:
- * New fields should be added at the end to encourage backwards compat
- */
+/* Sensor device data */
 struct sensordev {
+	SLIST_ENTRY(sensordev)	list;
 	int num;			/* sensordev number */
 	char xname[16];			/* unix device name */
 	int maxnumt[SENSOR_MAX_TYPES];
 	int sensors_count;
+	struct sensors_head sensors_list;
 };
 
 #define MAXSENSORDEVICES 32
 
 #ifdef _KERNEL
 
-/* Sensor data */
-struct ksensor {
-	SLIST_ENTRY(ksensor) list;	/* device-scope list */
-	char desc[32];			/* sensor description, may be empty */
-	struct timeval tv;		/* sensor value last change time */
-	int64_t value;			/* current value */
-	enum sensor_type type;		/* sensor type */
-	enum sensor_status status;	/* sensor status */
-	int numt;			/* sensor number of .type type */
-	int flags;			/* sensor flags, ie. SENSOR_FINVALID */
-};
-SLIST_HEAD(ksensors_head, ksensor);
+/* struct sensordev */
+void			 sensordev_install(struct sensordev *);
+void			 sensordev_deinstall(struct sensordev *);
+struct sensordev	*sensordev_get(int);
 
-/* Sensor device data */
-struct ksensordev {
-	SLIST_ENTRY(ksensordev)	list;
-	int num;			/* sensordev number */
-	char xname[16];			/* unix device name */
-	int maxnumt[SENSOR_MAX_TYPES];
-	int sensors_count;
-	struct ksensors_head sensors_list;
-};
-
-/* struct ksensordev */
-void			 sensordev_install(struct ksensordev *);
-void			 sensordev_deinstall(struct ksensordev *);
-struct ksensordev	*sensordev_get(int);
-
-/* struct ksensor */
-void			 sensor_attach(struct ksensordev *, struct ksensor *);
-void			 sensor_detach(struct ksensordev *, struct ksensor *);
-struct ksensor		*sensor_find(int, enum sensor_type, int);
+/* struct sensor */
+void			 sensor_attach(struct sensordev *, struct sensor *);
+void			 sensor_detach(struct sensordev *, struct sensor *);
+struct sensor		*sensor_find(int, enum sensor_type, int);
 
 /* task scheduling */
 int		sensor_task_register(void *, void (*)(void *), int);

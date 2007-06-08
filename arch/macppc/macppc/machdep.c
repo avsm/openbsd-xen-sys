@@ -1,4 +1,4 @@
-/*	$OpenBSD: machdep.c,v 1.88 2007/03/17 21:11:58 kettenis Exp $	*/
+/*	$OpenBSD: machdep.c,v 1.84 2006/03/15 21:03:38 deraadt Exp $	*/
 /*	$NetBSD: machdep.c,v 1.4 1996/10/16 19:33:11 ws Exp $	*/
 
 /*
@@ -90,6 +90,9 @@
 /*
  * Global variables used here and there
  */
+struct pcb *curpcb;
+struct pmap *curpm;
+
 extern struct user *proc0paddr;
 struct pool ppc_vecpl;
 
@@ -199,7 +202,6 @@ initppc(startkernel, endkernel, args)
 	extern void *msgbuf_addr;
 	int exc, scratch;
 
-	proc0.p_cpu = &cpu_info[0];
 	proc0.p_addr = proc0paddr;
 	bzero(proc0.p_addr, sizeof *proc0.p_addr);
 
@@ -937,6 +939,7 @@ dumpsys()
 
 }
 
+volatile int cpl, ipending, astpending;
 int imask[IPL_NUM];
 
 /*
@@ -973,7 +976,11 @@ softnet(int isr)
 int
 lcsplx(int ipl)
 {
-	return spllower(ipl);
+	int oldcpl;
+
+	oldcpl = cpl;
+	splx(ipl);
+	return oldcpl;
 }
 
 /*

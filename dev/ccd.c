@@ -1,4 +1,4 @@
-/*	$OpenBSD: ccd.c,v 1.69 2007/03/30 15:19:05 deraadt Exp $	*/
+/*	$OpenBSD: ccd.c,v 1.67 2006/08/12 18:08:11 krw Exp $	*/
 /*	$NetBSD: ccd.c,v 1.33 1996/05/05 04:21:14 thorpej Exp $	*/
 
 /*-
@@ -112,7 +112,6 @@
 #include <sys/fcntl.h>
 #include <sys/vnode.h>
 #include <sys/conf.h>
-#include <sys/rwlock.h>
 
 #include <dev/ccdvar.h>
 
@@ -121,31 +120,6 @@
 #else
 #define INLINE
 #endif
-
-/*
- * A concatenated disk is described after initialization by this structure.
- */
-struct ccd_softc {
-	struct disk	sc_dkdev;		/* generic disk device info */
-	struct ccdgeom	sc_geom;		/* pseudo geometry info */
-	struct ccdcinfo	*sc_cinfo;		/* component info */
-	struct ccdiinfo	*sc_itable;		/* interleave table */
-	char		sc_xname[8];		/* XXX external name */
-	size_t		sc_size;		/* size of ccd */
-	int		sc_flags;		/* flags */
-	int		sc_cflags;		/* copy of ccd_flags */
-	int		sc_ileave;		/* interleave */
-	u_int		sc_nccdisks;		/* # of components */
-	u_int		sc_nccunits;		/* # of components for data */
-	struct rwlock	sc_rwlock;		/* lock */
-
-};
-
-/* sc_flags */
-#define CCDF_INITED	0x01	/* unit has been initialized */
-#define CCDF_WLABEL	0x02	/* label area is writable */
-#define CCDF_LABELLING	0x04	/* unit is currently being labelled */
-
 
 /*
  * Overridable value telling how many kvm spaces of MAXBSIZE we need for
@@ -208,11 +182,10 @@ long	ccdbuffer(struct ccd_softc *, struct buf *, daddr_t, caddr_t,
     long, struct ccdbuf **, int);
 void	ccdgetdisklabel(dev_t, struct ccd_softc *, struct disklabel *,
     struct cpu_disklabel *, int);
+int	ccdlock(struct ccd_softc *);
+void	ccdunlock(struct ccd_softc *);
 INLINE struct ccdbuf *getccdbuf(void);
 INLINE void putccdbuf(struct ccdbuf *);
-
-#define ccdlock(sc) rw_enter(&sc->sc_rwlock, RW_WRITE|RW_INTR)
-#define ccdunlock(sc) rw_exit_write(&sc->sc_rwlock)
 
 #ifdef CCDDEBUG
 void	printiinfo(struct ccdiinfo *);
@@ -267,8 +240,6 @@ putccdbuf(struct ccdbuf *cbp)
 void
 ccdattach(int num)
 {
-	int i;
-
 	if (num <= 0) {
 #ifdef DIAGNOSTIC
 		panic("ccdattach: count <= 0");
@@ -287,9 +258,6 @@ ccdattach(int num)
 		if (ccddevs != NULL)
 			free(ccddevs, M_DEVBUF);
 		return;
-	}
-	for (i = 0; i < num; i++) {
-		rw_init(&ccd_softc[i].sc_rwlock, "ccdlock");
 	}
 	numccd = num;
 	bzero(ccd_softc, num * sizeof(struct ccd_softc));
@@ -1183,7 +1151,7 @@ ccdioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 			return (EBUSY);
 
 		if (ccio->ccio_ndisks == 0 || ccio->ccio_ndisks > INT_MAX ||
-		    ccio->ccio_ileave < 0)
+		    ccio->ccio_ileave <= 0)
 			return (EINVAL);
 
 		if ((error = ccdlock(cs)) != 0)
@@ -1552,6 +1520,40 @@ ccdgetdisklabel(dev_t dev, struct ccd_softc *cs, struct disklabel *lp,
 	/* It's actually extremely common to have unlabeled ccds. */
 	if (errstring != NULL)
 		CCD_DPRINTF(CCDB_LABEL, ("%s: %s\n", cs->sc_xname, errstring));
+}
+
+/*
+ * Wait interruptibly for an exclusive lock.
+ *
+ * XXX
+ * Several drivers do this; it should be abstracted and made MP-safe.
+ */
+int
+ccdlock(struct ccd_softc *cs)
+{
+	int error;
+
+	while ((cs->sc_flags & CCDF_LOCKED) != 0) {
+		cs->sc_flags |= CCDF_WANTED;
+		if ((error = tsleep(cs, PRIBIO | PCATCH, "ccdlck", 0)) != 0)
+			return (error);
+	}
+	cs->sc_flags |= CCDF_LOCKED;
+	return (0);
+}
+
+/*
+ * Unlock and wake up any waiters.
+ */
+void
+ccdunlock(struct ccd_softc *cs)
+{
+
+	cs->sc_flags &= ~CCDF_LOCKED;
+	if ((cs->sc_flags & CCDF_WANTED) != 0) {
+		cs->sc_flags &= ~CCDF_WANTED;
+		wakeup(cs);
+	}
 }
 
 #ifdef CCDDEBUG

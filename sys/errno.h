@@ -1,4 +1,4 @@
-/*	$OpenBSD: errno.h,v 1.17 2006/08/04 21:35:51 beck Exp $	*/
+/*	$OpenBSD: errno.h,v 1.16 2005/12/28 16:33:57 millert Exp $	*/
 /*	$NetBSD: errno.h,v 1.10 1996/01/20 01:33:53 jtc Exp $	*/
 
 /*
@@ -156,9 +156,7 @@
 #define	ENEEDAUTH	81		/* Need authenticator */
 #define	EIPSEC		82		/* IPsec processing failure */
 #define	ENOATTR		83		/* Attribute not found */
-#endif
 #define	EILSEQ		84		/* Illegal byte sequence */
-#if __BSD_VISIBLE
 #define	ENOMEDIUM	85		/* No medium found */
 #define	EMEDIUMTYPE	86		/* Wrong Medium Type */
 #define	ELAST		86		/* Must be equal largest errno */

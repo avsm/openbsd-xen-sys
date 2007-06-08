@@ -1,4 +1,4 @@
-/*	$OpenBSD: vm_machdep.c,v 1.49 2007/02/24 11:59:45 miod Exp $	*/
+/*	$OpenBSD: vm_machdep.c,v 1.46 2006/09/19 11:06:33 jsg Exp $	*/
 /*	$NetBSD: vm_machdep.c,v 1.61 1996/05/03 19:42:35 christos Exp $	*/
 
 /*-
@@ -150,7 +150,6 @@ cpu_exit(struct proc *p)
 		npxsave_proc(p, 0);
 #endif
 
-	pmap_deactivate(p);
 	switch_exit(p);
 }
 
@@ -218,8 +217,7 @@ cpu_coredump(struct proc *p, struct vnode *vp, struct ucred *cred,
 void
 pagemove(caddr_t from, caddr_t to, size_t size)
 {
-	pt_entry_t *fpte, *tpte;
-	pt_entry_t ofpte, otpte;
+	u_int32_t ofpte, otpte;
 #ifdef MULTIPROCESSOR
 	u_int32_t cpumask = 0;
 #endif
@@ -228,13 +226,12 @@ pagemove(caddr_t from, caddr_t to, size_t size)
 	if ((size & PAGE_MASK) != 0)
 		panic("pagemove");
 #endif
-	fpte = kvtopte((vaddr_t)from);
-	tpte = kvtopte((vaddr_t)to);
 	while (size > 0) {
-		ofpte = *fpte;
-		otpte = *tpte;
-		*tpte++ = *fpte;
-		*fpte++ = 0;
+		ofpte = pmap_pte_bits((vaddr_t)from);
+		otpte = pmap_pte_bits((vaddr_t)to);
+		pmap_pte_set((vaddr_t)to,
+		    pmap_pte_paddr((vaddr_t)from), ofpte);
+		pmap_pte_set((vaddr_t)from, 0, 0);
 #if defined(I386_CPU) && !defined(MULTIPROCESSOR)
 		if (cpu_class != CPUCLASS_386)
 #endif
@@ -283,7 +280,22 @@ kvtop(caddr_t addr)
 }
 
 /*
- * Map an user IO request into kernel virtual address space.
+ * Map an IO request into kernel virtual address space.  Requests fall into
+ * one of five catagories:
+ *
+ *	B_PHYS|B_UAREA:	User u-area swap.
+ *			Address is relative to start of u-area (p_addr).
+ *	B_PHYS|B_PAGET:	User page table swap.
+ *			Address is a kernel VA in usrpt (Usrptmap).
+ *	B_PHYS|B_DIRTY:	Dirty page push.
+ *			Address is a VA in proc2's address space.
+ *	B_PHYS|B_PGIN:	Kernel pagein of user pages.
+ *			Address is VA in user's address space.
+ *	B_PHYS:		User "raw" IO request.
+ *			Address is VA in user's address space.
+ *
+ * All requests are (re)mapped into kernel VA space via the useriomap
+ * (a name with only slightly more meaning than "kernelmap")
  */
 void
 vmapbuf(struct buf *bp, vsize_t len)

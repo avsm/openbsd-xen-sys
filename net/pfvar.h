@@ -1,4 +1,4 @@
-/*	$OpenBSD: pfvar.h,v 1.243 2007/02/09 11:20:39 henning Exp $ */
+/*	$OpenBSD: pfvar.h,v 1.241 2006/11/20 14:25:11 mcbride Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -69,7 +69,6 @@ enum	{ PF_DEBUG_NONE, PF_DEBUG_URGENT, PF_DEBUG_MISC, PF_DEBUG_NOISY };
 enum	{ PF_CHANGE_NONE, PF_CHANGE_ADD_HEAD, PF_CHANGE_ADD_TAIL,
 	  PF_CHANGE_ADD_BEFORE, PF_CHANGE_ADD_AFTER,
 	  PF_CHANGE_REMOVE, PF_CHANGE_GET_TICKET };
-enum	{ PF_GET_NONE, PF_GET_CLR_CNTR };
 
 /*
  * Note about PFTM_*: real indices into pf_rule.timeout[] come before
@@ -1184,8 +1183,7 @@ struct pf_tagname {
 #define PFFRAG_FRCACHE_HIWAT	10000	/* Number of fragment descriptors */
 
 #define PFR_KTABLE_HIWAT	1000	/* Number of tables */
-#define PFR_KENTRY_HIWAT	200000	/* Number of table entries */
-#define PFR_KENTRY_HIWAT_SMALL	100000	/* Number of table entries (tiny hosts) */
+#define PFR_KENTRY_HIWAT	100000	/* Number of table entries */
 
 /*
  * ioctl parameter structures

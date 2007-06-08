@@ -1,4 +1,4 @@
-/*	$OpenBSD: com_subr.c,v 1.8 2006/12/28 20:50:26 miod Exp $	*/
+/*	$OpenBSD: com_subr.c,v 1.7 2006/07/31 11:06:30 mickey Exp $	*/
 
 /*
  * Copyright (c) 1997 - 1999, Jason Downs.  All rights reserved.

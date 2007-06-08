@@ -1,4 +1,4 @@
-/*	$OpenBSD: param.h,v 1.22 2007/03/20 14:42:52 deanna Exp $	*/
+/*	$OpenBSD: param.h,v 1.20 2006/03/19 01:47:24 martin Exp $	*/
 /*	$NetBSD: param.h,v 1.25 2001/05/30 12:28:51 mrg Exp $ */
 
 /*
@@ -92,6 +92,7 @@
  */
 #define	ALIGNBYTES		0xf
 #define	ALIGN(p)		(((u_long)(p) + ALIGNBYTES) & ~ALIGNBYTES)
+#define ALIGN32(p)		(((u_long)(p) + ALIGNBYTES32) & ~ALIGNBYTES32)
 #define ALIGNED_POINTER(p,t)	((((u_long)(p)) & (sizeof(t)-1)) == 0)
 
 
@@ -239,7 +240,7 @@ extern void	delay(unsigned int);
  * On a sun4u machine, the page size is 8192.
  *
  * Note that whenever the macros defined below evaluate to expressions
- * involving variables, the kernel will perform slightly worse due to the
+ * involving variables, the kernel will perform slighly worse due to the
  * extra memory references they'll generate.
  */
 

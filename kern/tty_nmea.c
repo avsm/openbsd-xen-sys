@@ -1,7 +1,7 @@
-/*	$OpenBSD: tty_nmea.c,v 1.20 2007/03/20 20:14:29 deraadt Exp $ */
+/*	$OpenBSD: tty_nmea.c,v 1.16 2006/12/23 17:46:38 deraadt Exp $ */
 
 /*
- * Copyright (c) 2006, 2007 Marc Balmer <mbalmer@openbsd.org>
+ * Copyright (c) 2006 Marc Balmer <mbalmer@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -16,7 +16,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-/* A tty line discipline to decode NMEA 0183 data to get the time. */
+/* line discipline to decode NMEA 0183 data */
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -42,25 +42,23 @@ int	nmeainput(int, struct tty *);
 void	nmeaattach(int);
 
 #define NMEAMAX	82
-#define MAXFLDS	32
+#define MAXFLDS	16
 
-int nmea_count;	/* this is wrong, it should really be a SLIST */
+int nmea_count;
 
 struct nmea {
-	char			cbuf[NMEAMAX];	/* receive buffer */
-	struct ksensor		time;		/* the timedelta sensor */
-	struct ksensordev	timedev;
-	struct timespec		ts;		/* current timestamp */
-	struct timespec		lts;		/* timestamp of last '$' seen */
-	int64_t			gap;		/* gap between two sentences */
+	char		cbuf[NMEAMAX];
+	struct sensor	time;
 #ifdef NMEA_DEBUG
-	int			gapno;
+	struct sensor	skew;		/* soft to tty timestamp skew */
 #endif
-	int64_t			last;		/* last time rcvd */
-	int			sync;		/* if 1, waiting for '$' */
-	int			pos;		/* positon in rcv buffer */
-	int			no_pps;		/* no PPS although requested */
-	char			mode;		/* GPS mode */
+	struct sensordev timedev;
+	struct timespec	ts;		/* soft timestamp */
+	struct timeval	tv;		/* tty timestamp */
+	int64_t		last;		/* last time rcvd */
+	int		sync;
+	int		pos;
+	char		mode;		/* GPS mode */
 };
 
 /* NMEA decoding */
@@ -79,7 +77,7 @@ nmeaattach(int dummy)
 int
 nmeaopen(dev_t dev, struct tty *tp)
 {
-	struct proc *p = curproc;
+	struct proc *p = curproc;	/* XXX */
 	struct nmea *np;
 	int error;
 
@@ -95,6 +93,14 @@ nmeaopen(dev_t dev, struct tty *tp)
 	np->time.type = SENSOR_TIMEDELTA;
 	np->time.flags = SENSOR_FINVALID;
 	sensor_attach(&np->timedev, &np->time);
+#ifdef NMEA_DEBUG
+	snprintf(np->skew.desc, sizeof(np->skew.desc),
+	    "nmea%d timestamp skew", nmea_count - 1);
+	np->skew.status = SENSOR_S_UNKNOWN;
+	np->skew.type = SENSOR_TIMEDELTA;
+	np->skew.flags = SENSOR_FINVALID;
+	sensor_attach(&np->timedev, &np->skew);
+#endif
 	np->sync = 1;
 	tp->t_sc = (caddr_t)np;
 
@@ -125,56 +131,24 @@ int
 nmeainput(int c, struct tty *tp)
 {
 	struct nmea *np = (struct nmea *)tp->t_sc;
-	struct timespec ts;
-	int64_t gap;
-	long tmin, tmax;
 
 	switch (c) {
 	case '$':
-		nanotime(&ts);
-		np->pos = np->sync = 0;
-		gap = (ts.tv_sec * 1000000000LL + ts.tv_nsec) -
-		    (np->lts.tv_sec * 1000000000LL + np->lts.tv_nsec);
-
-		np->lts.tv_sec = ts.tv_sec;
-		np->lts.tv_nsec = ts.tv_nsec;
-
-		if (gap <= np->gap)
-			break;
-
-		np->ts.tv_sec = ts.tv_sec;
-		np->ts.tv_nsec = ts.tv_nsec;
-
-#ifdef NMEA_DEBUG
-		if (nmeadebug > 0) {
-			linesw[TTYDISC].l_rint('[', tp);
-			linesw[TTYDISC].l_rint('0' + np->gapno++, tp);
-			linesw[TTYDISC].l_rint(']', tp);
-		}
-#endif
-		np->gap = gap;
-	
 		/*
-		 * If a tty timestamp is available, make sure its value is
-		 * reasonable by comparing against the timestamp just taken.
-		 * If they differ by more than 2 seconds, assume no PPS signal
-		 * is present, note the fact, and keep using the timestamp
-		 * value.  When this happens, the sensor state is set to
-		 * CRITICAL later when the GPRMC sentence is decoded.
+		 * Capture the moment, take a soft timestamp in any case,
+		 * it is possible that tty timestamping has been requested
+		 * but device does not provide a PPS signal.  In this
+		 * case we use the soft timestamp later.
 		 */
+		nanotime(&np->ts);
+		/* if a tty timestamp is available, copy it now */
 		if (tp->t_flags & (TS_TSTAMPDCDSET | TS_TSTAMPDCDCLR |
 		    TS_TSTAMPCTSSET | TS_TSTAMPCTSCLR)) {
-			tmax = lmax(np->ts.tv_sec, tp->t_tv.tv_sec);
-			tmin = lmin(np->ts.tv_sec, tp->t_tv.tv_sec);
-			if (tmax - tmin > 1)
-				np->no_pps = 1;
-			else {
-				np->ts.tv_sec = tp->t_tv.tv_sec;
-				np->ts.tv_nsec = tp->t_tv.tv_usec *
-				    1000L;
-				np->no_pps = 0;
-			}
+			np->tv.tv_sec = tp->t_tv.tv_sec;
+			np->tv.tv_usec = tp->t_tv.tv_usec;
 		}
+		np->pos = 0;
+		np->sync = 0;
 		break;
 	case '\r':
 	case '\n':
@@ -189,6 +163,7 @@ nmeainput(int c, struct tty *tp)
 			np->cbuf[np->pos++] = c;
 		break;
 	}
+
 	/* pass data to termios */
 	return linesw[TTYDISC].l_rint(c, tp);
 }
@@ -200,7 +175,7 @@ nmea_scan(struct nmea *np, struct tty *tp)
 	int fldcnt = 0, cksum = 0, msgcksum, n;
 	char *fld[MAXFLDS], *cs;
 
-	/* split into fields and calculate the checksum */
+	/* split into fields and calc checksum */
 	fld[fldcnt++] = &np->cbuf[0];	/* message type */
 	for (cs = NULL, n = 0; n < np->pos && cs == NULL; n++) {
 		switch (np->cbuf[n]) {
@@ -243,7 +218,7 @@ nmea_scan(struct nmea *np, struct tty *tp)
 			}
 		}
 		if (msgcksum != cksum) {
-			DPRINTF(("checksum mismatch\n"));
+			DPRINTF(("cksum mismatch\n"));
 			return;
 		}
 	}
@@ -277,20 +252,46 @@ nmea_gprmc(struct nmea *np, struct tty *tp, char *fld[], int fldcnt)
 		return;
 	}
 	np->last = nmea_now;
-	np->gap = 0LL;
-#ifdef NMEA_DEBUG
-	np->gapno = 0;
-	if (nmeadebug > 0) {
-		linesw[TTYDISC].l_rint('[', tp);
-		linesw[TTYDISC].l_rint('C', tp);
-		linesw[TTYDISC].l_rint(']', tp);
-	}
-#endif
 
-	np->time.value = np->ts.tv_sec * 1000000000LL +
-	    np->ts.tv_nsec - nmea_now;
-	np->time.tv.tv_sec = np->ts.tv_sec;
-	np->time.tv.tv_usec = np->ts.tv_nsec / 1000L;
+	/*
+	 * if tty timestamping on DCD or CTS is used, take the timestamp
+	 * from the tty, else use the timestamp taken on the initial '$'
+	 * character.
+	 */
+	if (tp->t_flags & (TS_TSTAMPDCDSET | TS_TSTAMPDCDCLR |
+	    TS_TSTAMPCTSSET | TS_TSTAMPCTSCLR)) {
+		np->time.value = np->tv.tv_sec * 1000000000LL +
+		    np->tv.tv_usec * 1000LL - nmea_now;
+		np->time.tv.tv_sec = np->tv.tv_sec;
+		np->time.tv.tv_usec = np->tv.tv_usec;
+#ifdef NMEA_DEBUG
+		/*
+		 * If we got a tty timestamp, provide the skew to the
+		 * soft timestamp (taken at the '$' character) in a
+		 * second timedelta sensor.
+		 */
+		np->skew.value = (np->ts.tv_sec * 1000000000LL +
+		    np->ts.tv_nsec - nmea_now) - np->time.value;
+		np->skew.tv.tv_sec = np->tv.tv_sec;
+		np->skew.tv.tv_usec = np->tv.tv_usec;
+		if (np->skew.status == SENSOR_S_UNKNOWN) {
+			np->skew.status = SENSOR_S_CRIT;
+			np->skew.flags &= ~SENSOR_FINVALID;
+		}
+#endif
+	} else {
+		np->time.value = np->ts.tv_sec * 1000000000LL +
+		    np->ts.tv_nsec - nmea_now;
+		np->time.tv.tv_sec = np->ts.tv_sec;
+		np->time.tv.tv_usec = np->ts.tv_nsec / 1000L;
+#ifdef NMEA_DEBUG
+		if (np->skew.status == SENSOR_S_CRIT) {
+			np->skew.value = 0LL;
+			np->skew.value = SENSOR_S_UNKNOWN;
+			np->skew.flags |= SENSOR_FINVALID;
+		}
+#endif
+	}
 	if (np->time.status == SENSOR_S_UNKNOWN) {
 		np->time.status = SENSOR_S_OK;
 		np->time.flags &= ~SENSOR_FINVALID;
@@ -336,19 +337,12 @@ nmea_gprmc(struct nmea *np, struct tty *tp, char *fld[], int fldcnt)
 	default:
 		DPRINTF(("gprmc: unknown warning indication\n"));
 	}
-
-	/*
-	 * If tty timestamping is requested, but not PPS signal is present, set
-	 * the sensor state to CRITICAL.
-	 */
-	if (np->no_pps)
-		np->time.status = SENSOR_S_CRIT;
 }
 
 /*
- * Convert a NMEA 0183 formatted date string to seconds since the epoch.
- * The string must be of the form DDMMYY.
- * Return 0 on success, -1 if illegal characters are encountered.
+ * convert a NMEA 0183 formatted date string to seconds since the epoch
+ * the string must be of the form DDMMYY
+ * return 0 on success, -1 if illegal characters are encountered
  */
 int
 nmea_date_to_nano(char *s, int64_t *nano)
@@ -375,14 +369,15 @@ nmea_date_to_nano(char *s, int64_t *nano)
 }
 
 /*
- * Convert NMEA 0183 formatted time string to nanoseconds since midnight.
- * The string must be of the form HHMMSS[.[sss]] (e.g. 143724 or 143723.615).
- * Return 0 on success, -1 if illegal characters are encountered.
+ * convert NMEA 0183 formatted time string to nanoseconds since midnight
+ * the string must be of the form HHMMSS[.[sss]]
+ * (e.g. 143724 or 143723.615)
+ * return 0 on success, -1 if illegal characters are encountered
  */
 int
 nmea_time_to_nano(char *s, int64_t *nano)
 {
-	long fac = 36000L, div = 6L, secs = 0L, frac = 0L;
+	long fac = 36000L, div = 6L, secs = 0L, frac;
 	char ul = '2';
 	int n;
 
@@ -410,8 +405,9 @@ nmea_time_to_nano(char *s, int64_t *nano)
 	if (fac)
 		return -1;
 
-	/* Handle the fractions of a second, up to a maximum of 6 digits. */
 	div = 1L;
+	frac = 0L;
+	/* handle fractions of a second, max. 6 digits */
 	if (*s == '.') {
 		for (++s; div < 1000000 && *s && *s >= '0' && *s <= '9'; s++) {
 			frac *= 10;

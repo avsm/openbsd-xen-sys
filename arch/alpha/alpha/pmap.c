@@ -1,4 +1,4 @@
-/* $OpenBSD: pmap.c,v 1.49 2007/02/03 16:48:21 miod Exp $ */
+/* $OpenBSD: pmap.c,v 1.47 2006/04/13 14:41:08 brad Exp $ */
 /* $NetBSD: pmap.c,v 1.154 2000/12/07 22:18:55 thorpej Exp $ */
 
 /*-
@@ -337,6 +337,20 @@ u_long	pmap_asn_generation[ALPHA_MAXPROCS]; /* current ASN generation */
  *	This pmap module uses two types of locks: `normal' (sleep)
  *	locks and `simple' (spin) locks.  They are used as follows:
  *
+ *	READ/WRITE SPIN LOCKS
+ *	---------------------
+ *
+ *	* pmap_main_lock - This lock is used to prevent deadlock and/or
+ *	  provide mutex access to the pmap module.  Most operations lock
+ *	  the pmap first, then PV lists as needed.  However, some operations,
+ *	  such as pmap_page_protect(), lock the PV lists before locking
+ *	  the pmaps.  To prevent deadlock, we require a mutex lock on the
+ *	  pmap module if locking in the PV->pmap direction.  This is
+ *	  implemented by acquiring a (shared) read lock on pmap_main_lock
+ *	  if locking pmap->PV and a (exclusive) write lock if locking in
+ *	  the PV->pmap direction.  Since only one thread can hold a write
+ *	  lock at a time, this provides the mutex.
+ *
  *	SIMPLE LOCKS
  *	------------
  *
@@ -366,13 +380,25 @@ u_long	pmap_asn_generation[ALPHA_MAXPROCS]; /* current ASN generation */
  *	with the pmap already locked by the caller (which will be
  *	an interface function).
  */
+struct lock pmap_main_lock;
 struct simplelock pmap_all_pmaps_slock;
 struct simplelock pmap_growkernel_slock;
 
+#if defined(MULTIPROCESSOR) || defined(LOCKDEBUG)
+#define	PMAP_MAP_TO_HEAD_LOCK() \
+	spinlockmgr(&pmap_main_lock, LK_SHARED, NULL)
+#define	PMAP_MAP_TO_HEAD_UNLOCK() \
+	spinlockmgr(&pmap_main_lock, LK_RELEASE, NULL)
+#define	PMAP_HEAD_TO_MAP_LOCK() \
+	spinlockmgr(&pmap_main_lock, LK_EXCLUSIVE, NULL)
+#define	PMAP_HEAD_TO_MAP_UNLOCK() \
+	spinlockmgr(&pmap_main_lock, LK_RELEASE, NULL)
+#else
 #define	PMAP_MAP_TO_HEAD_LOCK()		/* nothing */
 #define	PMAP_MAP_TO_HEAD_UNLOCK()	/* nothing */
 #define	PMAP_HEAD_TO_MAP_LOCK()		/* nothing */
 #define	PMAP_HEAD_TO_MAP_UNLOCK()	/* nothing */
+#endif /* MULTIPROCESSOR || LOCKDEBUG */
 
 #if defined(MULTIPROCESSOR)
 /*
@@ -941,6 +967,7 @@ pmap_bootstrap(paddr_t ptaddr, u_int maxasn, u_long ncpuids)
 	/*
 	 * Initialize the locks.
 	 */
+	spinlockinit(&pmap_main_lock, "pmaplk", 0);
 	simple_lock_init(&pmap_all_pmaps_slock);
 
 	/*
@@ -4108,9 +4135,9 @@ pmap_tlb_shootdown(pmap_t pmap, vaddr_t va, pt_entry_t pte)
 			 * TBIA[P].
 			 */
 			if (pq->pq_pte & PG_ASM)
-				ipinum = ALPHA_IPI_SHOOTDOWN;
+				ipinum = ALPHA_IPI_TBIA;
 			else
-				ipinum = ALPHA_IPI_IMB;
+				ipinum = ALPHA_IPI_TBIAP;
 			alpha_send_ipi(i, ipinum);
 		} else {
 			pj->pj_pmap = pmap;

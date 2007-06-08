@@ -1,4 +1,4 @@
-#	$OpenBSD: files.pci,v 1.227 2007/03/22 02:48:42 dlg Exp $
+#	$OpenBSD: files.pci,v 1.222 2006/12/09 05:10:43 dlg Exp $
 #	$NetBSD: files.pci,v 1.20 1996/09/24 17:47:15 christos Exp $
 #
 # Config file and device description for machine-independent PCI code.
@@ -80,7 +80,7 @@ attach	arc at pci
 file	dev/pci/arc.c			arc
 
 # Advanced Host Controller Interface for Serial ATA
-device	ahci: scsi, atascsi
+device	ahci
 attach	ahci at pci
 file	dev/pci/ahci.c			ahci
 
@@ -207,10 +207,6 @@ file	dev/pci/isp_pci.c		isp_pci
 attach	mpi at pci with mpi_pci
 file	dev/pci/mpi_pci.c		mpi_pci
 
-# Silicon Image 3124/3132/3531 SATALink
-attach	sili at pci with sili_pci
-file	dev/pci/sili_pci.c		sili_pci
-
 # Ethernet driver for DC21040-based boards
 device	de: ether, ifnet, ifmedia
 attach	de at pci
@@ -284,6 +280,11 @@ file	dev/pci/if_rl_pci.c		rl_pci
 # Realtek 8169/8169S/8110S
 attach	re at pci with re_pci
 file	dev/pci/if_re_pci.c		re_pci
+
+# Macronix
+device	mx: ether, ifnet, ifmedia
+attach	mx at pci
+file	dev/pci/if_mx.c			mx
 
 # Via Rhine
 device	vr: ether, ifnet, mii, ifmedia
@@ -360,11 +361,6 @@ file	dev/pci/if_ne_pci.c		ne_pci
 # Sun GEM ethernet
 attach	gem at pci with gem_pci
 file	dev/pci/if_gem_pci.c		gem_pci
-
-# Sun Cassini ethernet
-device	cas: ether, ifnet, ifmedia, mii
-attach	cas at pci
-file	dev/pci/if_cas.c		cas
 
 # Hi/fn 6500
 device	lofn: crypto
@@ -613,6 +609,12 @@ file	dev/pci/if_pgt_pci.c		pgt_pci
 #
 attach	malo at pci with malo_pci
 file	dev/pci/if_malo_pci.c		malo_pci
+
+#
+# Broadcom BC43xx
+#
+attach	bcw at pci with bcw_pci
+file	dev/pci/if_bcw_pci.c		bcw_pci
 
 # Sangoma PCI card
 device	san: ifnet, ifmedia, sppp

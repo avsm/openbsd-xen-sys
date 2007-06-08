@@ -75,7 +75,7 @@ uvm_km_kmemalloc1(struct vm_map *map, struct uvm_object *obj,
 	if (__predict_false(uvm_map(map, &kva, size, obj, prefer, align,
 		UVM_MAPFLAG(UVM_PROT_RW, UVM_PROT_RW, UVM_INH_NONE,
 			UVM_ADV_RANDOM, (flags & UVM_KMF_TRYLOCK)))
-			!= 0)) {
+			!= KERN_SUCCESS)) {
 		UVMHIST_LOG(maphist, "<- done (no VM)", 0,0,0,0);
 		return (0);
 	}
@@ -93,11 +93,7 @@ uvm_km_kmemalloc1(struct vm_map *map, struct uvm_object *obj,
 	 * recover object offset from virtual address
 	 */
 
-	if (obj != NULL)
-		offset = kva - vm_map_min(kernel_map);
-	else
-		offset = 0;
-
+	offset = kva - vm_map_min(kernel_map);
 	UVMHIST_LOG(maphist, "  kva=0x%x, offset=%x", kva, offset,0,0);
 
 	/*
@@ -108,15 +104,15 @@ uvm_km_kmemalloc1(struct vm_map *map, struct uvm_object *obj,
 	loopva = kva;
 	loopsize = size;
 	while (loopsize) {
-		if (obj != NULL) {
+		if (obj) {
 			simple_lock(&obj->vmobjlock);
 		}
 		pg = uvm_pagealloc(obj, offset, NULL, 0);
 		if (pg) {
-			atomic_clearbits_int(&pg->pg_flags, PG_BUSY);
+			pg->flags &= ~PG_BUSY; /* new page */
 			UVM_PAGE_OWN(pg, NULL);
 		}
-		if (obj != NULL) {
+		if (obj) {
 			simple_unlock(&obj->vmobjlock);
 		}
 
@@ -143,7 +139,7 @@ uvm_km_kmemalloc1(struct vm_map *map, struct uvm_object *obj,
 		 * it will need to lock it itself!)
 		 */
 
-		if (obj == NULL) {
+		if ((obj != NULL) && (UVM_OBJ_IS_INTRSAFE_OBJECT(obj))) {
 			pmap_kenter_pa(loopva, VM_PAGE_TO_PHYS(pg),
 				UVM_PROT_RW);
 		} else {

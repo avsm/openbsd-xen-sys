@@ -1,4 +1,4 @@
-/*	$OpenBSD: init_main.c,v 1.138 2007/04/03 08:05:43 art Exp $	*/
+/*	$OpenBSD: init_main.c,v 1.133 2007/01/02 06:07:58 drahn Exp $	*/
 /*	$NetBSD: init_main.c,v 1.84.4.1 1996/06/02 09:08:06 mrg Exp $	*/
 
 /*
@@ -97,8 +97,6 @@
 extern void nfs_init(void);
 #endif
 
-#include "softraid.h"
-
 const char	copyright[] =
 "Copyright (c) 1982, 1986, 1989, 1991, 1993\n"
 "\tThe Regents of the University of California.  All rights reserved.\n"
@@ -108,7 +106,6 @@ const char	copyright[] =
 struct	session session0;
 struct	pgrp pgrp0;
 struct	proc proc0;
-struct	process process0;
 struct	pcred cred0;
 struct	plimit limit0;
 struct	vmspace vmspace0;
@@ -259,12 +256,6 @@ main(void *framep)
 	/*
 	 * Create process 0 (the swapper).
 	 */
-
-	process0.ps_mainproc = p;
-	TAILQ_INIT(&process0.ps_threads);
-	TAILQ_INSERT_TAIL(&process0.ps_threads, p, p_thr_link);
-	p->p_p = &process0;
-
 	LIST_INSERT_HEAD(&allproc, p, p_list);
 	p->p_pgrp = &pgrp0;
 	LIST_INSERT_HEAD(PIDHASH(0), p, p_hash);
@@ -276,7 +267,10 @@ main(void *framep)
 	session0.s_count = 1;
 	session0.s_leader = p;
 
-	atomic_setbits_int(&p->p_flag, P_SYSTEM | P_NOCLDWAIT);
+	p->p_thrparent = p;
+	LIST_INIT(&p->p_thrchildren);
+
+	p->p_flag = P_SYSTEM | P_NOCLDWAIT;
 	p->p_stat = SONPROC;
 	p->p_nice = NZERO;
 	p->p_emul = &emul_native;
@@ -300,10 +294,8 @@ main(void *framep)
 	/* Create the file descriptor table. */
 	p->p_fd = fdinit(NULL);
 
-	TAILQ_INIT(&p->p_selects);
-
 	/* Create the limits structures. */
-	p->p_p->ps_limit = &limit0;
+	p->p_limit = &limit0;
 	for (i = 0; i < sizeof(p->p_rlimit)/sizeof(p->p_rlimit[0]); i++)
 		limit0.pl_rlimit[i].rlim_cur =
 		    limit0.pl_rlimit[i].rlim_max = RLIM_INFINITY;
@@ -443,10 +435,6 @@ main(void *framep)
 		(void) tsleep((void *)&config_pending, PWAIT, "cfpend", 0);
 
 	dostartuphooks();
-
-#if NSOFTRAID > 0
-	config_rootfound("softraid", NULL);
-#endif
 
 	/* Configure root/swap devices */
 	if (md_diskconf)

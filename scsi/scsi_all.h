@@ -1,4 +1,4 @@
-/*	$OpenBSD: scsi_all.h,v 1.42 2007/04/03 04:55:34 dlg Exp $	*/
+/*	$OpenBSD: scsi_all.h,v 1.39 2006/11/27 20:15:09 beck Exp $	*/
 /*	$NetBSD: scsi_all.h,v 1.10 1996/09/12 01:57:17 thorpej Exp $	*/
 
 /*
@@ -47,7 +47,7 @@
 
 struct scsi_generic {
 	u_int8_t opcode;
-	u_int8_t bytes[15];
+	u_int8_t bytes[11];
 };
 
 struct scsi_test_unit_ready {
@@ -79,11 +79,10 @@ struct scsi_sense {
 
 struct scsi_inquiry {
 	u_int8_t opcode;
-	u_int8_t flags;
+	u_int8_t byte2;
 #define SI_EVPD		0x01
-	u_int8_t pagecode;
-#define SI_PG_SERIAL	0x80
-	u_int8_t length[2];
+	u_int8_t unused[2];
+	u_int8_t length;
 	u_int8_t control;
 };
 

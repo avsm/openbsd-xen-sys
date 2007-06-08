@@ -1,4 +1,4 @@
-#	$OpenBSD: GENERIC,v 1.552 2007/03/21 11:27:54 dlg Exp $
+#	$OpenBSD: GENERIC,v 1.545 2006/12/29 11:05:59 mbalmer Exp $
 #
 # For further information on compiling OpenBSD kernels, see the config(8)
 # man page.
@@ -255,6 +255,7 @@ zyd*	at uhub?		# Zydas ZD1211
 udcf*	at uhub?		# Gude Expert mouseCLOCK
 uow*	at uhub?		# Maxim/Dallas DS2490 1-Wire adapter
 onewire* at uow?
+
 puc*	at pci?			# PCI "universal" communication device
 #puc*	at cardbus?
 
@@ -348,10 +349,6 @@ scsibus* at ahb?
 ahc*	at eisa?		# Adaptec 274x, aic7770 SCSI controllers
 ahc*	at pci?			# Adaptec 2940/3940/78?? SCSI controllers
 scsibus* at ahc?
-ahci*	at pci?			# AHCI SATA controllers
-scsibus* at ahci?
-sili*	at pci?			# Silicon Image 3124/3132/3531 SATA controllers
-scsibus* at sili?
 ahd*	at pci?			# Adaptec 79?? SCSI controllers
 scsibus* at ahd?
 arc*	at pci?			# Areca RAID Controllers
@@ -705,7 +702,6 @@ scsibus* at iopsp?
 # 1-Wire devices
 option ONEWIREVERBOSE
 owid*	at onewire?		# ID
-owsbm*	at onewire?		# Smart Battery Monitor
 owtemp* at onewire?		# Temperature
 
 pseudo-device	pctr		1

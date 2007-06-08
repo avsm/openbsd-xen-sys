@@ -1,4 +1,4 @@
-/*	$OpenBSD: machdep.c,v 1.381 2007/04/03 10:14:47 art Exp $	*/
+/*	$OpenBSD: machdep.c,v 1.372 2006/12/20 17:50:40 gwk Exp $	*/
 /*	$NetBSD: machdep.c,v 1.214 1996/11/10 03:16:17 thorpej Exp $	*/
 
 /*-
@@ -218,6 +218,9 @@ int	bufcachepercent = BUFCACHEPERCENT;
 
 extern int	boothowto;
 int	physmem;
+#ifndef	SMALL_KERNEL
+int pae_copy;
+#endif
 
 struct dumpmem {
 	paddr_t	start;
@@ -243,7 +246,7 @@ int	i386_has_sse2;
 int	i386_has_xcrypt;
 
 bootarg_t *bootargp;
-paddr_t avail_end;
+paddr_t avail_end, avail_end2;
 
 struct vm_map *exec_map = NULL;
 struct vm_map *phys_map = NULL;
@@ -256,6 +259,7 @@ void (*setperf_setup)(struct cpu_info *);
 int setperf_prio = 0;		/* for concurrent handlers */
 
 void (*delay_func)(int) = i8254_delay;
+void (*microtime_func)(struct timeval *) = i8254_microtime;
 void (*initclock_func)(void) = i8254_initclocks;
 void (*update_cpuspeed)(void) = NULL;
 
@@ -322,6 +326,12 @@ int allowaperture = 1;
 #else
 int allowaperture = 0;
 #endif
+#endif
+
+#ifdef	I686_PAE
+int cpu_pae = 1;
+#else
+int cpu_pae = 0;
 #endif
 
 void	winchip_cpu_setup(struct cpu_info *);
@@ -422,7 +432,7 @@ cpu_startup()
 	curcpu()->ci_feature_flags = cpu_feature;
 	identifycpu(curcpu());
 
-	printf("real mem  = %lu (%uK)\n", ctob((paddr_t)physmem),
+	printf("real mem  = %llu (%uK)\n", ctob((paddr_t)physmem),
 	    ctob((paddr_t)physmem)/1024U);
 
 	/*
@@ -454,7 +464,7 @@ cpu_startup()
 	phys_map = uvm_km_suballoc(kernel_map, &minaddr, &maxaddr,
 				   VM_PHYS_SIZE, 0, FALSE, NULL);
 
-	printf("avail mem = %lu (%uK)\n", ptoa((paddr_t)uvmexp.free),
+	printf("avail mem = %llu (%uK)\n", ptoa((paddr_t)uvmexp.free),
 	    ptoa((paddr_t)uvmexp.free) / 1024U);
 	printf("using %d buffers containing %u bytes (%uK) of memory\n",
 	    nbuf, bufpages * PAGE_SIZE, bufpages * PAGE_SIZE / 1024);
@@ -1140,7 +1150,6 @@ const struct cpu_cpuid_feature i386_cpuid_ecxfeatures[] = {
 	{ CPUIDECX_TM2,		"TM2" },
 	{ CPUIDECX_CNXTID,	"CNXT-ID" },
 	{ CPUIDECX_CX16,	"CX16" },
-	{ CPUIDECX_XTPR,	"xTPR" },
 };
 
 void
@@ -1942,9 +1951,6 @@ identifycpu(struct cpu_info *ci)
 		}
 	} else
 		i386_use_fxsave = 0;
-
-	if (vendor == CPUVENDOR_AMD)
-		amd64_errata(ci);
 #endif /* I686_CPU */
 }
 
@@ -2194,29 +2200,6 @@ ibcs2_sendsig(sig_t catcher, int sig, int mask, u_long code, int type,
 	sendsig(catcher, bsd_to_ibcs2_sig[sig], mask, code, type, val);
 }
 #endif
-
-/*
- * To send an AST to a process on another cpu we send an IPI to that cpu,
- * the IPI schedules a special soft interrupt (that does nothing) and then
- * returns through the normal interrupt return path which in turn handles
- * the AST.
- *
- * The IPI can't handle the AST because it usually requires grabbing the
- * biglock and we can't afford spinning in the IPI handler with interrupts
- * unlocked (so that we take further IPIs and grow our stack until it
- * overflows).
- */
-void
-aston(struct proc *p)
-{
-#ifdef MULTIPROCESSOR
-	if (i386_atomic_testset_i(&p->p_md.md_astpending, 1) == 0 &&
-	    p->p_cpu != curcpu())
-		i386_ipi(LAPIC_IPI_AST, p->p_cpu->ci_cpuid, LAPIC_DLMODE_FIXED);
-#else
-	p->p_md.md_astpending = 1;
-#endif
-}
 
 /*
  * Send an interrupt to process.
@@ -2469,7 +2452,7 @@ haltsys:
 	doshutdownhooks();
 
 	if (howto & RB_HALT) {
-#if NACPI > 0 && !defined(SMALL_KERNEL)
+#if NACPI > 0
 		extern int acpi_s5, acpi_enabled;
 
 		if (acpi_enabled) {
@@ -2862,7 +2845,6 @@ fix_f00f(void)
 	struct region_descriptor region;
 	vaddr_t va;
 	void *p;
-	pt_entry_t *pte;
 
 	/* Allocate two new pages */
 	va = uvm_km_zalloc(kernel_map, NBPG*2);
@@ -2877,8 +2859,7 @@ fix_f00f(void)
 	    GCODE_SEL);
 
 	/* Map first page RO */
-	pte = PTE_BASE + atop(va);
-	*pte &= ~PG_RW;
+	pmap_pte_setbits(va, 0, PG_RW);
 
 	/* Reload idtr */
 	setregion(&region, idt, sizeof(idt_region) - 1);
@@ -3033,11 +3014,11 @@ init386(paddr_t first_avail)
 		if (bootargc > NBPG)
 			panic("too many boot args");
 
-		if (extent_alloc_region(iomem_ex, (paddr_t)bootargv, bootargc,
+		if (extent_alloc_region(iomem_ex, (u_long)bootargv, bootargc,
 		    EX_NOWAIT))
 			panic("cannot reserve /boot args memory");
 
-		pmap_enter(pmap_kernel(), (vaddr_t)bootargp, (paddr_t)bootargv,
+		pmap_enter(pmap_kernel(), (vaddr_t)bootargp, (u_long)bootargv,
 		    VM_PROT_READ|VM_PROT_WRITE,
 		    VM_PROT_READ|VM_PROT_WRITE|PMAP_WIRED);
 
@@ -3049,15 +3030,6 @@ init386(paddr_t first_avail)
 #ifdef DIAGNOSTIC
 	if (bios_memmap == NULL)
 		panic("no BIOS memory map supplied");
-#endif
- 
-#if defined(MULTIPROCESSOR)
-	/* install the page after boot args as PT page for first 4M */
-	pmap_enter(pmap_kernel(), (u_long)vtopte(0),
-	   round_page((vaddr_t)(bootargv + bootargc)),
-		VM_PROT_READ|VM_PROT_WRITE,
-		VM_PROT_READ|VM_PROT_WRITE|PMAP_WIRED);
-	memset(vtopte(0), 0, NBPG);  /* make sure it is clean before using */
 #endif
 
 	/*
@@ -3072,27 +3044,12 @@ init386(paddr_t first_avail)
 	for(i = 0, im = bios_memmap; im->type != BIOS_MAP_END; im++)
 		if (im->type == BIOS_MAP_FREE) {
 			paddr_t a, e;
-#ifdef DEBUG
-			printf(" %llx-%llx", im->addr, im->addr + im->size);
-#endif
-
-			if (im->addr >= 0x100000000ULL) {
-#ifdef DEBUG
-				printf("-H");
-#endif
-				continue;
-			}
 
 			a = round_page(im->addr);
-			if (im->addr + im->size <= 0xfffff000ULL)
-				e = trunc_page(im->addr + im->size);
-			else {
+			e = trunc_page(im->addr + im->size);
 #ifdef DEBUG
-				printf("-T");
+			printf(" %llx-%llx", a, e);
 #endif
-				e = 0xfffff000;
-			}
-
 			/* skip first eight pages */
 			if (a < 8 * NBPG)
 				a = 8 * NBPG;
@@ -3112,7 +3069,16 @@ init386(paddr_t first_avail)
 				continue;
 			}
 
-			if (extent_alloc_region(iomem_ex, a, e - a, EX_NOWAIT))
+			if (a >= 0x100000000ULL) {
+#ifdef DEBUG
+				printf("-H");
+#endif
+				if (!cpu_pae)
+					continue;
+			}
+
+			if (e <= 0x100000000ULL &&
+			    extent_alloc_region(iomem_ex, a, e - a, EX_NOWAIT))
 				/* XXX What should we do? */
 				printf("\nWARNING: CAN'T ALLOCATE RAM (%x-%x)"
 				    " FROM IOMEM EXTENT MAP!\n", a, e);
@@ -3121,11 +3087,15 @@ init386(paddr_t first_avail)
 			dumpmem[i].start = atop(a);
 			dumpmem[i].end = atop(e);
 			i++;
-			avail_end = max(avail_end, e);
+			avail_end2 = MAX(avail_end2, e);
+			if (avail_end2 < 0x100000000ULL)
+				avail_end = avail_end2;
 		}
 
 	ndumpmem = i;
 	avail_end -= round_page(MSGBUFSIZE);
+	if (avail_end2 < 0x100000000ULL)
+		avail_end2 = avail_end;
 
 #ifdef DEBUG
 	printf(": %lx\n", avail_end);
@@ -3156,30 +3126,34 @@ init386(paddr_t first_avail)
 		e = dumpmem[i].end;
 		if (a < atop(first_avail) && e > atop(first_avail))
 			a = atop(first_avail);
-		if (e > atop(avail_end))
+		if (a < atop(avail_end) && e > atop(avail_end))
 			e = atop(avail_end);
 
 		if (a < e) {
 			if (a < atop(16 * 1024 * 1024)) {
 				lim = MIN(atop(16 * 1024 * 1024), e);
 #ifdef DEBUG
--				printf(" %x-%x (<16M)", a, lim);
+				printf(" %llx-%llx (<16M)", a, lim);
 #endif
 				uvm_page_physload(a, lim, a, lim,
 				    VM_FREELIST_FIRST16);
 				if (e > lim) {
 #ifdef DEBUG
--					printf(" %x-%x", lim, e);
+					printf(" %llx-%llx", lim, e);
 #endif
 					uvm_page_physload(lim, e, lim, e,
 					    VM_FREELIST_DEFAULT);
 				}
 			} else {
 #ifdef DEBUG
--				printf(" %x-%x", a, e);
+				printf(" %llx-%llx", a, e);
 #endif
-				uvm_page_physload(a, e, a, e,
-				    VM_FREELIST_DEFAULT);
+				if (a >= atop(0x100000000ULL))
+					uvm_page_physload(a, e, a, a - 1,
+					    VM_FREELIST_ABOVE4G);
+				else
+					uvm_page_physload(a, e, a, e,
+					    VM_FREELIST_DEFAULT);
 			}
 		}
 	}
@@ -3310,29 +3284,16 @@ cpu_reset()
 }
 
 void
-cpu_initclocks(void)
+cpu_initclocks()
 {
 	(*initclock_func)();
-
-	if (initclock_func == i8254_initclocks)
-		i8254_inittimecounter();
-	else
-		i8254_inittimecounter_simple();
 }
 
 void
 need_resched(struct cpu_info *ci)
 {
-	struct proc *p;
-
 	ci->ci_want_resched = 1;
-
-	/*
-	 * Need to catch the curproc in case it's cleared just
-	 * between the check and the aston().
-	 */
-	if ((p = ci->ci_curproc) != NULL)
-		aston(p);
+	ci->ci_astpending = 1;
 }
 
 #ifdef MULTIPROCESSOR
@@ -3601,8 +3562,8 @@ bus_mem_add_mapping(bus_addr_t bpa, bus_size_t size, int cacheable,
     bus_space_handle_t *bshp)
 {
 	u_long pa, endpa;
+	u_int32_t bits;
 	vaddr_t va;
-	pt_entry_t *pte;
 	bus_size_t map_size;
 #ifdef MULTIPROCESSOR
 	u_int32_t cpumask = 0;
@@ -3634,13 +3595,12 @@ bus_mem_add_mapping(bus_addr_t bpa, bus_size_t size, int cacheable,
 		 * on those machines.
 		 */
 		if (cpu_class != CPUCLASS_386) {
-			pte = kvtopte(va);
 			if (cacheable)
-				*pte &= ~PG_N;
+				bits = pmap_pte_setbits(va, 0, PG_N);
 			else
-				*pte |= PG_N;
+				bits = pmap_pte_setbits(va, PG_N, 0);
 #ifdef MULTIPROCESSOR
-			pmap_tlb_shootdown(pmap_kernel(), va, *pte,
+			pmap_tlb_shootdown(pmap_kernel(), va, bits,
 			    &cpumask);
 #else
 			pmap_update_pg(va);
@@ -3660,7 +3620,7 @@ bus_space_unmap(bus_space_tag_t t, bus_space_handle_t bsh, bus_size_t size)
 {
 	struct extent *ex;
 	u_long va, endva;
-	bus_addr_t bpa;
+	paddr_t bpa;
 
 	/*
 	 * Find the correct extent and bus physical address.
@@ -3670,7 +3630,7 @@ bus_space_unmap(bus_space_tag_t t, bus_space_handle_t bsh, bus_size_t size)
 		bpa = bsh;
 	} else if (t == I386_BUS_SPACE_MEM) {
 		ex = iomem_ex;
-		bpa = (bus_addr_t)ISA_PHYSADDR(bsh);
+		bpa = (u_long)ISA_PHYSADDR(bsh);
 		if (IOM_BEGIN <= bpa && bpa <= IOM_END)
 			goto ok;
 
@@ -3706,7 +3666,7 @@ _bus_space_unmap(bus_space_tag_t t, bus_space_handle_t bsh, bus_size_t size,
     bus_addr_t *adrp)
 {
 	u_long va, endva;
-	bus_addr_t bpa;
+	paddr_t bpa;
 
 	/*
 	 * Find the correct bus physical address.
@@ -3714,7 +3674,7 @@ _bus_space_unmap(bus_space_tag_t t, bus_space_handle_t bsh, bus_size_t size,
 	if (t == I386_BUS_SPACE_IO) {
 		bpa = bsh;
 	} else if (t == I386_BUS_SPACE_MEM) {
-		bpa = (bus_addr_t)ISA_PHYSADDR(bsh);
+		bpa = (u_long)ISA_PHYSADDR(bsh);
 		if (IOM_BEGIN <= bpa && bpa <= IOM_END)
 			goto ok;
 
@@ -3768,6 +3728,7 @@ _bus_dmamap_create(bus_dma_tag_t t, bus_size_t size, int nsegments,
 	struct i386_bus_dmamap *map;
 	void *mapstore;
 	size_t mapsize;
+	int npages;
 
 	/*
 	 * Allocate and initialize the DMA map.  The end of the map
@@ -3783,6 +3744,17 @@ _bus_dmamap_create(bus_dma_tag_t t, bus_size_t size, int nsegments,
 	 */
 	mapsize = sizeof(struct i386_bus_dmamap) +
 	    (sizeof(bus_dma_segment_t) * (nsegments - 1));
+	npages = 0;
+#ifndef SMALL_KERNEL
+	if (avail_end2 > avail_end &&
+	    (flags & (BUS_DMA_64BIT|BUS_DMA_24BIT)) == 0) {
+		/* this many pages plus one in case we get split */
+		npages = round_page(size) / PAGE_SIZE + 1;
+		if (npages < nsegments)  /* looks stupid, but possible */
+			npages = nsegments;
+		mapsize += sizeof(struct vm_page *) * npages;
+	}
+#endif /* !SMALL_KERNEL */
 	if ((mapstore = malloc(mapsize, M_DEVBUF,
 	    (flags & BUS_DMA_NOWAIT) ? M_NOWAIT : M_WAITOK)) == NULL)
 		return (ENOMEM);
@@ -3793,9 +3765,54 @@ _bus_dmamap_create(bus_dma_tag_t t, bus_size_t size, int nsegments,
 	map->_dm_segcnt = nsegments;
 	map->_dm_maxsegsz = maxsegsz;
 	map->_dm_boundary = boundary;
+	map->_dm_pages = npages? (void *)&map->dm_segs[nsegments] : NULL;
+	map->_dm_npages = npages;
 	map->_dm_flags = flags & ~(BUS_DMA_WAITOK|BUS_DMA_NOWAIT);
 	map->dm_mapsize = 0;		/* no valid mappings */
 	map->dm_nsegs = 0;
+
+#ifndef SMALL_KERNEL
+	if (npages) {
+		struct pglist mlist;
+		vaddr_t va;
+		int error;
+
+		size = npages << PGSHIFT;
+		va = uvm_km_valloc(kernel_map, size);
+		if (va == 0) {
+			map->_dm_npages = 0;
+			free(map, M_DEVBUF);
+			return (ENOMEM);
+		}
+
+		TAILQ_INIT(&mlist);
+		/* if not a 64bit map -- allocate some bouncy-bouncy */
+		error = uvm_pglistalloc(size,
+		    round_page(ISA_DMA_BOUNCE_THRESHOLD), 0xfffff000,
+		    PAGE_SIZE, boundary, &mlist, nsegments,
+		    (flags & BUS_DMA_NOWAIT) == 0);
+		if (error) {
+			map->_dm_npages = 0;
+			uvm_km_free(kernel_map, (vaddr_t)va, size);
+			free(map, M_DEVBUF);
+			return (ENOMEM);
+		} else {
+			struct vm_page **pg = map->_dm_pages;
+
+			npages--;
+			*pg = TAILQ_FIRST(&mlist);
+			pmap_kenter_pa(va, VM_PAGE_TO_PHYS(*pg),
+			    VM_PROT_READ | VM_PROT_WRITE | PMAP_WIRED);
+			for (pg++, va += PAGE_SIZE; npages--;
+			    pg++, va += PAGE_SIZE) {
+				*pg = TAILQ_NEXT(pg[-1], pageq);
+				pmap_kenter_pa(va, VM_PAGE_TO_PHYS(*pg),
+				    VM_PROT_READ | VM_PROT_WRITE | PMAP_WIRED);
+			}
+		}
+		map->_dm_pgva = va;
+	}
+#endif /* !SMALL_KERNEL */
 
 	*dmamp = map;
 	return (0);
@@ -3820,7 +3837,7 @@ int
 _bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t map, void *buf,
     bus_size_t buflen, struct proc *p, int flags)
 {
-	bus_addr_t lastaddr;
+	paddr_t lastaddr;
 	int seg, error;
 
 	/*
@@ -3988,6 +4005,7 @@ _bus_dmamap_unload(bus_dma_tag_t t, bus_dmamap_t map)
 	 */
 	map->dm_mapsize = 0;
 	map->dm_nsegs = 0;
+	map->_dm_nused = 0;
 }
 
 /*
@@ -3995,10 +4013,43 @@ _bus_dmamap_unload(bus_dma_tag_t t, bus_dmamap_t map)
  * by bus-specific DMA map synchronization functions.
  */
 void
-_bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t map, bus_addr_t addr,
+_bus_dmamap_sync(bus_dma_tag_t t, bus_dmamap_t map, bus_addr_t offset,
     bus_size_t size, int op)
 {
-	/* Nothing to do here. */
+#ifndef SMALL_KERNEL
+	bus_dma_segment_t *sg;
+	int i, off = offset;
+	bus_size_t l;
+
+	/* scan the segment list performing necessary copies */
+	if (!(map->_dm_flags & BUS_DMA_64BIT) && map->_dm_nused) {
+		for (i = map->_dm_segcnt, sg = map->dm_segs;
+		    size && i--; sg++) {
+			if (off >= sg->ds_len) {
+				off -= sg->ds_len;
+				continue;
+			}
+
+			l = sg->ds_len - off;
+			if (l > size)
+				l = size;
+			size -= l;
+			if (sg->ds_addr2) {
+				if (op & BUS_DMASYNC_POSTREAD) {
+					bcopy((void *)(sg->ds_va2 + off),
+					    (void *)(sg->ds_va + off), l);
+					pae_copy++;
+				}
+				if (op & BUS_DMASYNC_PREWRITE) {
+					bcopy((void *)(sg->ds_va + off),
+					    (void *)(sg->ds_va2 + off), l);
+					pae_copy++;
+				}
+			}
+			off = 0;
+		}
+	}
+#endif /* !SMALL_KERNEL */
 }
 
 /*
@@ -4142,8 +4193,8 @@ _bus_dmamap_load_buffer(bus_dma_tag_t t, bus_dmamap_t map, void *buf,
     int first)
 {
 	bus_size_t sgsize;
-	bus_addr_t curaddr, lastaddr, baddr, bmask;
-	vaddr_t vaddr = (vaddr_t)buf;
+	paddr_t curaddr, lastaddr, oaddr, baddr, bmask;
+	vaddr_t pgva, vaddr = (vaddr_t)buf;
 	int seg;
 	pmap_t pmap;
 
@@ -4159,7 +4210,24 @@ _bus_dmamap_load_buffer(bus_dma_tag_t t, bus_dmamap_t map, void *buf,
 		/*
 		 * Get the physical address for this segment.
 		 */
-		pmap_extract(pmap, vaddr, (paddr_t *)&curaddr);
+		pmap_extract(pmap, vaddr, &curaddr);
+		oaddr = 0;
+		pgva  = 0;
+#ifndef SMALL_KERNEL
+		if (!(map->_dm_flags & BUS_DMA_64BIT) &&
+		    curaddr >= 0x100000000ULL) {
+			struct vm_page *pg;
+			int page, off;
+			
+			if (map->_dm_nused + 1 >= map->_dm_npages)
+				return (ENOMEM);
+			off = vaddr & PAGE_MASK;
+			pg = map->_dm_pages[page = map->_dm_nused++];
+			oaddr = curaddr;
+			curaddr = VM_PAGE_TO_PHYS(pg) + off;
+			pgva = map->_dm_pgva + (page << PGSHIFT) + off;
+		}
+#endif /* !SMALL_KERNEL */
 
 		/*
 		 * Compute the segment size, and adjust counts.
@@ -4183,7 +4251,10 @@ _bus_dmamap_load_buffer(bus_dma_tag_t t, bus_dmamap_t map, void *buf,
 		 */
 		if (first) {
 			map->dm_segs[seg].ds_addr = curaddr;
+			map->dm_segs[seg].ds_addr2 = oaddr;
 			map->dm_segs[seg].ds_len = sgsize;
+			map->dm_segs[seg].ds_va = vaddr;
+			map->dm_segs[seg].ds_va2 = pgva;
 			first = 0;
 		} else {
 			if (curaddr == lastaddr &&
@@ -4197,7 +4268,10 @@ _bus_dmamap_load_buffer(bus_dma_tag_t t, bus_dmamap_t map, void *buf,
 				if (++seg >= map->_dm_segcnt)
 					break;
 				map->dm_segs[seg].ds_addr = curaddr;
+				map->dm_segs[seg].ds_addr2 = oaddr;
 				map->dm_segs[seg].ds_len = sgsize;
+				map->dm_segs[seg].ds_va = vaddr;
+				map->dm_segs[seg].ds_va2 = pgva;
 			}
 		}
 
@@ -4233,6 +4307,19 @@ _bus_dmamem_alloc_range(bus_dma_tag_t t, bus_size_t size, bus_size_t alignment,
 
 	/* Always round the size. */
 	size = round_page(size);
+	if (flags & BUS_DMA_64BIT) {
+		if (high > 0x100000000ULL && low < 0x100000000ULL)
+			low = 0x100000000ULL;
+	} else if (high > 0x100000000ULL) {
+		if (low >= 0x100000000ULL) {
+#ifdef DIAGNOSTIC
+			printf("_bus_dmamem_alloc_range: "
+			    "32bit request in above 4GB space\n");
+#endif
+			return (EINVAL);
+		} else
+			high = 0x100000000ULL;
+	}
 
 	TAILQ_INIT(&mlist);
 	/*
@@ -4297,26 +4384,42 @@ void
 i386_intlock(int ipl)
 {
 	if (ipl < IPL_SCHED)
+#ifdef notdef
+		spinlockmgr(&kernel_lock, LK_EXCLUSIVE|LK_CANRECURSE, 0);
+#else
 		__mp_lock(&kernel_lock);
+#endif
 }
 
 void
 i386_intunlock(int ipl)
 {
 	if (ipl < IPL_SCHED)
+#ifdef notdef
+		spinlockmgr(&kernel_lock, LK_RELEASE, 0);
+#else
 		__mp_unlock(&kernel_lock);
+#endif
 }
 
 void
 i386_softintlock(void)
 {
+#ifdef notdef
+	spinlockmgr(&kernel_lock, LK_EXCLUSIVE|LK_CANRECURSE, 0);
+#else
 	__mp_lock(&kernel_lock);
+#endif
 }
 
 void
 i386_softintunlock(void)
 {
+#ifdef notdef
+	spinlockmgr(&kernel_lock, LK_RELEASE, 0);
+#else
 	__mp_unlock(&kernel_lock);
+#endif
 }
 #endif
 

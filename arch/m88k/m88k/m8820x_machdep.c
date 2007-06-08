@@ -1,4 +1,4 @@
-/*	$OpenBSD: m8820x_machdep.c,v 1.24 2007/02/11 12:49:37 miod Exp $	*/
+/*	$OpenBSD: m8820x_machdep.c,v 1.22 2006/04/17 16:08:01 miod Exp $	*/
 /*
  * Copyright (c) 2004, Miodrag Vallat.
  *
@@ -101,9 +101,9 @@ void	m8820x_set_uapr(apr_t);
 void	m8820x_flush_tlb(cpuid_t, u_int, vaddr_t, u_int);
 void	m8820x_flush_cache(cpuid_t, paddr_t, psize_t);
 void	m8820x_flush_inst_cache(cpuid_t, paddr_t, psize_t);
-void	m8820x_flush_data_page(cpuid_t, paddr_t);
-void	m8820x_dma_cachectl(pmap_t, vaddr_t, vsize_t, int);
-void	m8820x_dma_cachectl_pa(paddr_t, psize_t, int);
+void	m8820x_flush_data_cache(cpuid_t, paddr_t, psize_t);
+int	m8820x_dma_cachectl(pmap_t, vaddr_t, vsize_t, int);
+int	m8820x_dma_cachectl_pa(paddr_t, psize_t, int);
 void	m8820x_initialize_cpu(cpuid_t);
 
 /* This is the function table for the MC8820x CMMUs */
@@ -118,7 +118,7 @@ struct cmmu_p cmmu8820x = {
 	m8820x_flush_tlb,
 	m8820x_flush_cache,
 	m8820x_flush_inst_cache,
-	m8820x_flush_data_page,
+	m8820x_flush_data_cache,
 	m8820x_dma_cachectl,
 	m8820x_dma_cachectl_pa,
 #ifdef MULTIPROCESSOR
@@ -155,9 +155,9 @@ u_int cmmu_shift;
 void	m8820x_cmmu_set_reg(int, u_int, int, int, int);
 void	m8820x_cmmu_set_cmd(u_int, int, int, int, vaddr_t);
 void	m8820x_cmmu_wait(int);
-void	m8820x_cmmu_sync_cache(int, paddr_t, psize_t);
-void	m8820x_cmmu_sync_inval_cache(int, paddr_t, psize_t);
-void	m8820x_cmmu_inval_cache(int, paddr_t, psize_t);
+int	m8820x_cmmu_sync_cache(paddr_t, psize_t);
+int	m8820x_cmmu_sync_inval_cache(paddr_t, psize_t);
+int	m8820x_cmmu_inval_cache(paddr_t, psize_t);
 
 /* Flags passed to m8820x_cmmu_set() */
 #define MODE_VAL		0x01
@@ -462,7 +462,6 @@ m8820x_shutdown()
 	struct m8820x_cmmu *cmmu;
 
 	CMMU_LOCK;
-
 	cmmu = m8820x_cmmu;
 	for (cmmu_num = 0; cmmu_num < max_cmmus; cmmu_num++, cmmu++) {
 		cmmu->cmmu_regs[CMMU_SCTR] &=
@@ -471,7 +470,6 @@ m8820x_shutdown()
 		    ((0x00000 << PG_BITS) | CACHE_INH) &
 		    ~(CACHE_WT | CACHE_GLOBAL | APR_V);
 	}
-
 	CMMU_UNLOCK;
 }
 
@@ -479,25 +477,20 @@ void
 m8820x_set_sapr(cpuid_t cpu, apr_t ap)
 {
 	CMMU_LOCK;
-
 	m8820x_cmmu_set_reg(CMMU_SAPR, ap, 0, cpu, 0);
-
 	CMMU_UNLOCK;
 }
 
 void
 m8820x_set_uapr(apr_t ap)
 {
-	u_int32_t psr;
+	int s = splhigh();
 	int cpu = cpu_number();
 
-	disable_interrupt(psr);
 	CMMU_LOCK;
-
 	m8820x_cmmu_set_reg(CMMU_UAPR, ap, 0, cpu, 0);
-
 	CMMU_UNLOCK;
-	set_psr(psr);
+	splx(s);
 }
 
 /*
@@ -510,9 +503,8 @@ m8820x_set_uapr(apr_t ap)
 void
 m8820x_flush_tlb(cpuid_t cpu, unsigned kernel, vaddr_t vaddr, u_int count)
 {
-	u_int32_t psr;
+	int s = splhigh();
 
-	disable_interrupt(psr);
 	CMMU_LOCK;
 
 	/*
@@ -549,13 +541,17 @@ m8820x_flush_tlb(cpuid_t cpu, unsigned kernel, vaddr_t vaddr, u_int count)
 	}
 
 	CMMU_UNLOCK;
-	set_psr(psr);
+	splx(s);
 }
 
 /*
  * Functions that invalidate caches.
  *
- * Cache invalidates require physical addresses. 
+ * Cache invalidates require physical addresses.  Care must be exercised when
+ * using segment invalidates.  This implies that the starting physical address
+ * plus the segment length should be invalidated.  A typical mistake is to
+ * extract the first physical page of a segment from a virtual address, and
+ * then expecting to invalidate when the pages are not physically contiguous.
  *
  * We don't push Instruction Caches prior to invalidate because they are not
  * snooped and never modified (I guess it doesn't matter then which form
@@ -565,227 +561,262 @@ m8820x_flush_tlb(cpuid_t cpu, unsigned kernel, vaddr_t vaddr, u_int count)
  * address split - this does not work...
  */
 
-#define	trunc_cache_line(a)	((a) & ~(MC88200_CACHE_LINE - 1))
-#define	round_cache_line(a)	trunc_cache_line((a) + MC88200_CACHE_LINE - 1)
-
 /*
  *	flush both Instruction and Data caches
  */
 void
-m8820x_flush_cache(cpuid_t cpu, paddr_t pa, psize_t size)
+m8820x_flush_cache(cpuid_t cpu, paddr_t physaddr, psize_t size)
 {
-	u_int32_t psr;
-	psize_t count;
-
-	size = round_cache_line(pa + size) - trunc_cache_line(pa);
-	pa = trunc_cache_line(pa);
-
-	disable_interrupt(psr);
+	int s = splhigh();
 	CMMU_LOCK;
 
-	while (size != 0) {
-		count = (pa & PAGE_MASK) == 0 && size >= PAGE_SIZE ?
-		    PAGE_SIZE : MC88200_CACHE_LINE;
-
-		if (count <= MC88200_CACHE_LINE)
-			m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CBI_LINE,
-			    0 /* ADDR_VAL */, cpu, 0, pa);
-		else
-			m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CBI_PAGE,
-			    0 /* ADDR_VAL */, cpu, 0, pa);
-
-		pa += count;
-		size -= count;
+	if (size > NBSG) {
+		m8820x_cmmu_set_reg(CMMU_SCR, CMMU_FLUSH_CACHE_CBI_ALL, 0,
+		    cpu, 0);
+	} else if (size <= MC88200_CACHE_LINE) {
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CBI_LINE, 0 /* ADDR_VAL */,
+		    cpu, 0, physaddr);
+	} else if (size <= PAGE_SIZE) {
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CBI_PAGE, 0 /* ADDR_VAL */,
+		    cpu, 0, physaddr);
+	} else {
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CBI_SEGMENT, 0,
+		    cpu, 0, physaddr);
 	}
+
 	m8820x_cmmu_wait(cpu);
 
 	CMMU_UNLOCK;
-	set_psr(psr);
+	splx(s);
 }
 
 /*
  *	flush Instruction caches
  */
 void
-m8820x_flush_inst_cache(cpuid_t cpu, paddr_t pa, psize_t size)
+m8820x_flush_inst_cache(cpuid_t cpu, paddr_t physaddr, psize_t size)
 {
-	u_int32_t psr;
-	psize_t count;
-
-	size = round_cache_line(pa + size) - trunc_cache_line(pa);
-	pa = trunc_cache_line(pa);
-
-	disable_interrupt(psr);
+	int s = splhigh();
 	CMMU_LOCK;
 
-	while (size != 0) {
-		count = (pa & PAGE_MASK) == 0 && size >= PAGE_SIZE ?
-		    PAGE_SIZE : MC88200_CACHE_LINE;
-
-		if (count <= MC88200_CACHE_LINE)
-			m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_INV_LINE,
-			    MODE_VAL /* | ADDR_VAL */, cpu, INST_CMMU, pa);
-		else
-			m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_INV_PAGE,
-			    MODE_VAL /* | ADDR_VAL */, cpu, INST_CMMU, pa);
-
-		pa += count;
-		size -= count;
+	if (size > NBSG) {
+		m8820x_cmmu_set_reg(CMMU_SCR, CMMU_FLUSH_CACHE_CBI_ALL,
+		    MODE_VAL, cpu, INST_CMMU);
+	} else if (size <= MC88200_CACHE_LINE) {
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CBI_LINE,
+		    MODE_VAL /* | ADDR_VAL */, cpu, INST_CMMU, physaddr);
+	} else if (size <= PAGE_SIZE) {
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CBI_PAGE,
+		    MODE_VAL /* | ADDR_VAL */, cpu, INST_CMMU, physaddr);
+	} else {
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CBI_SEGMENT,
+		    MODE_VAL, cpu, INST_CMMU, physaddr);
 	}
+
 	m8820x_cmmu_wait(cpu);
 
 	CMMU_UNLOCK;
-	set_psr(psr);
+	splx(s);
 }
 
 void
-m8820x_flush_data_page(cpuid_t cpu, paddr_t pa)
+m8820x_flush_data_cache(cpuid_t cpu, paddr_t physaddr, psize_t size)
 {
-	u_int32_t psr;
-
-	disable_interrupt(psr);
+	int s = splhigh();
 	CMMU_LOCK;
 
-	m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CBI_PAGE,
-	    MODE_VAL /* | ADDR_VAL */, cpu, DATA_CMMU, pa);
+	if (size > NBSG) {
+		m8820x_cmmu_set_reg(CMMU_SCR, CMMU_FLUSH_CACHE_CBI_ALL,
+		    MODE_VAL, cpu, DATA_CMMU);
+	} else if (size <= MC88200_CACHE_LINE) {
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CBI_LINE,
+		    MODE_VAL /* | ADDR_VAL */, cpu, DATA_CMMU, physaddr);
+	} else if (size <= PAGE_SIZE) {
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CBI_PAGE,
+		    MODE_VAL /* | ADDR_VAL */, cpu, DATA_CMMU, physaddr);
+	} else {
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CBI_SEGMENT,
+		    MODE_VAL, cpu, DATA_CMMU, physaddr);
+	}
+
 	m8820x_cmmu_wait(cpu);
 
 	CMMU_UNLOCK;
-	set_psr(psr);
+	splx(s);
 }
 
 /*
  * sync dcache - icache is never dirty but needs to be invalidated as well.
  */
-void
-m8820x_cmmu_sync_cache(int cpu, paddr_t pa, psize_t size)
+int
+m8820x_cmmu_sync_cache(paddr_t physaddr, psize_t size)
 {
-	if (size <= MC88200_CACHE_LINE) {
-		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CB_LINE,
-		    MODE_VAL /* | ADDR_VAL */, cpu, DATA_CMMU, pa);
-	} else {
-		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CB_PAGE,
-		    MODE_VAL /* | ADDR_VAL */, cpu, DATA_CMMU, pa);
-	}
-	m8820x_cmmu_wait(cpu);
-}
-
-void
-m8820x_cmmu_sync_inval_cache(int cpu, paddr_t pa, psize_t size)
-{
-	if (size <= MC88200_CACHE_LINE) {
-		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_INV_LINE,
-		    MODE_VAL /* | ADDR_VAL */, cpu, INST_CMMU, pa);
-		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CBI_LINE,
-		    MODE_VAL /* | ADDR_VAL */, cpu, DATA_CMMU, pa);
-	} else {
-		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_INV_PAGE,
-		    MODE_VAL /* | ADDR_VAL */, cpu, INST_CMMU, pa);
-		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CBI_PAGE,
-		    MODE_VAL /* | ADDR_VAL */, cpu, DATA_CMMU, pa);
-	}
-	m8820x_cmmu_wait(cpu);
-}
-
-void
-m8820x_cmmu_inval_cache(int cpu, paddr_t pa, psize_t size)
-{
-	if (size <= MC88200_CACHE_LINE) {
-		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_INV_LINE,
-		    0 /* ADDR_VAL */, cpu, 0, pa);
-	} else {
-		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_INV_PAGE,
-		    0 /* ADDR_VAL */, cpu, 0, pa);
-	}
-	m8820x_cmmu_wait(cpu);
-}
-
-void
-m8820x_dma_cachectl(pmap_t pmap, vaddr_t _va, vsize_t _size, int op)
-{
-	u_int32_t psr;
+	int s = splhigh();
 	int cpu = cpu_number();
-	vaddr_t va;
-	paddr_t pa;
-	psize_t size, count;
-	void (*flusher)(int, paddr_t, psize_t);
+	int rc;
 
-	va = trunc_cache_line(_va);
-	size = round_cache_line(_va + _size) - va;
-
-	switch (op) {
-	case DMA_CACHE_SYNC:
-		flusher = m8820x_cmmu_sync_cache;
-		break;
-	case DMA_CACHE_SYNC_INVAL:
-		flusher = m8820x_cmmu_sync_inval_cache;
-		break;
-	default:
-		if (va != _va || size != _size)
-			flusher = m8820x_cmmu_sync_inval_cache;
-		else
-			flusher = m8820x_cmmu_inval_cache;
-		break;
-	}
-
-	disable_interrupt(psr);
 	CMMU_LOCK;
 
-	while (size != 0) {
-		count = (va & PAGE_MASK) == 0 && size >= PAGE_SIZE ?
-		    PAGE_SIZE : MC88200_CACHE_LINE;
+	if (size > NBSG) {
+		m8820x_cmmu_set_reg(CMMU_SCR, CMMU_FLUSH_CACHE_CB_ALL,
+		    MODE_VAL, cpu, DATA_CMMU);
+		rc = 1;
+	} else if (size <= MC88200_CACHE_LINE) {
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CB_LINE,
+		    MODE_VAL /* | ADDR_VAL */, cpu, DATA_CMMU, physaddr);
+		rc = 0;
+	} else if (size <= PAGE_SIZE) {
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CB_PAGE,
+		    MODE_VAL /* | ADDR_VAL */, cpu, DATA_CMMU, physaddr);
+		rc = 0;
+	} else {
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CB_SEGMENT,
+		    MODE_VAL, cpu, DATA_CMMU, physaddr);
+		rc = 0;
+	}
 
-		if (pmap_extract(pmap, va, &pa) != FALSE)
-			(*flusher)(cpu, pa, count);
+	m8820x_cmmu_wait(cpu);
+
+	CMMU_UNLOCK;
+	splx(s);
+	return (rc);
+}
+
+int
+m8820x_cmmu_sync_inval_cache(paddr_t physaddr, psize_t size)
+{
+	int s = splhigh();
+	int cpu = cpu_number();
+	int rc;
+
+	CMMU_LOCK;
+
+	if (size > NBSG) {
+		m8820x_cmmu_set_reg(CMMU_SCR, CMMU_FLUSH_CACHE_INV_ALL,
+		    MODE_VAL, cpu, INST_CMMU);
+		m8820x_cmmu_set_reg(CMMU_SCR, CMMU_FLUSH_CACHE_CBI_ALL,
+		    MODE_VAL, cpu, DATA_CMMU);
+		rc = 1;
+	} else if (size <= MC88200_CACHE_LINE) {
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_INV_LINE,
+		    MODE_VAL /* | ADDR_VAL */, cpu, INST_CMMU, physaddr);
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CBI_LINE,
+		    MODE_VAL /* | ADDR_VAL */, cpu, DATA_CMMU, physaddr);
+		rc = 0;
+	} else if (size <= PAGE_SIZE) {
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_INV_PAGE,
+		    MODE_VAL /* | ADDR_VAL */, cpu, INST_CMMU, physaddr);
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CBI_PAGE,
+		    MODE_VAL /* | ADDR_VAL */, cpu, DATA_CMMU, physaddr);
+		rc = 0;
+	} else {
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_INV_SEGMENT,
+		    MODE_VAL, cpu, INST_CMMU, physaddr);
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_CBI_SEGMENT,
+		    MODE_VAL, cpu, DATA_CMMU, physaddr);
+		rc = 0;
+	}
+
+	m8820x_cmmu_wait(cpu);
+
+	CMMU_UNLOCK;
+	splx(s);
+	return (rc);
+}
+
+int
+m8820x_cmmu_inval_cache(paddr_t physaddr, psize_t size)
+{
+	int s = splhigh();
+	int cpu = cpu_number();
+	int rc;
+
+	CMMU_LOCK;
+
+	if (size > NBSG) {
+		m8820x_cmmu_set_reg(CMMU_SCR, CMMU_FLUSH_CACHE_INV_ALL, 0,
+		    cpu, 0);
+		rc = 1;
+	} else if (size <= MC88200_CACHE_LINE) {
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_INV_LINE,
+		    0 /* ADDR_VAL */, cpu, 0, physaddr);
+		rc = 0;
+	} else if (size <= PAGE_SIZE) {
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_INV_PAGE,
+		    0 /* ADDR_VAL */, cpu, 0, physaddr);
+		rc = 0;
+	} else {
+		m8820x_cmmu_set_cmd(CMMU_FLUSH_CACHE_INV_SEGMENT,
+		    0, cpu, 0, physaddr);
+		rc = 0;
+	}
+
+	m8820x_cmmu_wait(cpu);
+
+	CMMU_UNLOCK;
+	splx(s);
+	return (rc);
+}
+
+int
+m8820x_dma_cachectl(pmap_t pmap, vaddr_t va, vsize_t size, int op)
+{
+	paddr_t pa;
+	psize_t count;
+	int rc = 0;
+
+	size = round_page(va + size) - trunc_page(va);
+	va = trunc_page(va);
+
+	while (size != 0 && rc == 0) {
+		count = min(size, PAGE_SIZE);
+
+		if (pmap_extract(pmap, va, &pa) != FALSE) {
+			switch (op) {
+			case DMA_CACHE_SYNC:
+				rc |= m8820x_cmmu_sync_cache(pa, count);
+				break;
+			case DMA_CACHE_SYNC_INVAL:
+				rc |= m8820x_cmmu_sync_inval_cache(pa, count);
+				break;
+			default:
+				rc |= m8820x_cmmu_inval_cache(pa, count);
+				break;
+			}
+		}
 
 		va += count;
 		size -= count;
 	}
-
-	CMMU_UNLOCK;
-	set_psr(psr);
+	return (rc);
 }
 
-void
-m8820x_dma_cachectl_pa(paddr_t _pa, psize_t _size, int op)
+int
+m8820x_dma_cachectl_pa(paddr_t pa, psize_t size, int op)
 {
-	u_int32_t psr;
-	int cpu = cpu_number();
-	paddr_t pa;
-	psize_t size, count;
-	void (*flusher)(int, paddr_t, psize_t);
+	psize_t count;
+	int rc = 0;
 
-	pa = trunc_cache_line(_pa);
-	size = round_cache_line(_pa + _size) - pa;
+	size = round_page(pa + size) - trunc_page(pa);
+	pa = trunc_page(pa);
 
-	switch (op) {
-	case DMA_CACHE_SYNC:
-		flusher = m8820x_cmmu_sync_cache;
-		break;
-	case DMA_CACHE_SYNC_INVAL:
-		flusher = m8820x_cmmu_sync_inval_cache;
-		break;
-	default:
-		if (pa != _pa || size != _size)
-			flusher = m8820x_cmmu_sync_inval_cache;
-		else
-			flusher = m8820x_cmmu_inval_cache;
-		break;
-	}
+	while (size != 0 && rc == 0) {
+		count = min(size, PAGE_SIZE);
 
-	disable_interrupt(psr);
-	CMMU_LOCK;
-
-	while (size != 0) {
-		count = (pa & PAGE_MASK) == 0 && size >= PAGE_SIZE ?
-		    PAGE_SIZE : MC88200_CACHE_LINE;
-
-		(*flusher)(cpu, pa, count);
+		switch (op) {
+		case DMA_CACHE_SYNC:
+			rc |= m8820x_cmmu_sync_cache(pa, count);
+			break;
+		case DMA_CACHE_SYNC_INVAL:
+			rc |= m8820x_cmmu_sync_inval_cache(pa, count);
+			break;
+		default:
+			rc |= m8820x_cmmu_inval_cache(pa, count);
+			break;
+		}
 
 		pa += count;
 		size -= count;
 	}
-
-	CMMU_UNLOCK;
-	set_psr(psr);
+	return (rc);
 }

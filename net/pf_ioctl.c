@@ -1,4 +1,4 @@
-/*	$OpenBSD: pf_ioctl.c,v 1.174 2007/02/23 21:31:51 deraadt Exp $ */
+/*	$OpenBSD: pf_ioctl.c,v 1.171 2006/10/27 13:56:51 mcbride Exp $ */
 
 /*
  * Copyright (c) 2001 Daniel Hartmeier
@@ -52,7 +52,6 @@
 #include <sys/malloc.h>
 #include <sys/kthread.h>
 #include <sys/rwlock.h>
-#include <uvm/uvm_extern.h>
 
 #include <net/if.h>
 #include <net/if_types.h>
@@ -153,10 +152,6 @@ pfattach(int num)
 
 	pool_sethardlimit(pf_pool_limits[PF_LIMIT_STATES].pp,
 	    pf_pool_limits[PF_LIMIT_STATES].limit, NULL, 0);
-
-	if (ctob(physmem) <= 100*1024*1024)
-		pf_pool_limits[PF_LIMIT_TABLE_ENTRIES].limit =
-		    PFR_KENTRY_HIWAT_SMALL;
 
 	RB_INIT(&tree_src_tracking);
 	RB_INIT(&pf_anchors);
@@ -940,6 +935,7 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 	if (!(flags & FWRITE))
 		switch (cmd) {
 		case DIOCGETRULES:
+		case DIOCGETRULE:
 		case DIOCGETADDRS:
 		case DIOCGETADDR:
 		case DIOCGETSTATE:
@@ -977,10 +973,6 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 				break; /* dummy operation ok */
 			}
 			return (EACCES);
-		case DIOCGETRULE:
-			if (((struct pfioc_rule *)addr)->action == PF_GET_CLR_CNTR)
-				return (EACCES);
-			break;
 		default:
 			return (EACCES);
 		}
@@ -1239,12 +1231,6 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 			else
 				pr->rule.skip[i].nr =
 				    rule->skip[i].ptr->nr;
-
-		if (pr->action == PF_GET_CLR_CNTR) {
-			rule->evaluations = 0;
-			rule->packets[0] = rule->packets[1] = 0;
-			rule->bytes[0] = rule->bytes[1] = 0;
-		}
 		break;
 	}
 
@@ -1825,7 +1811,6 @@ pfioctl(dev_t dev, u_long cmd, caddr_t addr, int flags, struct proc *p)
 	}
 
 	case DIOCCLRRULECTRS: {
-		/* obsoleted by DIOCGETRULE with action=PF_GET_CLR_CNTR */
 		struct pf_ruleset	*ruleset = &pf_main_ruleset;
 		struct pf_rule		*rule;
 

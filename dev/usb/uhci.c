@@ -1,4 +1,4 @@
-/*	$OpenBSD: uhci.c,v 1.51 2007/03/22 05:47:16 pascoe Exp $	*/
+/*	$OpenBSD: uhci.c,v 1.47 2006/05/31 06:18:09 pascoe Exp $	*/
 /*	$NetBSD: uhci.c,v 1.172 2003/02/23 04:19:26 simonb Exp $	*/
 /*	$FreeBSD: src/sys/dev/usb/uhci.c,v 1.33 1999/11/17 22:33:41 n_hibma Exp $	*/
 
@@ -43,7 +43,7 @@
  * USB Universal Host Controller driver.
  * Handles e.g. PIIX3 and PIIX4.
  *
- * UHCI spec: http://download.intel.com/technology/usb/UHCI11D.pdf
+ * UHCI spec: http://developer.intel.com/design/USB/UHCI11D.htm
  * USB spec: http://www.usb.org/developers/docs/usbspec.zip
  * PIIXn spec: ftp://download.intel.com/design/intarch/datashts/29055002.pdf
  *             ftp://download.intel.com/design/intarch/datashts/29056201.pdf
@@ -409,15 +409,9 @@ uhci_init(uhci_softc_t *sc)
 		uhci_dumpregs(sc);
 #endif
 
-	/* Save SOF over HC reset. */
-	sc->sc_saved_sof = UREAD1(sc, UHCI_SOF);
-
 	UWRITE2(sc, UHCI_INTR, 0);		/* disable interrupts */
 	uhci_globalreset(sc);			/* reset the controller */
 	uhci_reset(sc);
-
-	/* Restore saved SOF. */
-	UWRITE1(sc, UHCI_SOF, sc->sc_saved_sof);
 
 	/* Allocate and initialize real frame array. */
 	err = usb_allocmem(&sc->sc_bus,
@@ -726,6 +720,7 @@ uhci_power(int why, void *v)
 
 		/* save some state if BIOS doesn't */
 		sc->sc_saved_frnum = UREAD2(sc, UHCI_FRNUM);
+		sc->sc_saved_sof = UREAD1(sc, UHCI_SOF);
 
 		UWRITE2(sc, UHCI_INTR, 0); /* disable intrs */
 

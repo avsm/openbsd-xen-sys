@@ -1,4 +1,4 @@
-/*      $OpenBSD: atapiscsi.c,v 1.76 2006/11/28 23:59:45 dlg Exp $     */
+/*      $OpenBSD: atapiscsi.c,v 1.75 2006/10/22 22:43:21 dlg Exp $     */
 
 /*
  * This code is derived from code with the copyright below.
@@ -1429,7 +1429,7 @@ wdc_atapi_ctrl(chp, xfer, timeout, ret)
 		break;
 
 	case ATAPI_DEVICE_RESET_WAIT_STATE:
-		/* FALLTHROUGH */
+		/* fall through */
 
 	case ATAPI_IDENTIFY_STATE:
 		wdccommandshort(chp, drvp->drive, ATAPI_IDENTIFY_DEVICE);
@@ -1482,7 +1482,7 @@ wdc_atapi_ctrl(chp, xfer, timeout, ret)
 			drvp->PIO_mode = 3;
 			chp->wdc->set_modes(chp);
 		}
-	/* FALLTHROUGH */
+	/* fall through */
 
 	case ATAPI_DMAMODE_STATE:
 		if (drvp->drive_flags & DRIVE_UDMA) {
@@ -1505,7 +1505,7 @@ wdc_atapi_ctrl(chp, xfer, timeout, ret)
 			chp->wdc->irqack(chp);
 		if (chp->ch_status & WDCS_ERR)
 			drvp->drive_flags &= ~(DRIVE_DMA | DRIVE_UDMA);
-	/* FALLTHROUGH */
+	/* fall through */
 
 	case ATAPI_READY_STATE:
 	ready:

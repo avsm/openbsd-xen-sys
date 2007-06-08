@@ -1,4 +1,4 @@
-/*	$OpenBSD: hd.c,v 1.44 2007/02/22 17:20:17 miod Exp $	*/
+/*	$OpenBSD: hd.c,v 1.40 2006/03/15 20:20:39 miod Exp $	*/
 /*	$NetBSD: rd.c,v 1.33 1997/07/10 18:14:08 kleink Exp $	*/
 
 /*
@@ -56,7 +56,6 @@
 #include <sys/kernel.h>
 #include <sys/proc.h>
 #include <sys/stat.h>
-#include <sys/syslog.h>
 
 #include <ufs/ffs/fs.h>			/* for BBSIZE and SBSIZE */
 
@@ -239,10 +238,9 @@ cdev_decl(hd);
 
 int	hdident(struct device *, struct hd_softc *,
 	    struct hpibbus_attach_args *);
-void	hdreset(int, int, int);
+void	hdreset(struct hd_softc *);
 void	hdustart(struct hd_softc *);
-void	hdgetdisklabel(dev_t, struct hd_softc *, struct disklabel *,
-	    struct cpu_disklabel *, int);
+int	hdgetinfo(dev_t, struct hd_softc *, struct disklabel *, int);
 void	hdrestart(void *);
 struct buf *hdfinish(struct hd_softc *, struct buf *);
 
@@ -265,10 +263,6 @@ struct cfattach hd_ca = {
 struct cfdriver hd_cd = {
 	NULL, "hd", DV_DISK
 };
-
-#define	hdlock(rs)	disk_lock(&(rs)->sc_dkdev)
-#define	hdunlock(rs)	disk_unlock(&(rs)->sc_dkdev)
-#define	hdlookup(unit)	(struct hd_softc *)device_lookup(&hd_cd, (unit))
 
 int
 hdmatch(parent, match, aux)
@@ -311,6 +305,7 @@ hdattach(parent, self, aux)
 	sc->sc_hq.hq_go = hdgo;
 	sc->sc_hq.hq_intr = hdinterrupt;
 
+	sc->sc_flags = HDF_ALIVE;
 #ifdef DEBUG
 	/* always report errors */
 	if (hddebug & HDB_ERROR)
@@ -348,11 +343,16 @@ hdident(parent, sc, ha)
 		return (0);
 
 	/*
+	 * If we're just probing for the device, that's all the
+	 * work we need to do.
+	 */
+	if (sc == NULL)
+		return (1);
+
+	/*
 	 * Reset device and collect description
 	 */
-	bzero(&desc, sizeof(desc));
-	stat = 0;
-	hdreset(ctlr, slave, ha->ha_punit);
+	hdreset(sc);
 	cmd[0] = C_SUNIT(ha->ha_punit);
 	cmd[1] = C_SVOL(0);
 	cmd[2] = C_DESC;
@@ -360,26 +360,19 @@ hdident(parent, sc, ha)
 	hpibrecv(ctlr, slave, C_EXEC, &desc, sizeof(desc));
 	hpibrecv(ctlr, slave, C_QSTAT, &stat, sizeof(stat));
 
-	if (desc.d_name == 0 && stat != 0)
-		return (0);
-
-	/*
-	 * If we're just probing for the device, that's all the
-	 * work we need to do.
-	 */
-	if (sc == NULL)
-		return (1);
-
 	bzero(name, sizeof(name));
-	n = desc.d_name;
-	for (i = 5; i >= 0; i--) {
-		name[i] = (n & 0xf) + '0';
-		n >>= 4;
+	if (stat == 0) {
+		n = desc.d_name;
+		for (i = 5; i >= 0; i--) {
+			name[i] = (n & 0xf) + '0';
+			n >>= 4;
+		}
 	}
 
 #ifdef DEBUG
 	if (hddebug & HDB_IDENT) {
-		printf(": stat %d name: %x ('%s')\n", stat, desc.d_name, name);
+		printf("\n%s: name: %x ('%s')\n",
+		    sc->sc_dev.dv_xname, desc.d_name, name);
 		printf("  iuw %x, maxxfr %d, ctype %d\n",
 		    desc.d_iuw, desc.d_cmaxxfr, desc.d_ctype);
 		printf("  utype %d, bps %d, blkbuf %d, burst %d, blktime %d\n",
@@ -391,7 +384,7 @@ hdident(parent, sc, ha)
 		printf("  maxcyl/head/sect %d/%d/%d, maxvsect %d, inter %d\n",
 		    desc.d_maxcyl, desc.d_maxhead, desc.d_maxsect,
 		    desc.d_maxvsectl, desc.d_interleave);
-		printf("%s:", sc->sc_dev.dv_xname);
+		printf("%s", sc->sc_dev.dv_xname);
 	}
 #endif
 
@@ -442,81 +435,71 @@ hdident(parent, sc, ha)
 }
 
 void
-hdreset(ctlr, slave, punit)
-	int ctlr, slave, punit;
+hdreset(rs)
+	struct hd_softc *rs;
 {
-	struct	hd_ssmcmd ssmc;
-	struct	hd_srcmd src;
-	struct	hd_clearcmd clear;
+	int ctlr = rs->sc_dev.dv_parent->dv_unit;
+	int slave = rs->sc_slave;
 	u_char stat;
 
-	bzero(&clear, sizeof(clear));
-	clear.c_unit = C_SUNIT(punit);
-	clear.c_cmd = C_CLEAR;
-	hpibsend(ctlr, slave, C_TCMD, &clear, sizeof(clear));
+	rs->sc_clear.c_unit = C_SUNIT(rs->sc_punit);
+	rs->sc_clear.c_cmd = C_CLEAR;
+	hpibsend(ctlr, slave, C_TCMD, &rs->sc_clear, sizeof(rs->sc_clear));
 	hpibswait(ctlr, slave);
 	hpibrecv(ctlr, slave, C_QSTAT, &stat, sizeof(stat));
 
-	bzero(&src, sizeof(src));
-	src.c_unit = C_SUNIT(HDCTLR);
-	src.c_nop = C_NOP;
-	src.c_cmd = C_SREL;
-	src.c_param = C_REL;
-	hpibsend(ctlr, slave, C_CMD, &src, sizeof(src));
+	rs->sc_src.c_unit = C_SUNIT(HDCTLR);
+	rs->sc_src.c_nop = C_NOP;
+	rs->sc_src.c_cmd = C_SREL;
+	rs->sc_src.c_param = C_REL;
+	hpibsend(ctlr, slave, C_CMD, &rs->sc_src, sizeof(rs->sc_src));
 	hpibswait(ctlr, slave);
 	hpibrecv(ctlr, slave, C_QSTAT, &stat, sizeof(stat));
 
-	bzero(&ssmc, sizeof(ssmc));
-	ssmc.c_unit = C_SUNIT(punit);
-	ssmc.c_cmd = C_SSM;
-	ssmc.c_refm = REF_MASK;
-	ssmc.c_fefm = FEF_MASK;
-	ssmc.c_aefm = AEF_MASK;
-	ssmc.c_iefm = IEF_MASK;
-	hpibsend(ctlr, slave, C_CMD, &ssmc, sizeof(ssmc));
+	rs->sc_ssmc.c_unit = C_SUNIT(rs->sc_punit);
+	rs->sc_ssmc.c_cmd = C_SSM;
+	rs->sc_ssmc.c_refm = REF_MASK;
+	rs->sc_ssmc.c_fefm = FEF_MASK;
+	rs->sc_ssmc.c_aefm = AEF_MASK;
+	rs->sc_ssmc.c_iefm = IEF_MASK;
+	hpibsend(ctlr, slave, C_CMD, &rs->sc_ssmc, sizeof(rs->sc_ssmc));
 	hpibswait(ctlr, slave);
 	hpibrecv(ctlr, slave, C_QSTAT, &stat, sizeof(stat));
+#ifdef DEBUG
+	rs->sc_stats.hdresets++;
+#endif
 }
 
 /*
  * Read or construct a disklabel
  */
-void
-hdgetdisklabel(dev, rs, lp, clp, spoofonly)
+int
+hdgetinfo(dev, rs, lp, spoofonly)
 	dev_t dev;
 	struct hd_softc *rs;
 	struct disklabel *lp;
-	struct cpu_disklabel *clp;
 	int spoofonly;
 {
 	char *errstring;
-
-	bzero(lp, sizeof(struct disklabel));
-	bzero(clp, sizeof(struct cpu_disklabel));
 
 	/*
 	 * Create a default disk label based on geometry.
 	 * This will get overridden if there is a real label on the disk.
 	 */
-	lp->d_secsize = DEV_BSIZE;
-	lp->d_ntracks = hdidentinfo[rs->sc_type].ri_ntpc;
-	lp->d_nsectors = hdidentinfo[rs->sc_type].ri_nbpt;
-	lp->d_ncylinders = hdidentinfo[rs->sc_type].ri_ncyl;
-	lp->d_secpercyl = lp->d_nsectors * lp->d_ntracks;
-	if (lp->d_secpercyl == 0) {
-		lp->d_secpercyl = 100;
-		/* as long as it's not 0 - readdisklabel divides by it */
-	}
-
+	bzero((caddr_t)lp, sizeof *lp);
 	lp->d_type = DTYPE_HPIB;
 	strncpy(lp->d_typename, hdidentinfo[rs->sc_type].ri_desc,
 	    sizeof(lp->d_typename));
 	strncpy(lp->d_packname, "fictitious", sizeof lp->d_packname);
-
-	lp->d_secperunit = hdidentinfo[rs->sc_type].ri_nblocks;
+	lp->d_secsize = DEV_BSIZE;
 	lp->d_rpm = 3600;
 	lp->d_interleave = 1;
-	lp->d_flags = 0;
+
+	lp->d_nsectors = hdidentinfo[rs->sc_type].ri_nbpt;
+	lp->d_ntracks = hdidentinfo[rs->sc_type].ri_ntpc;
+	lp->d_ncylinders = hdidentinfo[rs->sc_type].ri_ncyl;
+	lp->d_secperunit = hdidentinfo[rs->sc_type].ri_nblocks;
+	lp->d_secpercyl = lp->d_nsectors * lp->d_ntracks;
 
 	/* XXX - these values for BBSIZE and SBSIZE assume ffs */
 	lp->d_bbsize = BBSIZE;
@@ -534,12 +517,19 @@ hdgetdisklabel(dev, rs, lp, clp, spoofonly)
 	/*
 	 * Now try to read the disklabel
 	 */
-	errstring = readdisklabel(HDLABELDEV(dev), hdstrategy, lp, clp,
+	errstring = readdisklabel(HDLABELDEV(dev), hdstrategy, lp, NULL,
 	    spoofonly);
 	if (errstring) {
-		/* printf("%s: %s\n", rs->sc_dev.dv_xname, errstring); */
-		return;
+		/* XXX reset partition info as readdisklabel screws with it */
+		lp->d_partitions[0].p_size = 0;
+		lp->d_partitions[RAW_PART].p_offset = 0;
+		lp->d_partitions[RAW_PART].p_size = lp->d_secperunit;
+		lp->d_partitions[RAW_PART].p_fstype = FS_UNUSED;
+		lp->d_npartitions = RAW_PART + 1;
+		lp->d_checksum = dkcksum(lp);
 	}
+
+	return(0);
 }
 
 int
@@ -550,17 +540,18 @@ hdopen(dev, flags, mode, p)
 {
 	int unit = HDUNIT(dev);
 	struct hd_softc *rs;
-	int mask, part;
-	int error;
+	int error, mask, part;
 
-	rs = hdlookup(unit);
-	if (rs == NULL)
+	if (unit >= hd_cd.cd_ndevs ||
+	    (rs = hd_cd.cd_devs[unit]) == NULL ||
+	    (rs->sc_flags & HDF_ALIVE) == 0)
 		return (ENXIO);
 
-	if ((error = hdlock(rs)) != 0) {
-		device_unref(&rs->sc_dev);
-		return (error);
-	}
+	/*
+	 * Wait for any pending opens/closes to complete
+	 */
+	while (rs->sc_flags & (HDF_OPENING|HDF_CLOSING))
+		tsleep((caddr_t)rs, PRIBIO, "hdopen", 0);
 
 	/*
 	 * On first open, get label and partition info.
@@ -569,9 +560,11 @@ hdopen(dev, flags, mode, p)
 	 */
 	if (rs->sc_dkdev.dk_openmask == 0) {
 		rs->sc_flags |= HDF_OPENING;
-		hdgetdisklabel(dev, rs, rs->sc_dkdev.dk_label,
-		    rs->sc_dkdev.dk_cpulabel, 0);
+		error = hdgetinfo(dev, rs, rs->sc_dkdev.dk_label, 0);
 		rs->sc_flags &= ~HDF_OPENING;
+		wakeup((caddr_t)rs);
+		if (error)
+			return(error);
 	}
 
 	part = HDPART(dev);
@@ -580,10 +573,8 @@ hdopen(dev, flags, mode, p)
 	/* Check that the partition exists. */
 	if (part != RAW_PART &&
 	    (part > rs->sc_dkdev.dk_label->d_npartitions ||
-	     rs->sc_dkdev.dk_label->d_partitions[part].p_fstype == FS_UNUSED)) {
-		error = ENXIO;
-		goto out;
-	}
+	     rs->sc_dkdev.dk_label->d_partitions[part].p_fstype == FS_UNUSED))
+		return (ENXIO);
 
 	/* Ensure only one open at a time. */
 	switch (mode) {
@@ -597,11 +588,7 @@ hdopen(dev, flags, mode, p)
 	rs->sc_dkdev.dk_openmask =
 	    rs->sc_dkdev.dk_copenmask | rs->sc_dkdev.dk_bopenmask;
 
-	error = 0;
-out:
-	hdunlock(rs);
-	device_unref(&rs->sc_dev);
-	return (error);
+	return(0);
 }
 
 int
@@ -611,35 +598,20 @@ hdclose(dev, flag, mode, p)
 	struct proc *p;
 {
 	int unit = HDUNIT(dev);
-	struct hd_softc *rs;
-	struct disk *dk;
+	struct hd_softc *rs = hd_cd.cd_devs[unit];
+	struct disk *dk = &rs->sc_dkdev;
 	int mask, s;
-	int error;
-
-	rs = hdlookup(unit);
-	if (rs == NULL)
-		return (ENXIO);
-
-	if ((error = hdlock(rs)) != 0) {
-		device_unref(&rs->sc_dev);
-		return (error);
-	}
 
 	mask = 1 << HDPART(dev);
- 	dk = &rs->sc_dkdev;
-	switch (mode) {
-	case S_IFCHR:
+	if (mode == S_IFCHR)
 		dk->dk_copenmask &= ~mask;
-		break;
-	case S_IFBLK:
+	else
 		dk->dk_bopenmask &= ~mask;
-		break;
-	}
 	dk->dk_openmask = dk->dk_copenmask | dk->dk_bopenmask;
-
 	/*
 	 * On last close, we wait for all activity to cease since
-	 * the label/parition info will become invalid.
+	 * the label/parition info will become invalid.  Since we
+	 * might sleep, we must block any opens while we are here.
 	 * Note we don't have to about other closes since we know
 	 * we are the last one.
 	 */
@@ -652,11 +624,9 @@ hdclose(dev, flag, mode, p)
 		}
 		splx(s);
 		rs->sc_flags &= ~(HDF_CLOSING);
+		wakeup((caddr_t)rs);
 	}
-
-	hdunlock(rs);
-	device_unref(&rs->sc_dev);
-	return (0);
+	return(0);
 }
 
 void
@@ -664,16 +634,12 @@ hdstrategy(bp)
 	struct buf *bp;
 {
 	int unit = HDUNIT(bp->b_dev);
-	struct hd_softc *rs;
-	struct buf *dp;
-	int s;
+	struct hd_softc *rs = hd_cd.cd_devs[unit];
+	struct buf *dp = &rs->sc_tab;
 	struct partition *pinfo;
-
-	rs = hdlookup(unit);
-	if (rs == NULL) {
-		bp->b_error = ENXIO;
-		goto bad;
-	}
+	daddr_t bn;
+	int sz, s;
+	int offset;
 
 #ifdef DEBUG
 	if (hddebug & HDB_FOLLOW)
@@ -681,46 +647,44 @@ hdstrategy(bp)
 		       bp, bp->b_dev, bp->b_blkno, bp->b_bcount,
 		       (bp->b_flags & B_READ) ? 'R' : 'W');
 #endif
+	bn = bp->b_blkno;
+	sz = howmany(bp->b_bcount, DEV_BSIZE);
+	pinfo = &rs->sc_dkdev.dk_label->d_partitions[HDPART(bp->b_dev)];
 
-	/*
-	 * If it's a null transfer, return immediately
-	 */
-	if (bp->b_bcount == 0)
-		goto done;
+	/* Don't perform partition translation on RAW_PART. */
+	offset = (HDPART(bp->b_dev) == RAW_PART) ? 0 : pinfo->p_offset;
 
-	/*
-	 * The transfer must be a whole number of blocks.
-	 */
-	if ((bp->b_bcount % rs->sc_dkdev.dk_label->d_secsize) != 0) {
-		bp->b_error = EINVAL;
-		goto bad;
-	}
-
-	/*
-	 * Do bounds checking, adjust transfer. if error, process;
-	 * If end of partition, just return.
-	 */
-
- 	dp = &rs->sc_tab;
-
-	if (HDPART(bp->b_dev) == RAW_PART) {
-		/* valid regardless of the disklabel */
-		bp->b_cylinder = bp->b_blkno;
-	} else {
-		if (bounds_check_with_label(bp, rs->sc_dkdev.dk_label,
-		    rs->sc_dkdev.dk_cpulabel,
-		    (rs->sc_flags & HDF_WLABEL) != 0) <= 0)
-			goto done;
-
+	if (HDPART(bp->b_dev) != RAW_PART) {
 		/*
-		 * XXX Note that since b_cylinder is stored over b_resid, this  
-		 * XXX destroys the disksort ordering hint
-		 * XXX bounds_check_with_label() has put in there.
-		*/
-		pinfo = &rs->sc_dkdev.dk_label->d_partitions[HDPART(bp->b_dev)];
-		bp->b_cylinder = bp->b_blkno + pinfo->p_offset;
-	}
+		 * XXX This block of code belongs in
+		 * XXX bounds_check_with_label()
+		 */
 
+		if (bn < 0 || bn + sz > pinfo->p_size) {
+			sz = pinfo->p_size - bn;
+			if (sz == 0) {
+				bp->b_resid = bp->b_bcount;
+				goto done;
+			}
+			if (sz < 0) {
+				bp->b_error = EINVAL;
+				goto bad;
+			}
+			bp->b_bcount = dbtob(sz);
+		}
+		/*
+		 * Check for write to write protected label
+		 */
+		if (bn + offset <= LABELSECTOR &&
+#if LABELSECTOR != 0
+		    bn + offset + sz > LABELSECTOR &&
+#endif
+		    !(bp->b_flags & B_READ) && !(rs->sc_flags & HDF_WLABEL)) {
+			bp->b_error = EROFS;
+			goto bad;
+		}
+	}
+	bp->b_cylinder = bn + offset;
 	s = splbio();
 	disksort(dp, bp);
 	if (dp->b_active == 0) {
@@ -728,21 +692,13 @@ hdstrategy(bp)
 		hdustart(rs);
 	}
 	splx(s);
-
-	device_unref(&rs->sc_dev);
 	return;
 bad:
 	bp->b_flags |= B_ERROR;
 done:
-	/*
-	 * Correctly set the buf to indicate a completed xfer
-	 */
-	bp->b_resid = bp->b_bcount;
 	s = splbio();
 	biodone(bp);
 	splx(s);
-	if (rs != NULL)
-		device_unref(&rs->sc_dev);
 }
 
 /*
@@ -778,7 +734,7 @@ hdfinish(rs, bp)
 	struct buf *dp = &rs->sc_tab;
 	int s;
 
-	rs->sc_errcnt = 0;
+	dp->b_errcnt = 0;
 	dp->b_actf = bp->b_actf;
 	bp->b_resid = 0;
 	s = splbio();
@@ -853,12 +809,12 @@ again:
 	if (hddebug & HDB_ERROR)
 		printf("%s: hdstart: cmd %x adr %lx blk %d len %d ecnt %ld\n",
 		       rs->sc_dev.dv_xname, rs->sc_ioc.c_cmd, rs->sc_ioc.c_addr,
-		       bp->b_blkno, rs->sc_resid, rs->sc_errcnt);
+		       bp->b_blkno, rs->sc_resid, rs->sc_tab.b_errcnt);
 	rs->sc_stats.hdretries++;
 #endif
 	rs->sc_flags &= ~HDF_SEEK;
-	hdreset(rs->sc_dev.dv_parent->dv_unit, rs->sc_slave, rs->sc_punit);
-	if (rs->sc_errcnt++ < HDRETRY)
+	hdreset(rs);
+	if (rs->sc_tab.b_errcnt++ < HDRETRY)
 		goto again;
 	printf("%s: hdstart err: err: cmd 0x%x sect %ld blk %d len %d\n",
 	       rs->sc_dev.dv_xname, rs->sc_ioc.c_cmd, rs->sc_ioc.c_addr,
@@ -955,7 +911,7 @@ hdinterrupt(arg)
 #ifdef DEBUG
 		rs->sc_stats.hdretries++;
 #endif
-		if (rs->sc_errcnt++ < HDRETRY) {
+		if (rs->sc_tab.b_errcnt++ < HDRETRY) {
 			if (restart)
 				hdstart(rs);
 			return;
@@ -1030,16 +986,14 @@ hderror(unit)
 #ifdef DEBUG
 		printf("%s: couldn't get status\n", rs->sc_dev.dv_xname);
 #endif
-		hdreset(rs->sc_dev.dv_parent->dv_unit,
-		    rs->sc_slave, rs->sc_punit);
+		hdreset(rs);
 		return(1);
 	}
 	sp = &rs->sc_stat;
 	if (sp->c_fef & FEF_REXMT)
 		return(1);
 	if (sp->c_fef & FEF_PF) {
-		hdreset(rs->sc_dev.dv_parent->dv_unit,
-		    rs->sc_slave, rs->sc_punit);
+		hdreset(rs);
 		return(1);
 	}
 	/*
@@ -1050,7 +1004,7 @@ hderror(unit)
 	 * HDRETRY as defined, the range is 1 to 32 seconds.
 	 */
 	if (sp->c_fef & FEF_IMR) {
-		int hdtimo = HDWAITC << rs->sc_errcnt;
+		int hdtimo = HDWAITC << rs->sc_tab.b_errcnt;
 #ifdef DEBUG
 		printf("%s: internal maintenance, %d second timeout\n",
 		       rs->sc_dev.dv_xname, hdtimo);
@@ -1065,7 +1019,7 @@ hderror(unit)
 	 * threshold.  By default, this will only report after the
 	 * retry limit has been exceeded.
 	 */
-	if (rs->sc_errcnt < hderrthresh)
+	if (rs->sc_tab.b_errcnt < hderrthresh)
 		return(1);
 
 	/*
@@ -1083,15 +1037,24 @@ hderror(unit)
 		hwbn = sp->c_blk;
 		pbn = HDSTOB(hwbn) - pbn;
 	}
-
-	diskerr(bp, hd_cd.cd_name, "hard error", LOG_PRINTF,
-	    pbn - bp->b_blkno, rs->sc_dkdev.dk_label);
-	printf("\n%s%c: ", rs->sc_dev.dv_xname, 'a' + HDPART(bp->b_dev));
-	
+	/*
+	 * Now output a generic message suitable for badsect.
+	 * Note that we don't use harderr because it just prints
+	 * out b_blkno which is just the beginning block number
+	 * of the transfer, not necessarily where the error occurred.
+	 */
+	printf("%s%c: hard error sn%d\n", rs->sc_dev.dv_xname,
+	    'a' + HDPART(bp->b_dev), pbn);
+	/*
+	 * Now report the status as returned by the hardware with
+	 * no attempt at interpretation (unless debugging).
+	 */
+	printf("%s: %s error:", rs->sc_dev.dv_xname,
+	    (bp->b_flags & B_READ) ? "read" : "write");
 #ifdef DEBUG
 	if (hddebug & HDB_ERROR) {
 		/* status info */
-		printf("volume: %d, unit: %d\n",
+		printf("\n    volume: %d, unit: %d\n",
 		       (sp->c_vu>>4)&0xF, sp->c_vu&0xF);
 		hdprinterr("reject", sp->c_ref, err_reject);
 		hdprinterr("fault", sp->c_fef, err_fault);
@@ -1109,16 +1072,15 @@ hderror(unit)
 		printf("0x%x", *(u_short *)&rs->sc_ioc.c_nop2);
 		printf("0x%x", *(u_int *)&rs->sc_ioc.c_len);
 		printf("0x%x\n", *(u_short *)&rs->sc_ioc.c_cmd);
-	} else
-#endif
-	{
-		printf("v%d u%d, R0x%x F0x%x A0x%x I0x%x",
-		    (sp->c_vu>>4)&0xF, sp->c_vu&0xF,
-		    sp->c_ref, sp->c_fef, sp->c_aef, sp->c_ief);
-		printf(" P1-P10: 0x%04x%04x%02x\n",
-		    *(u_int *)&sp->c_raw[0], *(u_int *)&sp->c_raw[4],
-		    *(u_short *)&sp->c_raw[8]);
+		return (1);
 	}
+#endif
+	printf(" v%d u%d, R0x%x F0x%x A0x%x I0x%x",
+	       (sp->c_vu>>4)&0xF, sp->c_vu&0xF,
+	       sp->c_ref, sp->c_fef, sp->c_aef, sp->c_ief);
+	printf(" P1-P10: 0x%04x%04x%02x\n",
+	    *(u_int *)&sp->c_raw[0], *(u_int *)&sp->c_raw[4],
+	    *(u_short *)&sp->c_raw[8]);
 	return (1);
 }
 
@@ -1151,116 +1113,89 @@ hdioctl(dev, cmd, data, flag, p)
 	struct proc *p;
 {
 	int unit = HDUNIT(dev);
-	struct hd_softc *sc;
-	int error = 0;
-
-	sc = hdlookup(unit);
-	if (sc == NULL)
-		return (ENXIO);
+	struct hd_softc *sc = hd_cd.cd_devs[unit];
+	struct disklabel *lp = sc->sc_dkdev.dk_label;
+	int error, flags;
 
 	switch (cmd) {
 	case DIOCGPDINFO:
-	    {
-		struct cpu_disklabel osdep;
-
-		hdgetdisklabel(dev, sc, (struct disklabel *)data, &osdep, 1);
-	    }
-		goto exit;
+		error = hdgetinfo(dev, sc, (struct disklabel *)data, 1);
+		return (error);
 
 	case DIOCGDINFO:
-		*(struct disklabel *)data = *sc->sc_dkdev.dk_label;
-		goto exit;
+		*(struct disklabel *)data = *lp;
+		return (0);
 
 	case DIOCGPART:
-		((struct partinfo *)data)->disklab = sc->sc_dkdev.dk_label;
+		((struct partinfo *)data)->disklab = lp;
 		((struct partinfo *)data)->part =
-			&sc->sc_dkdev.dk_label->d_partitions[HDPART(dev)];
-		goto exit;
+			&lp->d_partitions[HDPART(dev)];
+		return (0);
 
 	case DIOCWLABEL:
-		if ((flag & FWRITE) == 0) {
-			error = EBADF;
-			goto exit;
-		}
+		if ((flag & FWRITE) == 0)
+			return (EBADF);
 		if (*(int *)data)
 			sc->sc_flags |= HDF_WLABEL;
 		else
 			sc->sc_flags &= ~HDF_WLABEL;
-		goto exit;
+		return (0);
+
+	case DIOCSDINFO:
+		if ((flag & FWRITE) == 0)
+			return (EBADF);
+		return (setdisklabel(lp, (struct disklabel *)data,
+				     (sc->sc_flags & HDF_WLABEL) ? 0
+				     : sc->sc_dkdev.dk_openmask,
+				     (struct cpu_disklabel *)0));
 
 	case DIOCWDINFO:
-	case DIOCSDINFO:
-		if ((flag & FWRITE) == 0) {
-			error = EBADF;
-			goto exit;
-		}
-
-		if ((error = hdlock(sc)) != 0)
-			goto exit;
-		sc->sc_flags |= HDF_WLABEL;
-
-		error = setdisklabel(sc->sc_dkdev.dk_label,
-		    (struct disklabel *)data, /* sc->sc_dkdev.dk_openmask */ 0,
-		    sc->sc_dkdev.dk_cpulabel);
-		if (error == 0) {
-			if (cmd == DIOCWDINFO)
-				error = writedisklabel(HDLABELDEV(dev),
-				    hdstrategy, sc->sc_dkdev.dk_label,
-				    sc->sc_dkdev.dk_cpulabel);
-		}
-
-		sc->sc_flags &= ~HDF_WLABEL;
-		hdunlock(sc);
-		goto exit;
-
-	default:
-		error = EINVAL;
-		break;
+		if ((flag & FWRITE) == 0)
+			return (EBADF);
+		error = setdisklabel(lp, (struct disklabel *)data,
+				     (sc->sc_flags & HDF_WLABEL) ? 0
+				     : sc->sc_dkdev.dk_openmask,
+				     (struct cpu_disklabel *)0);
+		if (error)
+			return (error);
+		flags = sc->sc_flags;
+		sc->sc_flags = HDF_ALIVE | HDF_WLABEL;
+		error = writedisklabel(HDLABELDEV(dev), hdstrategy, lp,
+				       (struct cpu_disklabel *)0);
+		sc->sc_flags = flags;
+		return (error);
 	}
-
-exit:
-	device_unref(&sc->sc_dev);
-	return (error);
+	return(EINVAL);
 }
 
 int
 hdsize(dev)
 	dev_t dev;
 {
-	struct hd_softc *rs;
 	int unit = HDUNIT(dev);
-	int part, omask;
-	int size;
+	struct hd_softc *rs;
+	int psize, didopen = 0;
 
-	rs = hdlookup(unit);
-	if (rs == NULL)
+	if (unit >= hd_cd.cd_ndevs ||
+	    (rs = hd_cd.cd_devs[unit]) == NULL ||
+	    (rs->sc_flags & HDF_ALIVE) == 0)
 		return (-1);
-
-	part = HDPART(dev);
-	omask = rs->sc_dkdev.dk_openmask & (1 << part);
 
 	/*
 	 * We get called very early on (via swapconf)
 	 * without the device being open so we may need
 	 * to handle it here.
 	 */
-	if (omask == 0 && hdopen(dev, FREAD | FWRITE, S_IFBLK, NULL) != 0) {
-		size = -1;
-		goto out;
+	if (rs->sc_dkdev.dk_openmask == 0) {
+		if (hdopen(dev, FREAD|FWRITE, S_IFBLK, NULL))
+			return(-1);
+		didopen = 1;
 	}
-
-	if (rs->sc_dkdev.dk_label->d_partitions[part].p_fstype != FS_SWAP)
-		size = -1;
-	else
-		size = rs->sc_dkdev.dk_label->d_partitions[part].p_size *
-		    (rs->sc_dkdev.dk_label->d_secsize / DEV_BSIZE);
-
-	if (hdclose(dev, FREAD | FWRITE, S_IFBLK, NULL) != 0)
-		size = -1;
-
-out:
-	device_unref(&rs->sc_dev);
-	return (size);
+	psize = rs->sc_dkdev.dk_label->d_partitions[HDPART(dev)].p_size *
+	    (rs->sc_dkdev.dk_label->d_secsize / DEV_BSIZE);
+	if (didopen)
+		(void) hdclose(dev, FREAD|FWRITE, S_IFBLK, NULL);
+	return (psize);
 }
 
 #ifdef DEBUG
@@ -1317,10 +1252,10 @@ hddump(dev, blkno, va, size)
 	part = HDPART(dev);
 
 	/* Make sure dump device is ok. */
-	rs = hdlookup(unit);
-	if (rs == NULL)
+	if (unit >= hd_cd.cd_ndevs ||
+	    (rs = hd_cd.cd_devs[unit]) == NULL ||
+	    (rs->sc_flags & HDF_ALIVE) == 0)
 		return (ENXIO);
-	device_unref(&rs->sc_dev);
 
 	ctlr = rs->sc_dev.dv_parent->dv_unit;
 	slave = rs->sc_slave;

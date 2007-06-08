@@ -1,4 +1,4 @@
-/*	$OpenBSD: cd.c,v 1.121 2007/04/10 17:47:56 miod Exp $	*/
+/*	$OpenBSD: cd.c,v 1.117 2006/12/12 02:44:36 krw Exp $	*/
 /*	$NetBSD: cd.c,v 1.100 1997/04/02 02:29:30 mycroft Exp $	*/
 
 /*
@@ -108,7 +108,6 @@ void	cdgetdisklabel(dev_t, struct cd_softc *, struct disklabel *,
 			    struct cpu_disklabel *, int);
 void	cddone(struct scsi_xfer *);
 u_long	cd_size(struct cd_softc *, int);
-void	cd_kill_buffers(struct cd_softc *);
 void	lba2msf(u_long, u_char *, u_char *, u_char *);
 u_long	msf2lba(u_char, u_char, u_char);
 int	cd_setchan(struct cd_softc *, int, int, int, int, int);
@@ -196,7 +195,7 @@ cdattach(parent, self, aux)
 	struct device *parent, *self;
 	void *aux;
 {
-	struct cd_softc *cd = (struct cd_softc *)self;
+	struct cd_softc *cd = (void *)self;
 	struct scsi_attach_args *sa = aux;
 	struct scsi_link *sc_link = sa->sa_sc_link;
 
@@ -261,12 +260,22 @@ cddetach(self, flags)
 	struct device *self;
 	int flags;
 {
-	struct cd_softc *cd = (struct cd_softc *)self;
-	int bmaj, cmaj, mn;
+	struct cd_softc *sc = (struct cd_softc *)self;
+	struct buf *dp, *bp;
+	int s, bmaj, cmaj, mn;
 
-	cd_kill_buffers(cd);
+	/* Remove unprocessed buffers from queue */
+	s = splbio();
+	for (dp = &sc->buf_queue; (bp = dp->b_actf) != NULL; ) {
+		dp->b_actf = bp->b_actf;
+		
+		bp->b_error = ENXIO;
+		bp->b_flags |= B_ERROR;
+		biodone(bp);
+	}
+	splx(s);
 
-	/* locate the minor number */
+	/* locate the major number */
 	mn = CDMINOR(self->dv_unit, 0);
 
 	for (bmaj = 0; bmaj < nblkdev; bmaj++)
@@ -277,11 +286,11 @@ cddetach(self, flags)
 			vdevgone(cmaj, mn, mn + MAXPARTITIONS - 1, VCHR);
 
 	/* Get rid of the power hook. */
-	if (cd->sc_cdpwrhook != NULL)
-		powerhook_disestablish(cd->sc_cdpwrhook);
+	if (sc->sc_cdpwrhook != NULL)
+		powerhook_disestablish(sc->sc_cdpwrhook);
 
 	/* Detach disk. */
-	disk_detach(&cd->sc_dk);
+	disk_detach(&sc->sc_dk);
 
 	return (0);
 }
@@ -1262,7 +1271,7 @@ done:
 }
 
 /*
- * Find out from the device what its capacity is
+ * Find out from the device what it's capacity is
  */
 u_long
 cd_size(cd, flags)
@@ -2114,24 +2123,4 @@ cd_interpret_sense(xs)
 		break;
 	}
 	return (EJUSTRETURN); /* use generic handler in scsi_base */
-}
-
-/*
- * Remove unprocessed buffers from queue.
- */
-void
-cd_kill_buffers(struct cd_softc *cd)
-{
-	struct buf *dp, *bp;
-	int s;
-
-	s = splbio();
-	for (dp = &cd->buf_queue; (bp = dp->b_actf) != NULL; ) {
-		dp->b_actf = bp->b_actf;
-
-		bp->b_error = ENXIO;
-		bp->b_flags |= B_ERROR;
-		biodone(bp);
-	}
-	splx(s);
 }
