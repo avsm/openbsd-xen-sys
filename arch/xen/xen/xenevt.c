@@ -596,7 +596,10 @@ xenevt_fpoll(struct file *fp, int events, struct proc *p)
 {
 	struct xenevt_d *d = fp->f_data;
 	int revents = events & (POLLOUT | POLLWRNORM); /* we can always write */
+	int s;
 
+	s = splsoftxenevt();
+	simple_lock(&d->lock);
 	if (events & (POLLIN | POLLRDNORM)) {
 		if (d->ring_read != d->ring_write) {
 			revents |= events & (POLLIN | POLLRDNORM);
@@ -605,5 +608,7 @@ xenevt_fpoll(struct file *fp, int events, struct proc *p)
 			selrecord(p, &d->sel);
 		}
 	}
+	simple_unlock(&d->lock);
+	splx(s);
 	return (revents);
 }
