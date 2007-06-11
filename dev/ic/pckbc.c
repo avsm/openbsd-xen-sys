@@ -1,4 +1,4 @@
-/* $OpenBSD: pckbc.c,v 1.11 2005/12/29 12:31:29 martin Exp $ */
+/* $OpenBSD: pckbc.c,v 1.13 2007/01/31 14:35:51 mickey Exp $ */
 /* $NetBSD: pckbc.c,v 1.5 2000/06/09 04:58:35 soda Exp $ */
 
 /*
@@ -93,8 +93,10 @@ static void pckbc_poll_cmd1(struct pckbc_internal *, pckbc_slot_t,
 
 void pckbc_cleanqueue(struct pckbc_slotdata *);
 void pckbc_cleanup(void *);
+void pckbc_poll(void *);
 int pckbc_cmdresponse(struct pckbc_internal *, pckbc_slot_t, u_char);
 void pckbc_start(struct pckbc_internal *, pckbc_slot_t);
+int pckbcintr_internal(struct pckbc_internal *, struct pckbc_softc *);
 
 const char *pckbc_slot_names[] = { "kbd", "aux" };
 
@@ -296,8 +298,10 @@ pckbc_attach(sc)
 	ioh_d = t->t_ioh_d;
 	ioh_c = t->t_ioh_c;
 
-	if (pckbc_console == 0)
+	if (pckbc_console == 0) {
 		timeout_set(&t->t_cleanup, pckbc_cleanup, t);
+		timeout_set(&t->t_poll, pckbc_poll, t);
+	}
 
 	/* flush */
 	(void) pckbc_poll_data1(iot, ioh_d, ioh_c, PCKBC_KBD_SLOT, 0);
@@ -428,7 +432,7 @@ pckbc_flush(self, slot)
 	struct pckbc_internal *t = self;
 
 	(void) pckbc_poll_data1(t->t_iot, t->t_ioh_d, t->t_ioh_c,
-				slot, t->t_haveaux);
+	    slot, t->t_haveaux);
 }
 
 int
@@ -514,6 +518,13 @@ pckbc_slot_enable(self, slot, on)
 	if (!pckbc_send_cmd(t->t_iot, t->t_ioh_c,
 			    on ? cmd->cmd_en : cmd->cmd_dis))
 		printf("pckbc_slot_enable(%d) failed\n", on);
+
+	if (slot == PCKBC_KBD_SLOT) {
+		if (on)
+			timeout_add(&t->t_poll, hz);
+		else
+			timeout_del(&t->t_poll);
+	}
 }
 
 void
@@ -537,7 +548,7 @@ pckbc_set_poll(self, slot, on)
                  */
 		if (t->t_sc) {
 			s = spltty();
-			pckbcintr(t->t_sc);
+			pckbcintr_internal(t, t->t_sc);
 			splx(s);
 		}
 	}
@@ -895,6 +906,22 @@ pckbc_set_inputhandler(self, slot, func, arg, name)
 	sc->inputhandler[slot] = func;
 	sc->inputarg[slot] = arg;
 	sc->subname[slot] = name;
+
+	if (pckbc_console && slot == PCKBC_KBD_SLOT)
+		timeout_add(&t->t_poll, hz);
+}
+
+void
+pckbc_poll(v)
+	void *v;
+{
+	struct pckbc_internal *t = v;
+	int s;
+
+	s = spltty();
+	(void)pckbcintr_internal(t, t->t_sc);
+	timeout_add(&t->t_poll, hz);
+	splx(s);
 }
 
 int
@@ -902,11 +929,23 @@ pckbcintr(vsc)
 	void *vsc;
 {
 	struct pckbc_softc *sc = (struct pckbc_softc *)vsc;
-	struct pckbc_internal *t = sc->id;
+
+	return (pckbcintr_internal(sc->id, sc));
+}
+
+int
+pckbcintr_internal(t, sc)
+	struct pckbc_internal *t;
+	struct pckbc_softc *sc;
+{
 	u_char stat;
 	pckbc_slot_t slot;
 	struct pckbc_slotdata *q;
 	int served = 0, data;
+
+	/* reschedule timeout further into the idle times */
+	if (timeout_pending(&t->t_poll))
+		timeout_add(&t->t_poll, hz);
 
 	for(;;) {
 		stat = bus_space_read_1(t->t_iot, t->t_ioh_c, 0);
@@ -936,12 +975,16 @@ pckbcintr(vsc)
 		if (CMD_IN_QUEUE(q) && pckbc_cmdresponse(t, slot, data))
 			continue;
 
-		if (sc->inputhandler[slot])
-			(*sc->inputhandler[slot])(sc->inputarg[slot], data);
+		if (sc != NULL) {
+			if (sc->inputhandler[slot])
+				(*sc->inputhandler[slot])(sc->inputarg[slot],
+				    data);
 #ifdef PCKBCDEBUG
-		else
-			printf("pckbcintr: slot %d lost %d\n", slot, data);
+			else
+				printf("pckbcintr: slot %d lost %d\n",
+				    slot, data);
 #endif
+		}
 	}
 
 	return (served);
@@ -969,6 +1012,7 @@ pckbc_cnattach(iot, addr, cmd_offset, slot)
 	pckbc_consdata.t_ioh_c = ioh_c;
 	pckbc_consdata.t_addr = addr;
 	timeout_set(&pckbc_consdata.t_cleanup, pckbc_cleanup, &pckbc_consdata);
+	timeout_set(&pckbc_consdata.t_poll, pckbc_poll, &pckbc_consdata);
 
 	/* flush */
 	(void) pckbc_poll_data1(iot, ioh_d, ioh_c, PCKBC_KBD_SLOT, 0);

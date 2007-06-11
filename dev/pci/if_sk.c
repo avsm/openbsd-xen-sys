@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_sk.c,v 1.135 2007/01/05 21:32:25 kettenis Exp $	*/
+/*	$OpenBSD: if_sk.c,v 1.138 2007/02/10 02:27:56 krw Exp $	*/
 
 /*
  * Copyright (c) 1997, 1998, 1999, 2000
@@ -398,15 +398,13 @@ sk_marv_miibus_statchg(struct device *dev)
 		     SK_YU_READ_2(((struct sk_if_softc *)dev), YUKON_GPCR)));
 }
 
-#define HASH_BITS	6
-  
 u_int32_t
 sk_xmac_hash(caddr_t addr)
 {
 	u_int32_t crc;
 
 	crc = ether_crc32_le(addr, ETHER_ADDR_LEN);
-	return (~crc & ((1 << HASH_BITS) - 1));
+	return (~crc & ((1 << SK_HASH_BITS) - 1));
 }
 
 u_int32_t
@@ -415,7 +413,7 @@ sk_yukon_hash(caddr_t addr)
 	u_int32_t crc;
 
 	crc = ether_crc32_be(addr, ETHER_ADDR_LEN);
-	return (crc & ((1 << HASH_BITS) - 1));
+	return (crc & ((1 << SK_HASH_BITS) - 1));
 }
 
 void
@@ -960,7 +958,8 @@ skc_probe(struct device *parent, void *match, void *aux)
 /*
  * Force the GEnesis into reset, then bring it out of reset.
  */
-void sk_reset(struct sk_softc *sc)
+void
+sk_reset(struct sk_softc *sc)
 {
 	u_int32_t imtimer_ticks;
 
@@ -1221,7 +1220,6 @@ sk_attach(struct device *parent, struct device *self, void *aux)
 		sc_if->sk_mii.mii_writereg = sk_xmac_miibus_writereg;
 		sc_if->sk_mii.mii_statchg = sk_xmac_miibus_statchg;
 	} else {
-		/* Yukon/Yukon-2 */
 		sc_if->sk_mii.mii_readreg = sk_marv_miibus_readreg;
 		sc_if->sk_mii.mii_writereg = sk_marv_miibus_writereg;
 		sc_if->sk_mii.mii_statchg = sk_marv_miibus_statchg;
@@ -2106,7 +2104,7 @@ sk_intr_yukon(struct sk_if_softc *sc_if)
 	}
 	/* TX underrun */
 	if ((status & SK_GMAC_INT_TX_UNDER) != 0) {
-		SK_IF_WRITE_1(sc_if, 0, SK_RXMF1_CTRL_TEST,
+		SK_IF_WRITE_1(sc_if, 0, SK_TXMF1_CTRL_TEST,
 		    SK_TFCTL_TX_FIFO_UNDER);
 	}
 
@@ -2662,10 +2660,6 @@ sk_init(void *xsc_if)
 	if (SK_IS_YUKON(sc)) {
 		u_int16_t reg = SK_YU_READ_2(sc_if, YUKON_GPCR);
 		reg |= YU_GPCR_TXEN | YU_GPCR_RXEN;
-#if 0
-		/* XXX disable 100Mbps and full duplex mode? */
-		reg &= ~(YU_GPCR_SPEED | YU_GPCR_DPLX_DIS);
-#endif
 		SK_YU_WRITE_2(sc_if, YUKON_GPCR, reg);
 	}
 

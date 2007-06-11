@@ -1,4 +1,4 @@
-#	$OpenBSD: GENERIC,v 1.171 2006/12/06 23:02:36 martin Exp $
+#	$OpenBSD: GENERIC,v 1.176 2007/03/21 02:14:06 dlg Exp $
 #
 # For further information on compiling OpenBSD kernels, see the config(8)
 # man page.
@@ -43,7 +43,7 @@ isa0	at mainbus0
 isa0	at pcib?
 pci*	at mainbus0
 
-option		ACPIVERBOSE
+#option		ACPIVERBOSE
 #option		ACPI_ENABLE
 
 acpi0		at mainbus? disable
@@ -254,6 +254,10 @@ lpt*	at puc?
 #scsibus* at bha?
 ahc*	at pci?				# Adaptec 2940 SCSI controllers
 scsibus* at ahc?
+ahci*	at pci?				# AHCI SATA controllers
+scsibus* at ahci?
+sili*	at pci?				# Silicon Image 3124/3132/3531 SATA
+scsibus* at sili?
 ahd*	at pci?				# Adaptec 79?? SCSI controllers
 scsibus* at ahd?
 arc*	at pci?				# Areca RAID Controller
@@ -388,6 +392,7 @@ an*	at pcmcia?			# Aironet IEEE 802.11DS
 cnw*	at pcmcia?			# Xircom Netwave
 ray*	at pcmcia?			# Raylink Aviator2.4/Pro 802.11FH
 iwi*	at pci?				# Intel PRO/Wireless 2200BG/2915ABG
+wpi*	at pci?				# Intel PRO/Wireless 3945ABG
 ral*	at pci?				# Ralink RT2500/RT2501/RT2600
 ral*	at cardbus?			# Ralink RT2500/RT2501/RT2600
 rtw*	at pci?				# Realtek 8180
@@ -507,6 +512,7 @@ scsibus* at iopsp?
 # 1-Wire devices
 option ONEWIREVERBOSE
 owid*	at onewire?		# ID
+owsbm*	at onewire?		# Smart Battery Monitor
 owtemp* at onewire?		# Temperature
 
 pseudo-device	sequencer	1

@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_cdce.c,v 1.20 2006/11/16 23:50:16 deraadt Exp $ */
+/*	$OpenBSD: if_cdce.c,v 1.23 2007/02/23 01:19:15 drahn Exp $ */
 
 /*
  * Copyright (c) 1997, 1998, 1999, 2000-2003 Bill Paul <wpaul@windriver.com>
@@ -101,6 +101,7 @@ Static const struct cdce_type cdce_devs[] = {
     {{ USB_VENDOR_GMATE, USB_PRODUCT_GMATE_YP3X00 }, CDCE_NO_UNION },
     {{ USB_VENDOR_NETCHIP, USB_PRODUCT_NETCHIP_ETHERNETGADGET }, CDCE_NO_UNION },
     {{ USB_VENDOR_COMPAQ, USB_PRODUCT_COMPAQ_IPAQLINUX }, CDCE_NO_UNION },
+    {{ USB_VENDOR_AMBIT, USB_PRODUCT_AMBIT_NTL_250 }, CDCE_NO_UNION },
 };
 #define cdce_lookup(v, p) ((const struct cdce_type *)usb_lookup(cdce_devs, v, p))
 
@@ -344,7 +345,8 @@ cdce_encap(struct cdce_softc *sc, struct mbuf *m, int idx)
 	c->cdce_mbuf = m;
 
 	usbd_setup_xfer(c->cdce_xfer, sc->cdce_bulkout_pipe, c, c->cdce_buf,
-	    m->m_pkthdr.len + extra, USBD_NO_COPY, 10000, cdce_txeof);
+	    m->m_pkthdr.len + extra, USBD_FORCE_SHORT_XFER | USBD_NO_COPY,
+	    10000, cdce_txeof);
 	err = usbd_transfer(c->cdce_xfer);
 	if (err != USBD_IN_PROGRESS) {
 		cdce_stop(sc);

@@ -1,4 +1,4 @@
-/*	$OpenBSD: trap.c,v 1.50 2006/01/30 21:26:17 miod Exp $	*/
+/*	$OpenBSD: trap.c,v 1.52 2007/03/15 10:22:29 art Exp $	*/
 /*	$NetBSD: trap.c,v 1.68 1998/12/22 08:47:07 scottr Exp $	*/
 
 /*
@@ -219,7 +219,6 @@ trap(type, code, v, frame)
 	int i, s;
 	u_int ucode;
 	int typ = 0;
-	u_quad_t sticks;
 	union sigval sv;
 
 	uvmexp.traps++;
@@ -237,10 +236,8 @@ trap(type, code, v, frame)
 
 	if (USERMODE(frame.f_sr)) {
 		type |= T_USER;
-		sticks = p->p_sticks;
 		p->p_md.md_regs = frame.f_regs;
-	} else
-		sticks = 0;
+	}
 
 	switch (type) {
 	default:
@@ -511,7 +508,6 @@ copyfault:
 		}
 		spl0();
 		if (p->p_flag & P_OWEUPC) {
-			p->p_flag &= ~P_OWEUPC;
 			ADDUPROF(p);
 		}
 		if (type == (T_ASTFLT | T_USER) && want_resched) {
@@ -965,13 +961,11 @@ syscall(code, frame)
 	int error, opc, nsys;
 	size_t argsize;
 	register_t args[8], rval[2];
-	u_quad_t sticks;
 
 	uvmexp.syscalls++;
 	if (!USERMODE(frame.f_sr))
 		panic("syscall");
 	p = curproc;
-	sticks = p->p_sticks;
 	p->p_md.md_regs = frame.f_regs;
 	opc = frame.f_pc;
 

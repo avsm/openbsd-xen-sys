@@ -1,4 +1,4 @@
-/*	$OpenBSD: trap.c,v 1.63 2006/06/11 20:46:50 miod Exp $ */
+/*	$OpenBSD: trap.c,v 1.65 2007/03/15 10:22:29 art Exp $ */
 
 /*
  * Copyright (c) 1995 Theo de Raadt
@@ -238,7 +238,6 @@ trap(type, code, v, frame)
 	register struct proc *p;
 	register int i;
 	u_int ucode;
-	u_quad_t sticks;
 	int typ = 0, bit;
 #ifdef COMPAT_HPUX
 	extern struct emul emul_hpux;
@@ -253,7 +252,6 @@ trap(type, code, v, frame)
 	ucode = 0;
 	if (USERMODE(frame.f_sr)) {
 		type |= T_USER;
-		sticks = p->p_sticks;
 		p->p_md.md_regs = frame.f_regs;
 	}
 	switch (type) {
@@ -491,7 +489,6 @@ copyfault:
 		}
 		spl0();
 		if (p->p_flag & P_OWEUPC) {
-			p->p_flag &= ~P_OWEUPC;
 			ADDUPROF(p);
 		}
 		if (type == (T_ASTFLT | T_USER) && want_resched) {
@@ -958,7 +955,6 @@ syscall(code, frame)
 	int error, opc, nsys;
 	size_t argsize;
 	register_t args[8], rval[2];
-	u_quad_t sticks;
 #ifdef COMPAT_SUNOS
 	extern struct emul emul_sunos;
 #endif
@@ -967,7 +963,6 @@ syscall(code, frame)
 	if (!USERMODE(frame.f_sr))
 		panic("syscall");
 	p = curproc;
-	sticks = p->p_sticks;
 	p->p_md.md_regs = frame.f_regs;
 	opc = frame.f_pc;
 

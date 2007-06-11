@@ -1,4 +1,4 @@
-/*	$OpenBSD: param.c,v 1.22 2003/07/24 04:02:20 deraadt Exp $	*/
+/*	$OpenBSD: param.c,v 1.24 2007/02/14 16:47:04 mickey Exp $	*/
 /*	$NetBSD: param.c,v 1.16 1996/03/12 03:08:40 mrg Exp $	*/
 
 /*
@@ -84,9 +84,6 @@ int	tickadj = 240000 / (60 * HZ);		/* can adjust 240ms in 60s */
 struct	timezone tz = { TIMEZONE, DST };
 #define	NPROC (20 + 16 * MAXUSERS)
 int	maxproc = NPROC;
-#define	NTEXT (80 + NPROC / 8)	/* actually the object cache */
-#define	NVNODE (NPROC * 2 + NTEXT + 100)
-int	desiredvnodes = NVNODE;
 int	maxfiles = 3 * (NPROC + MAXUSERS) + 80;
 int	nmbclust = NMBCLUSTERS;
 
@@ -161,7 +158,7 @@ struct	msginfo msginfo = {
  * them here forces loader errors if this file is omitted
  * (if they've been externed everywhere else; hah!).
  */
-struct	buf *buf, *swbuf;
+struct	buf *buf;
 char	*buffers;
 
 struct	utsname utsname;

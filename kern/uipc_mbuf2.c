@@ -1,4 +1,4 @@
-/*	$OpenBSD: uipc_mbuf2.c,v 1.25 2006/11/18 08:20:51 jmc Exp $	*/
+/*	$OpenBSD: uipc_mbuf2.c,v 1.27 2007/02/26 20:15:33 claudio Exp $	*/
 /*	$KAME: uipc_mbuf2.c,v 1.29 2001/02/14 13:42:10 itojun Exp $	*/
 /*	$NetBSD: uipc_mbuf.c,v 1.40 1999/04/01 00:23:25 thorpej Exp $	*/
 
@@ -226,16 +226,16 @@ m_dup1(struct mbuf *m, int off, int len, int wait)
 {
 	struct mbuf *n;
 	int l;
-	int copyhdr;
 
 	if (len > MCLBYTES)
 		return (NULL);
 	if (off == 0 && (m->m_flags & M_PKTHDR) != 0) {
-		copyhdr = 1;
 		MGETHDR(n, wait, m->m_type);
+		if (n == NULL)
+			return (NULL);
+		M_DUP_PKTHDR(n, m);
 		l = MHLEN;
 	} else {
-		copyhdr = 0;
 		MGET(n, wait, m->m_type);
 		l = MLEN;
 	}
@@ -249,8 +249,6 @@ m_dup1(struct mbuf *m, int off, int len, int wait)
 	if (!n)
 		return (NULL);
 
-	if (copyhdr)
-		M_DUP_PKTHDR(n, m);
 	m_copydata(m, off, len, mtod(n, caddr_t));
 	n->m_len = len;
 

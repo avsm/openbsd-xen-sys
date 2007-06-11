@@ -1,4 +1,4 @@
-#	$OpenBSD: GENERIC,v 1.163 2006/12/18 17:52:40 mbalmer Exp $
+#	$OpenBSD: GENERIC,v 1.175 2007/04/10 19:13:13 kettenis Exp $
 #
 # For further information on compiling OpenBSD kernels, see the config(8)
 # man page.
@@ -20,6 +20,7 @@ option		USBVERBOSE
 
 option		WSEMUL_SUN	# provide sun terminal emulation; required
 option		WSEMUL_NO_VT100	# do not provide vt100 terminal emulation
+option		WSEMUL_DUMB
 
 config		bsd	swap generic
 
@@ -27,28 +28,28 @@ config		bsd	swap generic
 mainbus0 at root
 cpu0	at mainbus0
 
-upa0	at mainbus0
-
-# e4500/e5500
+# Bus types found on SPARC systems.
+sbus*	at mainbus0
 central0 at mainbus0
 fhc0	at central0
 fhc*	at mainbus0
-
-# Bus types found on SPARC systems.
-
-sbus*	at mainbus0
+upa0	at mainbus0
 psycho*	at mainbus0
 pci*	at psycho?
 schizo*	at mainbus0
 pci*	at schizo?
+pyro*	at mainbus0
+pci*	at pyro?
 pci*	at ppb?
 ppb*	at pci?
+ebus*	at mainbus0
 ebus*	at pci?
 
 # PCI Ethernet
 lmc*	at pci?			# Lan Media Corp SSI/T3/HSSI
-hme*	at pci?
-gem*	at pci?
+hme*	at pci?			# Sun Happy Meal 10/100
+gem*	at pci?			# Sun GEM 10/100/Gigabit
+cas*	at pci?			# Sun Cassini 100/Gigabit
 ti*	at pci?			# Alteon Tigon 1Gb ethernet
 skc*	at pci?			# SysKonnect GEnesis 984x
 sk*	at skc?			#  each port of above
@@ -67,11 +68,12 @@ stge*	at pci?			# Sundance TC9021 GigE
 rl*	at pci?			# RealTek 81[23]9 ethernet
 vr*	at pci?			# VIA Rhine ethernet
 re*	at pci?			# RealTek 8169/8169S/8110S
-musycc*	at pci?			# Conexant HDLC controller
+musycc* at pci?			# Conexant HDLC controller
 art*	at musycc?		# Accoom Artery E1/T1 cards
 
 pgt*	at pci?			# Prism54 (only full-mac varients)
 acx*	at pci?			# TI ACX100/ACX111 (802.11b/g)
+ral*	at pci?			# Ralink RT2500/RT2501/RT2600
 
 # PCI SCSI
 ahc*	at pci?			# Adaptec 2940 SCSI controllers
@@ -86,6 +88,8 @@ mpi*	at pci?			# LSI Logic Fusion MPT Message Passing Interface
 scsibus* at mpi?
 arc*	at pci?			# Areca RAID Controllers
 scsibus* at arc?
+sili*	at pci?			# Silicon Image 3124/3132/3531 SATA controllers
+scsibus* at sili?
 
 # PCI crypto
 hifn*	at pci?			# Hifn 7751/7811/7951
@@ -227,8 +231,11 @@ wsmouse* at pmsi?			#   generic mouse
 audioce*	at ebus?		# ebus cs4231
 
 # parallel ports
+bpp*	at sbus?
 lpt*	at ebus?
 
+bbc*	at ebus?
+pmc*	at ebus?
 ppm*	at ebus?
 
 # performance counters
@@ -237,6 +244,7 @@ uperf*	at sbus?
 
 ## PROM console driver -- if all else fails
 pcons0	at mainbus0			# PROM console
+wsdisplay* at pcons?
 
 ## Mostek/DS1287 clocks
 clock*	at sbus?
@@ -337,8 +345,8 @@ ukphy*	at mii?				# Unknown PHYs
 # sensors
 pcfiic*	at ebus?
 iic*	at pcfiic?
-#alipm*	at pci?
-#iic*	at alipm?
+alipm*	at pci? disable
+iic*	at alipm?
 mbg*	at pci?				# Meinberg Funkuhren radio clocks
 
 adc*	at iic?				# Analog Devices AD7416/AD7417/7418
@@ -407,6 +415,7 @@ fd*	at fdc?
 # 1-Wire devices
 option ONEWIREVERBOSE
 owid*	at onewire?			# ID
+owsbm*	at onewire?			# Smart Battery Monitor
 owtemp* at onewire?			# Temperature
 
 pseudo-device	hotplug	1		# devices hot plugging

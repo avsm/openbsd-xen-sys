@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_ether.c,v 1.64 2006/06/16 16:49:40 henning Exp $	*/
+/*	$OpenBSD: if_ether.c,v 1.67 2007/03/18 23:23:17 mpf Exp $	*/
 /*	$NetBSD: if_ether.c,v 1.31 1996/05/11 12:59:58 mycroft Exp $	*/
 
 /*
@@ -385,14 +385,20 @@ arpresolve(ac, rt, m, dst, desten)
 		ETHER_MAP_IP_MULTICAST(&SIN(dst)->sin_addr, desten);
 		return (1);
 	}
-	if (rt)
+	if (rt) {
 		la = (struct llinfo_arp *)rt->rt_llinfo;
-	else {
+		if (la == NULL)
+			log(LOG_DEBUG, "arpresolve: %s: route without link "
+			    "local address\n", inet_ntoa(SIN(dst)->sin_addr));
+	} else {
 		if ((la = arplookup(SIN(dst)->sin_addr.s_addr, 1, 0)) != NULL)
 			rt = la->la_rt;
+		else
+			log(LOG_DEBUG,
+			    "arpresolve: %s: can't allocate llinfo\n",
+			    inet_ntoa(SIN(dst)->sin_addr));
 	}
 	if (la == 0 || rt == 0) {
-		log(LOG_DEBUG, "arpresolve: can't allocate llinfo\n");
 		m_freem(m);
 		return (0);
 	}
@@ -720,7 +726,14 @@ reply:
 	ea->arp_pro = htons(ETHERTYPE_IP); /* let's be sure! */
 	eh = (struct ether_header *)sa.sa_data;
 	bcopy(ea->arp_tha, eh->ether_dhost, sizeof(eh->ether_dhost));
-	bcopy(enaddr, eh->ether_shost, sizeof(eh->ether_shost));
+#if NCARP > 0
+	if (ac->ac_if.if_type == IFT_CARP && ac->ac_if.if_flags & IFF_LINK1)
+		bcopy(((struct arpcom *)ac->ac_if.if_carpdev)->ac_enaddr,
+		    eh->ether_shost, sizeof(eh->ether_shost));
+	else
+#endif
+		bcopy(enaddr, eh->ether_shost, sizeof(eh->ether_shost));
+
 	eh->ether_type = htons(ETHERTYPE_ARP);
 	sa.sa_family = pseudo_AF_HDRCMPLT;
 	sa.sa_len = sizeof(sa);
@@ -773,9 +786,6 @@ arplookup(addr, create, proxy)
 	if ((rt->rt_flags & RTF_GATEWAY) || (rt->rt_flags & RTF_LLINFO) == 0 ||
 	    rt->rt_gateway->sa_family != AF_LINK) {
 		if (create) {
-			log(LOG_DEBUG,
-			    "arplookup: unable to enter address for %s\n",
-			    inet_ntoa(sin.sin_addr));
 			if (rt->rt_refcnt <= 0 &&
 			    (rt->rt_flags & RTF_CLONED) != 0) {
 				rtrequest(RTM_DELETE,

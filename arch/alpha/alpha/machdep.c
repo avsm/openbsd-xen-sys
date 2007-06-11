@@ -1,4 +1,4 @@
-/* $OpenBSD: machdep.c,v 1.102 2006/06/20 14:06:01 deraadt Exp $ */
+/* $OpenBSD: machdep.c,v 1.104 2007/02/26 21:30:16 miod Exp $ */
 /* $NetBSD: machdep.c,v 1.210 2000/06/01 17:12:38 thorpej Exp $ */
 
 /*-
@@ -498,7 +498,7 @@ nobootinfo:
 				mem_clusters[mem_cluster_cnt].size |=
 				    VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE;
 			mem_cluster_cnt++;
-		}
+		} /* XXX else print something! */
 
 		if (memc->mddt_usage & MDDT_mbz) {
 			mddtweird = 1;
@@ -1844,6 +1844,8 @@ setregs(p, pack, stack, retval)
 #endif
 	if (p->p_addr->u_pcb.pcb_fpcpu != NULL)
 		fpusave_proc(p, 0);
+
+	retval[1] = 0;
 }
 
 /*
@@ -1853,9 +1855,6 @@ void
 fpusave_cpu(struct cpu_info *ci, int save)
 {
 	struct proc *p;
-#if defined(MULTIPROCESSOR)
-	int s;
-#endif
 
 	KDASSERT(ci == curcpu());
 
@@ -1894,7 +1893,7 @@ fpusave_proc(struct proc *p, int save)
 	struct cpu_info *oci;
 #if defined(MULTIPROCESSOR)
 	u_long ipi = save ? ALPHA_IPI_SYNCH_FPU : ALPHA_IPI_DISCARD_FPU;
-	int s, spincount;
+	int spincount;
 #endif
 
 	KDASSERT(p->p_addr != NULL);

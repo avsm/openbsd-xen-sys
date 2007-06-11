@@ -1,4 +1,4 @@
-/*	$OpenBSD: udf_vnops.c,v 1.20 2006/07/09 04:23:09 pedro Exp $	*/
+/*	$OpenBSD: udf_vnops.c,v 1.23 2007/03/25 18:38:20 thib Exp $	*/
 
 /*
  * Copyright (c) 2001, 2002 Scott Long <scottl@freebsd.org>
@@ -84,7 +84,7 @@ struct vnodeopv_desc udf_vnodeop_opv_desc =
 
 #define UDF_INVALID_BMAP	-1
 
-/* Look up a unode based on the ino_t passed in and return it's vnode */
+/* Look up a unode based on the ino_t passed in and return its vnode */
 int
 udf_hashlookup(struct umount *ump, ino_t id, int flags, struct vnode **vpp)
 {
@@ -106,7 +106,7 @@ loop:
 	LIST_FOREACH(up, lh, u_le) {
 		if (up->u_ino == id) {
 			mtx_leave(&ump->um_hashmtx);
-			error = vget(up->u_vnode, flags | LK_INTERLOCK, p);
+			error = vget(up->u_vnode, flags, p);
 			if (error == ENOENT)
 				goto loop;
 			if (error)
@@ -911,7 +911,7 @@ udf_lock(void *v)
 
 	struct vnode *vp = ap->a_vp;
 
-	return (lockmgr(&VTOU(vp)->u_lock, ap->a_flags, &vp->v_interlock));
+	return (lockmgr(&VTOU(vp)->u_lock, ap->a_flags, NULL));
 }
 
 int
@@ -925,8 +925,7 @@ udf_unlock(void *v)
 
 	struct vnode *vp = ap->a_vp;
 
-	return (lockmgr(&VTOU(vp)->u_lock, ap->a_flags | LK_RELEASE,
-	    &vp->v_interlock));
+	return (lockmgr(&VTOU(vp)->u_lock, ap->a_flags | LK_RELEASE, NULL));
 }
 
 int

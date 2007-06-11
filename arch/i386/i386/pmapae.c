@@ -1,4 +1,4 @@
-/*	$OpenBSD: pmapae.c,v 1.5 2006/08/25 13:04:16 mickey Exp $	*/
+/*	$OpenBSD: pmapae.c,v 1.10 2007/04/04 17:44:45 art Exp $	*/
 
 /*
  * Copyright (c) 2006 Michael Shalayeff
@@ -397,21 +397,6 @@
  *
  * we have the following locks that we must contend with:
  *
- * "normal" locks:
- *
- *  - pmap_main_lock
- *    this lock is used to prevent deadlock and/or provide mutex
- *    access to the pmap system.   most operations lock the pmap
- *    structure first, then they lock the pv_lists (if needed).
- *    however, some operations such as pmap_page_protect lock
- *    the pv_lists and then lock pmaps.   in order to prevent a
- *    cycle, we require a mutex lock when locking the pv_lists
- *    first.   thus, the "pmap = >pv_list" lockers must gain a
- *    read-lock on pmap_main_lock before locking the pmap.   and
- *    the "pv_list => pmap" lockers must gain a write-lock on
- *    pmap_main_lock before locking.    since only one thread
- *    can write-lock a lock at a time, this provides mutex.
- *
  * "simple" locks:
  *
  * - pmap lock (per pmap, part of uvm_object)
@@ -440,29 +425,11 @@
  * locking data structures
  */
 
-#if defined(MULTIPROCESSOR) && 0
-
-extern struct lock pmap_main_lock;
-
-#define PMAP_MAP_TO_HEAD_LOCK() \
-     spinlockmgr(&pmap_main_lock, LK_SHARED, (void *) 0)
-#define PMAP_MAP_TO_HEAD_UNLOCK() \
-     spinlockmgr(&pmap_main_lock, LK_RELEASE, (void *) 0)
-
-#define PMAP_HEAD_TO_MAP_LOCK() \
-     spinlockmgr(&pmap_main_lock, LK_EXCLUSIVE, (void *) 0)
-#define PMAP_HEAD_TO_MAP_UNLOCK() \
-     spinlockmgr(&pmap_main_lock, LK_RELEASE, (void *) 0)
-
-#else
-
 #define PMAP_MAP_TO_HEAD_LOCK()		/* null */
 #define PMAP_MAP_TO_HEAD_UNLOCK()	/* null */
 
 #define PMAP_HEAD_TO_MAP_LOCK()		/* null */
 #define PMAP_HEAD_TO_MAP_UNLOCK()	/* null */
-
-#endif
 
 #define	PG_FRAME	0xffffff000ULL	/* page frame mask */
 #define	PG_LGFRAME	0xfffe00000ULL	/* large (2M) page frame mask */
@@ -584,7 +551,6 @@ extern caddr_t pmap_csrcp, pmap_cdstp, pmap_zerop, pmap_ptpp;
 
 extern int pmap_pg_g;
 extern struct pmap_head pmaps;
-extern struct pmap *pmaps_hand;
 
 /*
  * a towards larger memory prioritised version opf uvm_pagealloc()
@@ -608,7 +574,6 @@ void		 pmap_remove_ptes_pae(struct pmap *, struct vm_page *,
 boolean_t	 pmap_remove_pte_pae(struct pmap *, struct vm_page *,
 		     pt_entry_t *, vaddr_t, int32_t *);
 void		 pmap_unmap_ptes_pae(struct pmap *);
-struct vm_page	*pmap_steal_ptp_pae(struct uvm_object *, vaddr_t);
 vaddr_t		 pmap_tmpmap_pa_pae(paddr_t);
 pt_entry_t	*pmap_tmpmap_pvepte_pae(struct pv_entry *);
 void		 pmap_tmpunmap_pa_pae(void);
@@ -1014,130 +979,16 @@ pmap_alloc_ptp_pae(struct pmap *pmap, int pde_index, boolean_t just_try)
 
 	ptp = pae_pagealloc(&pmap->pm_obj, ptp_i2o(pde_index), NULL,
 			    UVM_PGA_USERESERVE|UVM_PGA_ZERO);
-	if (ptp == NULL) {
-		if (just_try)
-			return(NULL);
-		ptp = pmap_steal_ptp_pae(&pmap->pm_obj, ptp_i2o(pde_index));
-		if (ptp == NULL) {
-			return (NULL);
-		}
-		/* stole one; zero it. */
-		pmap_zero_page(ptp);
-	}
+	if (ptp == NULL)
+		return(NULL);
 
 	/* got one! */
-	ptp->flags &= ~PG_BUSY;	/* never busy */
+	atomic_clearbits_int(&ptp->pg_flags, PG_BUSY);
 	ptp->wire_count = 1;	/* no mappings yet */
 	PDE(pmap, pde_index) =
 	    (pd_entry_t)(VM_PAGE_TO_PHYS(ptp) | PG_u | PG_RW | PG_V);
 	pmap->pm_stats.resident_count++;	/* count PTP as resident */
 	pmap->pm_ptphint = ptp;
-	return(ptp);
-}
-
-/*
- * pmap_steal_ptp: steal a PTP from any pmap that we can access
- *
- * => obj is locked by caller.
- * => we can throw away mappings at this level (except in the kernel's pmap)
- * => stolen PTP is placed in <obj,offset> pmap
- * => we lock pv_head's
- * => hopefully, this function will be seldom used [much better to have
- *	enough free pages around for us to allocate off the free page list]
- */
-
-struct vm_page *
-pmap_steal_ptp_pae(struct uvm_object *obj, vaddr_t offset)
-{
-	struct vm_page *ptp = NULL;
-	struct pmap *firstpmap;
-	struct uvm_object *curobj;
-	pt_entry_t *ptes;
-	int idx, lcv;
-	boolean_t caller_locked, we_locked;
-	int32_t cpumask = 0;
-
-	simple_lock(&pmaps_lock);
-	if (pmaps_hand == NULL)
-		pmaps_hand = LIST_FIRST(&pmaps);
-	firstpmap = pmaps_hand;
-
-	do { /* while we haven't looped back around to firstpmap */
-
-		curobj = &pmaps_hand->pm_obj;
-		we_locked = FALSE;
-		caller_locked = (curobj == obj);
-		if (!caller_locked) {
-			we_locked = simple_lock_try(&curobj->vmobjlock);
-		}
-		if (caller_locked || we_locked) {
-			TAILQ_FOREACH(ptp, &curobj->memq, listq) {
-
-				/*
-				 * might have found a PTP we can steal
-				 * (unless it has wired pages).
-				 */
-
-				idx = ptp_o2i(ptp->offset);
-#ifdef DIAGNOSTIC
-				if (VM_PAGE_TO_PHYS(ptp) !=
-				    (PDE(pmaps_hand, idx) & PG_FRAME))
-					panic("pmap_steal_ptp: PTP mismatch!");
-#endif
-
-				ptes = (pt_entry_t *)
-				    pmap_tmpmap_pa_pae(VM_PAGE_TO_PHYS(ptp));
-				for (lcv = 0 ; lcv < PTES_PER_PTP ; lcv++)
-					if ((ptes[lcv] & (PG_V|PG_W)) ==
-					    (PG_V|PG_W))
-						break;
-				if (lcv == PTES_PER_PTP)
-					pmap_remove_ptes_pae(pmaps_hand, ptp,
-					    (vaddr_t)ptes, ptp_i2v(idx),
-					    ptp_i2v(idx+1), &cpumask);
-				pmap_tmpunmap_pa_pae();
-
-				if (lcv != PTES_PER_PTP)
-					/* wired, try next PTP */
-					continue;
-
-				/*
-				 * got it!!!
-				 */
-
-				PDE(pmaps_hand, idx) = 0;	/* zap! */
-				pmaps_hand->pm_stats.resident_count--;
-#ifdef MULTIPROCESSOR
-				pmap_apte_flush(pmaps_hand);
-#else
-				if (pmap_is_curpmap(pmaps_hand))
-					pmap_apte_flush(pmaps_hand);
-				else if (pmap_valid_entry(*APDP_PDE) &&
-				    (*APDP_PDE & PG_FRAME) ==
-				    pmaps_hand->pm_pdidx[0])
-					pmap_update_pg(((vaddr_t)APTE_BASE) +
-						       ptp->offset);
-#endif
-
-				/* put it in our pmap! */
-				uvm_pagerealloc(ptp, obj, offset);
-				break;	/* break out of "for" loop */
-			}
-			if (we_locked) {
-				simple_unlock(&curobj->vmobjlock);
-			}
-		}
-
-		/* advance the pmaps_hand */
-		pmaps_hand = LIST_NEXT(pmaps_hand, pm_list);
-		if (pmaps_hand == NULL) {
-			pmaps_hand = LIST_FIRST(&pmaps);
-		}
-
-	} while (ptp == NULL && pmaps_hand != firstpmap);
-
-	simple_unlock(&pmaps_lock);
-	pmap_tlb_shootnow(cpumask);
 	return(ptp);
 }
 
@@ -1171,7 +1022,7 @@ pmap_get_ptp_pae(struct pmap *pmap, int pde_index, boolean_t just_try)
 	}
 
 	/* allocate a new PTP (updates ptphint) */
-	return(pmap_alloc_ptp_pae(pmap, pde_index, just_try));
+	return (pmap_alloc_ptp_pae(pmap, pde_index, just_try));
 }
 
 /*
@@ -2125,7 +1976,7 @@ pmap_enter_pae(struct pmap *pmap, vaddr_t va, paddr_t pa, vm_prot_t prot,
 		ptp = pmap_get_ptp_pae(pmap, pdei(va), FALSE);
 		if (ptp == NULL) {
 			if (flags & PMAP_CANFAIL) {
-				error = KERN_RESOURCE_SHORTAGE;
+				error = ENOMEM;
 				goto out;
 			}
 			panic("pmap_enter: get ptp failed");
@@ -2226,7 +2077,7 @@ pmap_enter_pae(struct pmap *pmap, vaddr_t va, paddr_t pa, vm_prot_t prot,
 			pve = pmap_alloc_pv(pmap, ALLOCPV_NEED);
 			if (pve == NULL) {
 				if (flags & PMAP_CANFAIL) {
-					error = KERN_RESOURCE_SHORTAGE;
+					error = ENOMEM;
 					goto out;
 				}
 				panic("pmap_enter: no pv entries available");
@@ -2338,9 +2189,8 @@ pmap_growkernel_pae(vaddr_t maxkvaddr)
 		 * INVOKED WHILE pmap_init() IS RUNNING!
 		 */
 
-		if (pmap_alloc_ptp_pae(kpm, PDSLOT_KERN + nkpde, FALSE) == NULL) {
-			panic("pmap_growkernel: alloc ptp failed");
-		}
+		while (!pmap_alloc_ptp_pae(kpm, PDSLOT_KERN + nkpde, FALSE))
+			uvm_wait("pmap_growkernel");
 
 		/* PG_u not for kernel */
 		PDE(kpm, PDSLOT_KERN + nkpde) &= ~PG_u;

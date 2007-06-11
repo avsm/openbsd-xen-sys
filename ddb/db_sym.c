@@ -148,9 +148,11 @@ ddb_init(void)
 		return;
 	}
 
+	printf("%s: xssym %p xesym %p\n", __func__, xssym, xesym);
 	if (xesym != NULL && xesym != xssym)
 		for (symf = db_symformats; *symf != NULL; symf++) {
 			db_symformat = *symf;
+			printf("%s: calling X_db_sym_init\n", __func__);
 			if (X_db_sym_init((vaddr_t)xesym - (vaddr_t)xssym,
 			    xssym, xesym, name) == TRUE)
 			return;

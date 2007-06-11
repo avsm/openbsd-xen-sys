@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_xgereg.h,v 1.1 2006/05/01 00:34:12 brad Exp $	*/
+/*	$OpenBSD: if_xgereg.h,v 1.3 2007/02/27 22:18:53 kettenis Exp $	*/
 /*	$NetBSD: if_xgereg.h,v 1.1 2005/09/09 10:30:27 ragge Exp $	*/
 
 /*
@@ -235,6 +235,9 @@ struct txd {
 #define	TXD_CTL2_CIPv4	(1ULL << 58)	/* Calculate IPv4 header checksum */
 #define	TXD_CTL2_CTCP	(1ULL << 57)	/* Calculate TCP checksum */
 #define	TXD_CTL2_CUDP	(1ULL << 56)	/* Calculate UDP checksum */
+#define	TXD_CTL2_VLANE	(1ULL << 48)	/* Enable VLAN tag insertion */
+#define	TXD_CTL2_VLANT(x) ((uint64_t)(x) << 32)
+
 /*
  * Receive DMA registers
  */
@@ -276,6 +279,12 @@ struct txd {
 #define	 RX_UFC_C(x)		((uint64_t)(x) << 16)
 #define	 RX_UFC_D(x)		((uint64_t)(x) << 0)
 #define	RX_PA_CFG		RDMAB(0x1d0)
+#define	 IGNORE_FRAME_ERROR	(1ULL << 62)
+#define	 IGNORE_SNAP_OUI	(1ULL << 61)
+#define	 IGNORE_LLC_CTRL	(1ULL << 60)
+#define	 SCATTER_MODE		(1ULL << 57)
+#define	 STRIP_VLAN_TAG		(1ULL << 48)
+
 /*
  * Receive descriptor (RxD) format.
  * There are three formats of receive descriptors, 1, 3 and 5 buffer format.

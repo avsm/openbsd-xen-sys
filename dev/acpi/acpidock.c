@@ -1,4 +1,4 @@
-/* $OpenBSD: acpidock.c,v 1.12 2007/01/27 16:39:56 mk Exp $ */
+/* $OpenBSD: acpidock.c,v 1.17 2007/02/15 21:02:17 mk Exp $ */
 /*
  * Copyright (c) 2006,2007 Michael Knudsen <mk@openbsd.org>
  *
@@ -43,7 +43,7 @@ struct cfdriver acpidock_cd = {
 
 int	acpidock_docklock(struct acpidock_softc *, int);
 int	acpidock_dockctl(struct acpidock_softc *, int);
-int	acpidock_eject(struct acpidock_softc *);
+int	acpidock_eject(struct acpidock_softc *, struct aml_node *);
 int	acpidock_notify(struct aml_node *, int, void *);
 int	acpidock_status(struct acpidock_softc *);
 
@@ -89,12 +89,17 @@ acpidock_attach(struct device *parent, struct device *self, void *aux)
 
 	strlcpy(sc->sc_sensdev.xname, DEVNAME(sc),
 	    sizeof(sc->sc_sensdev.xname));
-	strlcpy(sc->sc_sens[0].desc, "docking station",
-	    sizeof(sc->sc_sens[0].desc));
+	if (sc->sc_docked)
+		strlcpy(sc->sc_sens[0].desc, "docked",
+		    sizeof(sc->sc_sens[0].desc));
+	else
+		strlcpy(sc->sc_sens[0].desc, "not docked",
+		    sizeof(sc->sc_sens[0].desc));
+
 	sc->sc_sens[0].type = SENSOR_INDICATOR;
+	sc->sc_sens[0].value = sc->sc_docked == ACPIDOCK_STATUS_DOCKED;
 	sensor_attach(&sc->sc_sensdev, &sc->sc_sens[0]);
 	sensordev_install(&sc->sc_sensdev);
-	sc->sc_sens[0].value = sc->sc_docked == ACPIDOCK_STATUS_DOCKED;
 
 	aml_register_notify(sc->sc_devnode->parent, aa->aaa_dev, 
 	    acpidock_notify, sc, ACPIDEV_NOPOLL);
@@ -107,8 +112,6 @@ acpidock_status(struct acpidock_softc *sc)
 	struct aml_value	res;
 	int			rv, sta;
 
-	memset(&res, 0, sizeof res);
-	/* XXX: wrong */
 	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_STA", 0, NULL,
 	    &res) != 0)
 		rv = 0;
@@ -131,26 +134,25 @@ acpidock_docklock(struct acpidock_softc *sc, int lock)
 {
 	struct aml_value	cmd;
 	struct aml_value	res;
+	int rv;
 
 	memset(&cmd, 0, sizeof cmd);
 	cmd.v_integer = lock;
-#if 1
 	cmd.type = AML_OBJTYPE_INTEGER;
-#endif
-	memset(&res, 0, sizeof res);
 	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_LCK", 1, &cmd,
 	    &res) != 0) {
-		dnprintf(20, "%s: _LCD %d failed\n", DEVNAME(sc), lock);
+		dnprintf(20, "%s: _LCK %d failed\n", DEVNAME(sc), lock);
 
-		aml_freevalue(&res);
-		return (0);
+		rv = 0;
 	} else {
 		dnprintf(20, "%s: _LCK %d successful\n", DEVNAME(sc), lock);
 
-		aml_freevalue(&res);
-		return (1);
+		rv = 1;
 	}
 
+	aml_freevalue(&res);
+
+	return rv;
 }
 
 int
@@ -158,57 +160,53 @@ acpidock_dockctl(struct acpidock_softc *sc, int dock)
 {
 	struct aml_value	cmd;
 	struct aml_value	res;
+	int rv;
 
 	memset(&cmd, 0, sizeof cmd);
 	cmd.v_integer = 1;
 	cmd.type = AML_OBJTYPE_INTEGER;
-	memset(&res, 0, sizeof res);
-
 	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_DCK", 1, &cmd,
 	    &res) != 0) {
 		/* XXX */
 		dnprintf(15, "%s: _DCK %d failed\n", DEVNAME(sc), dock);
 
-		sc->sc_docked = 0;
-
-		aml_freevalue(&res);
-		return (0);
+		rv = 0;
 	} else {
 		dnprintf(15, "%s: _DCK %d successful\n", DEVNAME(sc), dock);
 
-		sc->sc_docked = 1;
-		aml_freevalue(&res);
-		return (1);
+		rv = 1;
 	}
 
+	aml_freevalue(&res);
+
+	return rv;
 }
 
 int
-acpidock_eject(struct acpidock_softc *sc)
+acpidock_eject(struct acpidock_softc *sc, struct aml_node *node)
 {
 	struct aml_value	cmd;
 	struct aml_value	res;
+	int rv;
 
 	memset(&cmd, 0, sizeof cmd);
 	cmd.v_integer = 1;
 	cmd.type = AML_OBJTYPE_INTEGER;
-
-	memset(&res, 0, sizeof res);
-	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, "_EJ0", 1, &cmd,
+	if (aml_evalname(sc->sc_acpi, node, "_EJ0", 1, &cmd,
 	    &res) != 0) {
 		/* XXX */
 		dnprintf(15, "%s: _EJ0 failed\n", DEVNAME(sc));
 
-		aml_freevalue(&res);
-		return (0);
+		rv = 0;
 	} else {
 		dnprintf(15, "%s: _EJ0 successful\n", DEVNAME(sc));
 
-		sc->sc_docked = 0;
-		aml_freevalue(&res);
-		return (1);
+		rv = 1;
 	}
 
+	aml_freevalue(&res);
+
+	return rv;
 }
 
 int
@@ -229,13 +227,20 @@ acpidock_notify(struct aml_node *node, int notify_type, void *arg)
 		acpidock_docklock(sc, 0);
 
 		/* now actually undock */
-		acpidock_eject(sc);
+		acpidock_eject(sc, sc->sc_devnode);
 		
 		break;
 	}
 
 	acpidock_status(sc);
 	sc->sc_sens[0].value = sc->sc_docked == ACPIDOCK_STATUS_DOCKED;
+	if (sc->sc_docked)
+		strlcpy(sc->sc_sens[0].desc, "docked",
+		    sizeof(sc->sc_sens[0].desc));
+	else
+		strlcpy(sc->sc_sens[0].desc, "not docked",
+		    sizeof(sc->sc_sens[0].desc));
+
 	dnprintf(5, "acpidock_notify: status %s\n",
 	    sc->sc_docked == ACPIDOCK_STATUS_DOCKED ? "docked" : "undocked");
 

@@ -1,6 +1,22 @@
-/*	$OpenBSD: sh_machdep.c,v 1.6 2006/11/09 00:12:12 deraadt Exp $	*/
+/*	$OpenBSD: sh_machdep.c,v 1.10 2007/03/03 21:37:27 miod Exp $	*/
 /*	$NetBSD: sh3_machdep.c,v 1.59 2006/03/04 01:13:36 uwe Exp $	*/
 
+/*
+ * Copyright (c) 2007 Miodrag Vallat.
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice, this permission notice, and the disclaimer below
+ * appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
 /*-
  * Copyright (c) 1996, 1997, 1998, 2002 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -37,7 +53,6 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-
 /*-
  * Copyright (c) 1982, 1987, 1990 The Regents of the University of California.
  * All rights reserved.
@@ -86,6 +101,10 @@
 #include <sys/user.h>
 #include <sys/sched.h>
 #include <sys/msg.h>
+#include <sys/conf.h>
+#include <sys/core.h>
+#include <sys/kcore.h>
+#include <sys/reboot.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -97,6 +116,7 @@
 #include <sh/mmu.h>
 #include <sh/trap.h>
 #include <sh/intr.h>
+#include <sh/kcore.h>
 
 #ifdef  NBUF
 int	nbuf = NBUF;
@@ -128,7 +148,7 @@ struct user *proc0paddr;	/* init_main.c use this. */
 struct pcb *curpcb;
 struct md_upte *curupte;	/* SH3 wired u-area hack */
 
-#define	VBR	(uint8_t *)SH3_PHYS_TO_P1SEG(IOM_RAM_BEGIN)
+#define	VBR	(u_int8_t *)SH3_PHYS_TO_P1SEG(IOM_RAM_BEGIN)
 vaddr_t ram_start = SH3_PHYS_TO_P1SEG(IOM_RAM_BEGIN);
 /* exception handler holder (sh/sh/vectors.S) */
 extern char sh_vector_generic[], sh_vector_generic_end[];
@@ -145,9 +165,10 @@ caddr_t allocsys(caddr_t);
 /*
  * These variables are needed by /sbin/savecore
  */
-uint32_t dumpmag = 0x8fca0101;	/* magic number */
-int dumpsize;			/* pages */
+u_int32_t dumpmag = 0x8fca0101;	/* magic number */
+u_int dumpsize;			/* pages */
 long dumplo;	 		/* blocks */
+cpu_kcore_hdr_t cpu_kcore_hdr;
 
 int kbd_reset;
 
@@ -355,6 +376,14 @@ sh_startup()
 	    ptoa(uvmexp.free) / 1024);
 	printf("using %d buffers containing %u bytes (%uK) of memory\n",
 	    nbuf, bufpages * PAGE_SIZE, bufpages * PAGE_SIZE / 1024);
+
+	if (boothowto & RB_CONFIG) {
+#ifdef BOOT_CONFIG
+		user_config();
+#else
+		printf("kernel does not support -c; continuing..\n");
+#endif 
+	}
 }
 
 /*
@@ -409,9 +438,147 @@ allocsys(caddr_t v)
 }
 
 void
+dumpconf()
+{
+	cpu_kcore_hdr_t *h = &cpu_kcore_hdr;
+	u_int dumpextra, totaldumpsize;		/* in disk blocks */
+	u_int seg, nblks;
+	int maj;
+
+	if (dumpdev == NODEV)
+		return;
+
+	maj = major(dumpdev);
+	if (maj < 0 || maj >= nblkdev) {
+		printf("dumpconf: bad dumpdev=0x%x\n", dumpdev);
+		dumpdev = NODEV;
+		return;
+	}
+	if (bdevsw[maj].d_psize == NULL)
+		return;
+	nblks = (u_int)(*bdevsw[maj].d_psize)(dumpdev);
+	if (nblks <= btodb(1U))
+		return;
+
+	dumpsize = 0;
+	for (seg = 0; seg < h->kcore_nsegs; seg++)
+		dumpsize += atop(h->kcore_segs[seg].size);
+	dumpextra = cpu_dumpsize();
+
+	/* Always skip the first block, in case there is a label there. */
+	if (dumplo < btodb(1));
+		dumplo = btodb(1);
+
+	/* Put dump at the end of the partition, and make it fit. */
+	totaldumpsize = ctod(dumpsize) + dumpextra;
+	if (totaldumpsize > nblks - dumplo) {
+		totaldumpsize = dbtob(nblks - dumplo);
+		dumpsize = dtoc(totaldumpsize - dumpextra);
+	}
+	if (dumplo < nblks - totaldumpsize)
+		dumplo = nblks - totaldumpsize;
+}
+
+void
 dumpsys()
 {
-	/* TODO */
+	cpu_kcore_hdr_t *h = &cpu_kcore_hdr;
+	daddr_t blkno;
+	int (*dump)(dev_t, daddr_t, caddr_t, size_t);
+	u_int page = 0;
+	paddr_t dumppa;
+	u_int seg;
+	int rc;
+	extern int msgbufmapped;
+
+	/* Don't record dump messages in msgbuf. */
+	msgbufmapped = 0;
+
+	/* Make sure dump settings are valid. */
+	if (dumpdev == NODEV)
+		return;
+	if (dumpsize == 0) {
+		dumpconf();
+		if (dumpsize == 0)
+			return;
+	}
+	if (dumplo <= 0) {
+		printf("\ndump to dev 0x%x not possible, not enough space\n",
+		    dumpdev);
+		return;
+	}
+
+	dump = bdevsw[major(dumpdev)].d_dump;
+	blkno = dumplo;
+
+	printf("\ndumping to dev 0x%x offset %ld\n", dumpdev, dumplo);
+
+	printf("dump ");
+
+	/* Write dump header */
+	rc = cpu_dump(dump, &blkno);
+	if (rc != 0)
+		goto bad;
+
+	for (seg = 0; seg < h->kcore_nsegs; seg++) {
+		u_int pagesleft;
+
+		pagesleft = atop(h->kcore_segs[seg].size);
+		dumppa = (paddr_t)h->kcore_segs[seg].start;
+
+		while (pagesleft != 0) {
+			u_int npages;
+
+#define	NPGMB	atop(1024 * 1024)
+			if (page != 0 && (page % NPGMB) == 0)
+				printf("%u ", page / NPGMB);
+
+			/* do not dump more than 1MB at once */
+			npages = min(pagesleft, NPGMB);
+#undef NPGMB
+			npages = min(npages, dumpsize);
+
+			rc = (*dump)(dumpdev, blkno,
+			    (caddr_t)SH3_PHYS_TO_P2SEG(dumppa), ptoa(npages));
+			if (rc != 0)
+				goto bad;
+
+			pagesleft -= npages;
+			dumppa += ptoa(npages);
+			page += npages;
+			dumpsize -= npages;
+			if (dumpsize == 0)
+				goto bad;	/* if truncated dump */
+			blkno += ctod(npages);
+		}
+	}
+bad:
+	switch (rc) {
+	case 0:
+		printf("succeeded\n");
+		break;
+	case ENXIO:
+		printf("device bad\n");
+		break;
+	case EFAULT:
+		printf("device not ready\n");
+		break;
+	case EINVAL:
+		printf("area improper\n");
+		break;
+	case EIO:
+		printf("I/O error\n");
+		break;
+	case EINTR:
+		printf("aborted\n");
+		break;
+	default:
+		printf("error %d\n", rc);
+		break;
+	}
+
+	/* make sure console can output our last message */
+	delay(1 * 1000 * 1000);
 }
 
 /*
@@ -461,30 +628,36 @@ sendsig(sig_t catcher, int sig, int mask, u_long code, int type,
 		sip = NULL;
 
 	/* Save register context. */
-	frame.sf_uc.sc_spc = tf->tf_spc;
-	frame.sf_uc.sc_ssr = tf->tf_ssr;
-	frame.sf_uc.sc_pr = tf->tf_pr;
-	frame.sf_uc.sc_r14 = tf->tf_r14;
-	frame.sf_uc.sc_r13 = tf->tf_r13;
-	frame.sf_uc.sc_r12 = tf->tf_r12;
-	frame.sf_uc.sc_r11 = tf->tf_r11;
-	frame.sf_uc.sc_r10 = tf->tf_r10;
-	frame.sf_uc.sc_r9 = tf->tf_r9;
-	frame.sf_uc.sc_r8 = tf->tf_r8;
-	frame.sf_uc.sc_r7 = tf->tf_r7;
-	frame.sf_uc.sc_r6 = tf->tf_r6;
-	frame.sf_uc.sc_r5 = tf->tf_r5;
-	frame.sf_uc.sc_r4 = tf->tf_r4;
-	frame.sf_uc.sc_r3 = tf->tf_r3;
-	frame.sf_uc.sc_r2 = tf->tf_r2;
-	frame.sf_uc.sc_r1 = tf->tf_r1;
-	frame.sf_uc.sc_r0 = tf->tf_r0;
-	frame.sf_uc.sc_r15 = tf->tf_r15;
+	frame.sf_uc.sc_reg.r_spc = tf->tf_spc;
+	frame.sf_uc.sc_reg.r_ssr = tf->tf_ssr;
+	frame.sf_uc.sc_reg.r_pr = tf->tf_pr;
+	frame.sf_uc.sc_reg.r_mach = tf->tf_mach;
+	frame.sf_uc.sc_reg.r_macl = tf->tf_macl;
+	frame.sf_uc.sc_reg.r_r15 = tf->tf_r15;
+	frame.sf_uc.sc_reg.r_r14 = tf->tf_r14;
+	frame.sf_uc.sc_reg.r_r13 = tf->tf_r13;
+	frame.sf_uc.sc_reg.r_r12 = tf->tf_r12;
+	frame.sf_uc.sc_reg.r_r11 = tf->tf_r11;
+	frame.sf_uc.sc_reg.r_r10 = tf->tf_r10;
+	frame.sf_uc.sc_reg.r_r9 = tf->tf_r9;
+	frame.sf_uc.sc_reg.r_r8 = tf->tf_r8;
+	frame.sf_uc.sc_reg.r_r7 = tf->tf_r7;
+	frame.sf_uc.sc_reg.r_r6 = tf->tf_r6;
+	frame.sf_uc.sc_reg.r_r5 = tf->tf_r5;
+	frame.sf_uc.sc_reg.r_r4 = tf->tf_r4;
+	frame.sf_uc.sc_reg.r_r3 = tf->tf_r3;
+	frame.sf_uc.sc_reg.r_r2 = tf->tf_r2;
+	frame.sf_uc.sc_reg.r_r1 = tf->tf_r1;
+	frame.sf_uc.sc_reg.r_r0 = tf->tf_r0;
+#ifdef SH4
+	if (CPU_IS_SH4)
+		fpu_save(&frame.sf_uc.sc_fpreg);
+#endif
+
 	frame.sf_uc.sc_onstack = onstack;
 	frame.sf_uc.sc_expevt = tf->tf_expevt;
 	/* frame.sf_uc.sc_err = 0; */
 	frame.sf_uc.sc_mask = mask;
-	/* XXX tf_macl, tf_mach not saved */
 
 	if (copyout(&frame, fp, sizeof(frame)) != 0) {
 		/*
@@ -536,29 +709,35 @@ sys_sigreturn(struct proc *p, void *v, register_t *retval)
 	tf = p->p_md.md_regs;
 
 	/* Check for security violations. */
-	if (((context.sc_ssr ^ tf->tf_ssr) & PSL_USERSTATIC) != 0)
+	if (((context.sc_reg.r_ssr ^ tf->tf_ssr) & PSL_USERSTATIC) != 0)
 		return (EINVAL);
 
-	tf->tf_ssr = context.sc_ssr;
+	tf->tf_spc = context.sc_reg.r_spc;
+	tf->tf_ssr = context.sc_reg.r_ssr;
+	tf->tf_macl = context.sc_reg.r_macl;
+	tf->tf_mach = context.sc_reg.r_mach;
+	tf->tf_pr = context.sc_reg.r_pr;
+	tf->tf_r13 = context.sc_reg.r_r13;
+	tf->tf_r12 = context.sc_reg.r_r12;
+	tf->tf_r11 = context.sc_reg.r_r11;
+	tf->tf_r10 = context.sc_reg.r_r10;
+	tf->tf_r9 = context.sc_reg.r_r9;
+	tf->tf_r8 = context.sc_reg.r_r8;
+	tf->tf_r7 = context.sc_reg.r_r7;
+	tf->tf_r6 = context.sc_reg.r_r6;
+	tf->tf_r5 = context.sc_reg.r_r5;
+	tf->tf_r4 = context.sc_reg.r_r4;
+	tf->tf_r3 = context.sc_reg.r_r3;
+	tf->tf_r2 = context.sc_reg.r_r2;
+	tf->tf_r1 = context.sc_reg.r_r1;
+	tf->tf_r0 = context.sc_reg.r_r0;
+	tf->tf_r15 = context.sc_reg.r_r15;
+	tf->tf_r14 = context.sc_reg.r_r14;
 
-	tf->tf_r0 = context.sc_r0;
-	tf->tf_r1 = context.sc_r1;
-	tf->tf_r2 = context.sc_r2;
-	tf->tf_r3 = context.sc_r3;
-	tf->tf_r4 = context.sc_r4;
-	tf->tf_r5 = context.sc_r5;
-	tf->tf_r6 = context.sc_r6;
-	tf->tf_r7 = context.sc_r7;
-	tf->tf_r8 = context.sc_r8;
-	tf->tf_r9 = context.sc_r9;
-	tf->tf_r10 = context.sc_r10;
-	tf->tf_r11 = context.sc_r11;
-	tf->tf_r12 = context.sc_r12;
-	tf->tf_r13 = context.sc_r13;
-	tf->tf_r14 = context.sc_r14;
-	tf->tf_spc = context.sc_spc;
-	tf->tf_r15 = context.sc_r15;
-	tf->tf_pr = context.sc_pr;
+#ifdef SH4
+	if (CPU_IS_SH4)
+		fpu_restore(&context.sc_fpreg);
+#endif
 
 	/* Restore signal stack. */
 	if (context.sc_onstack)
@@ -579,6 +758,7 @@ setregs(struct proc *p, struct exec_package *pack, u_long stack,
     register_t rval[2])
 {
 	struct trapframe *tf;
+	struct pcb *pcb = p->p_md.md_pcb;
 
 	p->p_md.md_flags &= ~MDP_USEDFPU;
 
@@ -602,6 +782,18 @@ setregs(struct proc *p, struct exec_package *pack, u_long stack,
 	tf->tf_spc = pack->ep_entry;
 	tf->tf_ssr = PSL_USERSET;
 	tf->tf_r15 = stack;
+
+#ifdef SH4
+	if (CPU_IS_SH4) {
+		/*
+		 * Clear floating point registers.
+		 */
+		bzero(&pcb->pcb_fp, sizeof(pcb->pcb_fp));
+		fpu_restore(&pcb->pcb_fp);
+	}
+#endif
+
+	rval[1] = 0;
 }
 
 void

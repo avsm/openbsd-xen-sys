@@ -1,4 +1,4 @@
-/*	$OpenBSD: uvm_map.h,v 1.34 2005/11/19 02:18:02 pedro Exp $	*/
+/*	$OpenBSD: uvm_map.h,v 1.37 2007/04/04 18:02:59 art Exp $	*/
 /*	$NetBSD: uvm_map.h,v 1.24 2001/02/18 21:19:08 chs Exp $	*/
 
 /* 
@@ -70,15 +70,9 @@
 #ifndef _UVM_UVM_MAP_H_
 #define _UVM_UVM_MAP_H_
 
-/*
- * uvm_map.h
- */
+#include <sys/rwlock.h>
 
 #ifdef _KERNEL
-
-/*
- * macros
- */
 
 /*
  * UVM_MAP_CLIP_START: ensure that the entry begins at or after
@@ -219,7 +213,7 @@ struct vm_map_entry {
  */
 struct vm_map {
 	struct pmap *		pmap;		/* Physical map */
-	lock_data_t		lock;		/* Lock for map data */
+	struct rwlock		lock;		/* Lock for map data */
 	RB_HEAD(uvm_tree, vm_map_entry) rbhead;	/* Tree for entries */
 	struct vm_map_entry	header;		/* List of entries */
 	int			nentries;	/* Number of entries */
@@ -230,7 +224,6 @@ struct vm_map {
 	simple_lock_data_t	hint_lock;	/* lock for hint storage */
 	vm_map_entry_t		first_free;	/* First free space hint */
 	int			flags;		/* flags */
-	simple_lock_data_t	flags_lock;	/* Lock for flags field */
 	unsigned int		timestamp;	/* Version number */
 #define	min_offset		header.start
 #define max_offset		header.end
@@ -252,9 +245,7 @@ struct vm_map {
 #ifdef _KERNEL
 #define	vm_map_modflags(map, set, clear)				\
 do {									\
-	simple_lock(&(map)->flags_lock);				\
 	(map)->flags = ((map)->flags | (set)) & ~(clear);		\
-	simple_unlock(&(map)->flags_lock);				\
 } while (0)
 #endif /* _KERNEL */
 
@@ -266,34 +257,6 @@ struct vm_map_intrsafe {
 	struct vm_map	vmi_map;
 	LIST_ENTRY(vm_map_intrsafe) vmi_list;
 };
-
-LIST_HEAD(vmi_list, vm_map_intrsafe);
-#ifdef _KERNEL
-extern simple_lock_data_t vmi_list_slock;
-extern struct vmi_list vmi_list;
-
-static __inline int vmi_list_lock(void);
-static __inline void vmi_list_unlock(int);
-
-static __inline int
-vmi_list_lock()
-{
-	int s;
-
-	s = splhigh();
-	simple_lock(&vmi_list_slock);
-	return (s);
-}
-
-static __inline void
-vmi_list_unlock(s)
-	int s;
-{
-
-	simple_unlock(&vmi_list_slock);
-	splx(s);
-}
-#endif /* _KERNEL */
 
 /*
  * handle inline options
@@ -392,21 +355,17 @@ static __inline void vm_map_lock(vm_map_t);
 extern const char vmmapbsy[];
 
 static __inline boolean_t
-vm_map_lock_try(map)
-	vm_map_t map;
+vm_map_lock_try(struct vm_map *map)
 {
 	boolean_t rv;
 
-	if (map->flags & VM_MAP_INTRSAFE)
-		rv = simple_lock_try(&map->lock.lk_interlock);
-	else {
-		simple_lock(&map->flags_lock);
+	if (map->flags & VM_MAP_INTRSAFE) {
+		rv = TRUE;
+	} else {
 		if (map->flags & VM_MAP_BUSY) {
-			simple_unlock(&map->flags_lock);
 			return (FALSE);
 		}
-		rv = (lockmgr(&map->lock, LK_EXCLUSIVE|LK_NOWAIT|LK_INTERLOCK,
-		    &map->flags_lock) == 0);
+		rv = (rw_enter(&map->lock, RW_WRITE|RW_NOSLEEP) == 0);
 	}
 
 	if (rv)
@@ -416,85 +375,50 @@ vm_map_lock_try(map)
 }
 
 static __inline void
-vm_map_lock(map)
-	vm_map_t map;
+vm_map_lock(struct vm_map *map)
 {
-	int error;
-
-	if (map->flags & VM_MAP_INTRSAFE) {
-		simple_lock(&map->lock.lk_interlock);
+	if (map->flags & VM_MAP_INTRSAFE)
 		return;
-	}
 
- try_again:
-	simple_lock(&map->flags_lock);
-	while (map->flags & VM_MAP_BUSY) {
-		map->flags |= VM_MAP_WANTLOCK;
-		ltsleep(&map->flags, PVM, (char *)vmmapbsy, 0, &map->flags_lock);
-	}
+	do {
+		while (map->flags & VM_MAP_BUSY) {
+			map->flags |= VM_MAP_WANTLOCK;
+			tsleep(&map->flags, PVM, (char *)vmmapbsy, 0);
+		}
+	} while (rw_enter(&map->lock, RW_WRITE|RW_SLEEPFAIL) != 0);
 
-	error = lockmgr(&map->lock, LK_EXCLUSIVE|LK_SLEEPFAIL|LK_INTERLOCK,
-	    &map->flags_lock);
-
-	if (error) {
-		goto try_again;
-	}
-
-	(map)->timestamp++;
+	map->timestamp++;
 }
 
-#ifdef DIAGNOSTIC
-#define	vm_map_lock_read(map)						\
-do {									\
-	if (map->flags & VM_MAP_INTRSAFE)				\
-		panic("vm_map_lock_read: intrsafe map");		\
-	(void) lockmgr(&(map)->lock, LK_SHARED, NULL);			\
-} while (0)
-#else
-#define	vm_map_lock_read(map)						\
-	(void) lockmgr(&(map)->lock, LK_SHARED, NULL)
-#endif
+#define	vm_map_lock_read(map) rw_enter_read(&(map)->lock)
 
 #define	vm_map_unlock(map)						\
 do {									\
-	if ((map)->flags & VM_MAP_INTRSAFE)				\
-		simple_unlock(&(map)->lock.lk_interlock);		\
-	else								\
-		(void) lockmgr(&(map)->lock, LK_RELEASE, NULL);		\
+	if (((map)->flags & VM_MAP_INTRSAFE) == 0)			\
+		rw_exit(&(map)->lock);					\
 } while (0)
 
-#define	vm_map_unlock_read(map)						\
-	(void) lockmgr(&(map)->lock, LK_RELEASE, NULL)
+#define	vm_map_unlock_read(map)	rw_exit_read(&(map)->lock)
 
-#define	vm_map_downgrade(map)						\
-	(void) lockmgr(&(map)->lock, LK_DOWNGRADE, NULL)
+#define	vm_map_downgrade(map) rw_enter(&(map)->lock, RW_DOWNGRADE)
 
-#ifdef DIAGNOSTIC
 #define	vm_map_upgrade(map)						\
 do {									\
-	if (lockmgr(&(map)->lock, LK_UPGRADE, NULL) != 0)		\
-		panic("vm_map_upgrade: failed to upgrade lock");	\
+	rw_exit_read(&(map)->lock);					\
+	rw_enter_write(&(map)->lock);					\
 } while (0)
-#else
-#define	vm_map_upgrade(map)						\
-	(void) lockmgr(&(map)->lock, LK_UPGRADE, NULL)
-#endif
 
 #define	vm_map_busy(map)						\
 do {									\
-	simple_lock(&(map)->flags_lock);				\
 	(map)->flags |= VM_MAP_BUSY;					\
-	simple_unlock(&(map)->flags_lock);				\
 } while (0)
 
 #define	vm_map_unbusy(map)						\
 do {									\
 	int oflags;							\
 									\
-	simple_lock(&(map)->flags_lock);				\
 	oflags = (map)->flags;						\
 	(map)->flags &= ~(VM_MAP_BUSY|VM_MAP_WANTLOCK);			\
-	simple_unlock(&(map)->flags_lock);				\
 	if (oflags & VM_MAP_WANTLOCK)					\
 		wakeup(&(map)->flags);					\
 } while (0)

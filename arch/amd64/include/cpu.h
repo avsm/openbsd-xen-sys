@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.h,v 1.22 2006/12/20 22:48:29 gwk Exp $	*/
+/*	$OpenBSD: cpu.h,v 1.25 2007/02/17 17:35:43 tom Exp $	*/
 /*	$NetBSD: cpu.h,v 1.1 2003/04/26 18:39:39 fvdl Exp $	*/
 
 /*-
@@ -227,13 +227,9 @@ extern u_int32_t cpus_attached;
  * buffer pages are invalid.  On the i386, request an ast to send us
  * through trap(), marking the proc as needing a profiling tick.
  */
-#define	need_proftick(p)	((p)->p_flag |= P_OWEUPC, aston(p))
+#define	need_proftick(p)	aston(p)
 
-/*
- * Notify the current process (p) that it has a signal pending,
- * process as soon as possible.
- */
-#define	signotify(p)		aston(p)
+void signotify(struct proc *);
 
 /*
  * We need a machine-independent name for this.
@@ -244,10 +240,6 @@ struct timeval;
 #define DELAY(x)		(*delay_func)(x)
 #define delay(x)		(*delay_func)(x)
 
-
-/*
- * pull in #defines for kinds of processors
- */
 
 #ifdef _KERNEL
 extern int biosbasemem;

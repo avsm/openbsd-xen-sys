@@ -1,4 +1,4 @@
-/*	$OpenBSD: atw.c,v 1.49 2006/11/26 17:20:33 jsg Exp $	*/
+/*	$OpenBSD: atw.c,v 1.51 2007/02/14 04:46:44 jsg Exp $	*/
 /*	$NetBSD: atw.c,v 1.69 2004/07/23 07:07:55 dyoung Exp $	*/
 
 /*-
@@ -141,10 +141,6 @@ __KERNEL_RCSID(0, "$NetBSD: atw.c,v 1.69 2004/07/23 07:07:55 dyoung Exp $");
  */
 
 #define ATW_REFSLAVE	/* slavishly do what the reference driver does */
-
-#define	VOODOO_DUR_11_ROUNDING		0x01 /* necessary */
-#define	VOODOO_DUR_2_4_SPECIALCASE	0x02 /* NOT necessary */
-int atw_voodoo = VOODOO_DUR_11_ROUNDING;
 
 int atw_bbp_io_enable_delay = 20 * 1000;
 int atw_bbp_io_disable_delay = 2 * 1000;
@@ -292,6 +288,9 @@ static const u_int atw_rfmd2958_rf1r[] = {
 	0x345d1, 0x28ba2, 0x1d174, 0x11745, 0x05d17, 0x3a2e8, 0x11745
 };
 
+
+#ifdef ATW_DEBUG
+
 const char *atw_tx_state[] = {
 	"STOPPED",
 	"RUNNING - read descriptor",
@@ -313,6 +312,8 @@ const char *atw_rx_state[] = {
 	"RUNNING - flush fifo",
 	"RUNNING - fifo drain"
 };
+
+#endif
 
 #ifndef __OpenBSD__
 int

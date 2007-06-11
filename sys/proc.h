@@ -1,4 +1,4 @@
-/*	$OpenBSD: proc.h,v 1.88 2006/06/28 14:17:07 mickey Exp $	*/
+/*	$OpenBSD: proc.h,v 1.95 2007/04/12 22:14:15 tedu Exp $	*/
 /*	$NetBSD: proc.h,v 1.44 1996/04/22 01:23:21 christos Exp $	*/
 
 /*-
@@ -45,9 +45,13 @@
 #include <sys/queue.h>
 #include <sys/timeout.h>		/* For struct timeout. */
 #include <sys/event.h>			/* For struct klist */
+#include <machine/atomic.h>
 
 #ifdef __HAVE_CPUINFO
 #define curproc curcpu()->ci_curproc
+#endif
+#ifdef _KERNEL
+#define __need_process
 #endif
 
 /*
@@ -116,29 +120,51 @@ extern int nemuls;			/* Number of emuls */
 /*
  * Description of a process.
  *
- * This structure contains the information needed to manage a thread of
+ * These structures contain the information needed to manage a thread of
  * control, known in UN*X as a process; it has references to substructures
  * containing descriptions of things that the process uses, but may share
- * with related processes.  The process structure and the substructures
- * are always addressable except for those marked "(PROC ONLY)" below,
- * which might be addressable only on a processor on which the process
- * is running.
+ * with related processes.
+ *
+ * struct process is the higher level process containing information
+ * shared by all threads in a process, while struct proc contains the
+ * run-time information needed by threads.
  */
-struct	proc {
+#ifdef __need_process
+struct process {
+	/*
+	 * ps_mainproc is the main thread in the process.
+	 * Ultimately, we shouldn't need that, threads should be able to exit
+	 * at will. Unfortunately until the pid is moved into struct process
+	 * we'll have to remember the main threads and abuse its pid as the
+	 * the pid of the process. This is gross, but considering the horrible
+	 * pid semantics we have right now, it's unavoidable.
+	 */
+	struct proc *ps_mainproc;
+	struct	pcred *ps_cred;		/* Process owner's identity. */
+	struct	plimit *ps_limit;	/* Process limits. */
+
+	TAILQ_HEAD(,proc) ps_threads;	/* Threads in this process. */
+};
+#else
+struct process;
+#endif
+
+struct proc {
 	struct	proc *p_forw;		/* Doubly-linked run/sleep queue. */
 	struct	proc *p_back;
 	LIST_ENTRY(proc) p_list;	/* List of all processes. */
 
-	/* substructures: */
-	struct	pcred *p_cred;		/* Process owner's identity. */
-	struct	filedesc *p_fd;		/* Ptr to open files structure. */
-	struct	pstats *p_stats;	/* Accounting/statistics (PROC ONLY). */
-	struct	plimit *p_limit;	/* Process limits. */
-	struct	vmspace *p_vmspace;	/* Address space. */
-	struct	sigacts *p_sigacts;	/* Signal actions, state (PROC ONLY). */
+	struct	process *p_p;		/* The process of this thread. */
+	TAILQ_ENTRY(proc) p_thr_link;/* Threads in a process linkage. */
 
+	/* substructures: */
+	struct	filedesc *p_fd;		/* Ptr to open files structure. */
+	struct	pstats *p_stats;	/* Accounting/statistics */
+	struct	vmspace *p_vmspace;	/* Address space. */
+	struct	sigacts *p_sigacts;	/* Signal actions, state */
+#define	p_cred		p_p->ps_cred
 #define	p_ucred		p_cred->pc_ucred
-#define	p_rlimit	p_limit->pl_rlimit
+#define	p_rlimit	p_p->ps_limit->pl_rlimit
 
 	int	p_exitsig;		/* Signal to send to parent on exit. */
 	int	p_flag;			/* P_* flags. */
@@ -160,12 +186,7 @@ struct	proc {
 	pid_t	p_oppid;	 /* Save parent pid during ptrace. XXX */
 	int	p_dupfd;	 /* Sideways return value from filedescopen. XXX */
 
-	/* threads are processes that sometimes use the parent thread's
-	 * info for userland visibility */
-	struct	proc *p_thrparent;
-	LIST_ENTRY(proc) p_thrsib;
-	LIST_HEAD(, proc) p_thrchildren;
-	long p_thrslpid;	/* for thrsleep syscall */
+	long 	p_thrslpid;	/* for thrsleep syscall */
 
 
 	/* scheduling */
@@ -210,6 +231,8 @@ struct	proc {
 
 	sigset_t p_sigdivert;		/* Signals to be diverted to thread. */
 
+	TAILQ_HEAD(,selinfo) p_selects;	/* selinfos we're selecting on */
+
 /* End area that is zeroed on creation. */
 #define	p_endzero	p_startcopy
 
@@ -231,7 +254,7 @@ struct	proc {
 /* End area that is copied on creation. */
 #define	p_endcopy	p_addr
 
-	struct	user *p_addr;	/* Kernel virtual addr of u-area (PROC ONLY). */
+	struct	user *p_addr;	/* Kernel virtual addr of u-area */
 	struct	mdproc p_md;	/* Any machine-dependent fields. */
 
 	u_short	p_xstat;	/* Exit status for wait; also stop signal. */
@@ -393,6 +416,7 @@ extern struct proclist zombproc;	/* List of zombie processes. */
 extern struct proc *initproc;		/* Process slots for init, pager. */
 extern struct proc *syncerproc;		/* filesystem syncer daemon */
 
+extern struct pool process_pool;	/* memory pool for processes */
 extern struct pool proc_pool;		/* memory pool for procs */
 extern struct pool rusage_pool;		/* memory pool for zombies */
 extern struct pool ucred_pool;		/* memory pool for ucreds */
@@ -432,9 +456,6 @@ void	setrunnable(struct proc *);
 #if !defined(setrunqueue)
 void	setrunqueue(struct proc *);
 #endif
-int	ltsleep(void *chan, int pri, const char *wmesg, int timo,
-	    volatile struct simplelock *);
-#define tsleep(chan, pri, wmesg, timo) ltsleep(chan, pri, wmesg, timo, NULL)
 void	unsleep(struct proc *);
 void    wakeup_n(void *chan, int);
 void    wakeup(void *chan);
@@ -458,6 +479,23 @@ void	child_return(void *);
 
 int	proc_cansugid(struct proc *);
 void	proc_zap(struct proc *);
+
+struct sleep_state {
+	int sls_s;
+	int sls_catch;
+	int sls_do_sleep;
+	int sls_sig;
+};
+
+void	sleep_setup(struct sleep_state *, void *, int, const char *);
+void	sleep_setup_timeout(struct sleep_state *, int);
+void	sleep_setup_signal(struct sleep_state *, int);
+void	sleep_finish(struct sleep_state *, int);
+int	sleep_finish_timeout(struct sleep_state *);
+int	sleep_finish_signal(struct sleep_state *);
+
+int	tsleep(void *, int, const char *, int);
+#define ltsleep(c, p, w, t, l) tsleep(c, p, w, t)
 
 #if defined(MULTIPROCESSOR)
 void	proc_trampoline_mp(void);	/* XXX */

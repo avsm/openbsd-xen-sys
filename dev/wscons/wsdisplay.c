@@ -1,4 +1,4 @@
-/* $OpenBSD: wsdisplay.c,v 1.74 2006/12/02 18:16:14 miod Exp $ */
+/* $OpenBSD: wsdisplay.c,v 1.79 2007/04/10 17:47:55 miod Exp $ */
 /* $NetBSD: wsdisplay.c,v 1.82 2005/02/27 00:27:52 perry Exp $ */
 
 /*
@@ -777,6 +777,7 @@ wsdisplay_cnattach(const struct wsscreen_descr *type, void *cookie, int ccol,
     int crow, long defattr)
 {
 	const struct wsemul_ops *wsemul;
+	const struct wsdisplay_emulops *emulops;
 
 	KASSERT(!wsdisplay_console_initted);
 	KASSERT(type->nrows > 0);
@@ -784,11 +785,21 @@ wsdisplay_cnattach(const struct wsscreen_descr *type, void *cookie, int ccol,
 	KASSERT(crow < type->nrows);
 	KASSERT(ccol < type->ncols);
 
-	wsdisplay_console_conf.emulops = type->textops;
+	wsdisplay_console_conf.emulops = emulops = type->textops;
 	wsdisplay_console_conf.emulcookie = cookie;
 	wsdisplay_console_conf.scrdata = type;
 
-	wsemul = wsemul_pick(""); /* default */
+#ifdef WSEMUL_DUMB
+	/*
+	 * If the emulops structure is crippled, force a dumb emulation.
+	 */
+	if (emulops->cursor == NULL ||
+	    emulops->copycols == NULL || emulops->copyrows == NULL ||
+	    emulops->erasecols == NULL || emulops->eraserows == NULL)
+		wsemul = wsemul_pick("dumb");
+	else
+#endif
+		wsemul = wsemul_pick("");
 	wsdisplay_console_conf.wsemul = wsemul;
 	wsdisplay_console_conf.wsemulcookie =
 	    (*wsemul->cnattach)(type, cookie, ccol, crow, defattr);
@@ -1304,7 +1315,7 @@ wsdisplay_cfg_ioctl(struct wsdisplay_softc *sc, u_long cmd, caddr_t data,
 		if (d->idx == -1 && d->type == WSMUX_KBD)
 			d->idx = wskbd_pickfree();
 #undef d
-		/* fall into */
+		/* FALLTHROUGH */
 	case WSMUXIO_INJECTEVENT:
 	case WSMUXIO_REMOVE_DEVICE:
 	case WSMUXIO_LIST_DEVICES:
@@ -1391,7 +1402,7 @@ wsdisplaystart(struct tty *tp)
 		splx(s);
 		return;
 	}
-	if (tp->t_outq.c_cc == 0 && tp->t_wsel.si_selpid == 0)
+	if (tp->t_outq.c_cc == 0 && tp->t_wsel.si_selproc == NULL)
 		goto low;
 
 	if ((scr = sc->sc_scr[WSDISPLAYSCREEN(tp->t_dev)]) == NULL) {
@@ -2100,7 +2111,7 @@ wsdisplay_unset_cons_kbd()
 }
 
 /*
- * Switch the console display to it's first screen.
+ * Switch the console display to its first screen.
  */
 void
 wsdisplay_switchtoconsole()
@@ -3272,7 +3283,7 @@ wsmoused_release(struct wsdisplay_softc *sc)
 
 		/* inject event to notify wsmoused(8) to close mouse device */
 		if (wsms_dev != NULL) 
-			wsmouse_input(wsms_dev, 0, 0, 0, 0,
+			wsmouse_input(wsms_dev, 0, 0, 0, 0, 0,
 				      WSMOUSE_INPUT_WSMOUSED_CLOSE);
 		
 	}

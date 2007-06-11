@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bnxreg.h,v 1.17 2006/11/20 21:26:27 brad Exp $	*/
+/*	$OpenBSD: if_bnxreg.h,v 1.19 2007/03/03 11:17:48 reyk Exp $	*/
 
 /*-
  * Copyright (c) 2006 Broadcom Corporation
@@ -4572,7 +4572,8 @@ struct fw_info {
 #define BNX_MAX_JUMBO_ETHER_MTU			9018
 #define BNX_MAX_JUMBO_ETHER_MTU_VLAN 	9022
 
-#define BNX_MAX_MRU				9216
+#define BNX_MAX_MRU				MCLBYTES
+#define BNX_MAX_JUMBO_MRU			9216
 
 /****************************************************************************/
 /* BNX Device State Data Structure                                          */
@@ -4613,6 +4614,7 @@ struct bnx_softc
 #define BNX_USING_DAC_FLAG		0x10
 #define BNX_USING_MSI_FLAG 		0x20
 #define BNX_MFW_ENABLE_FLAG		0x40
+#define BNX_ACTIVE_FLAG			0x80
 
 	/* PHY specific flags. */
 	u_int32_t					bnx_phy_flags;

@@ -1,4 +1,4 @@
-/* $OpenBSD: acpibat.c,v 1.37 2006/12/26 23:58:08 marco Exp $ */
+/* $OpenBSD: acpibat.c,v 1.39 2007/02/17 18:53:28 deanna Exp $ */
 /*
  * Copyright (c) 2005 Marco Peereboom <marco@openbsd.org>
  *
@@ -77,7 +77,7 @@ acpibat_attach(struct device *parent, struct device *self, void *aux)
 		return;
 	}
 
-	if ((sc->sc_bat_present = res.v_integer & STA_BATTERY) != 0) {
+	if ((sc->sc_bat_present = aml_val2int(&res) & STA_BATTERY) != 0) {
 		acpibat_getbif(sc);
 		acpibat_getbst(sc);
 		printf(": %s: model: %s serial: %s type: %s oem: %s\n",
@@ -222,7 +222,10 @@ acpibat_refresh(void *arg)
 		sc->sc_sens[4].flags = SENSOR_FUNKNOWN;
 		strlcpy(sc->sc_sens[4].desc, "battery unknown",
 		    sizeof(sc->sc_sens[4].desc));
-	} else if (sc->sc_bst.bst_state & BST_DISCHARGE)
+	} else if (sc->sc_bst.bst_capacity >= sc->sc_bif.bif_last_capacity)
+		strlcpy(sc->sc_sens[4].desc, "battery full",
+		    sizeof(sc->sc_sens[4].desc));
+        else if (sc->sc_bst.bst_state & BST_DISCHARGE)
 		strlcpy(sc->sc_sens[4].desc, "battery discharging",
 		    sizeof(sc->sc_sens[4].desc));
 	else if (sc->sc_bst.bst_state & BST_CHARGE)
@@ -232,10 +235,7 @@ acpibat_refresh(void *arg)
 		strlcpy(sc->sc_sens[4].desc, "battery critical",
 		    sizeof(sc->sc_sens[4].desc));
 		sc->sc_sens[4].status = SENSOR_S_CRIT;
-	} else if (sc->sc_bst.bst_capacity >= sc->sc_bif.bif_last_capacity)
-		strlcpy(sc->sc_sens[4].desc, "battery full",
-		    sizeof(sc->sc_sens[4].desc));
-	else
+	} else
 		strlcpy(sc->sc_sens[4].desc, "battery idle",
 		    sizeof(sc->sc_sens[4].desc));
 	sc->sc_sens[4].value = sc->sc_bst.bst_state;

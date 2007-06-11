@@ -1,4 +1,4 @@
-/*	$OpenBSD: bus.h,v 1.5 2006/05/26 20:22:04 miod Exp $	*/
+/*	$OpenBSD: bus.h,v 1.7 2007/04/10 18:02:46 miod Exp $	*/
 /*	$NetBSD: bus.h,v 1.12 2003/10/23 15:03:24 scw Exp $	*/
 
 /*-
@@ -752,8 +752,6 @@ bs_c_2_proto(f);		\
 bs_c_4_proto(f);		\
 bs_c_8_proto(f);
 
-#define BUS_SPACE_ALIGNED_POINTER(p, t) ALIGNED_POINTER(p, t)
-
 /* Bus Space DMA macros */
 
 /*
@@ -944,7 +942,6 @@ struct arm32_bus_dmamap {
 #define	ARM32_BUFTYPE_LINEAR		1
 #define	ARM32_BUFTYPE_MBUF		2
 #define	ARM32_BUFTYPE_UIO		3
-#define	ARM32_BUFTYPE_RAW		4
 
 int	arm32_dma_range_intersect(struct arm32_dma_range *, int,
 	    paddr_t pa, psize_t size, paddr_t *pap, psize_t *sizep);

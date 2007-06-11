@@ -1,4 +1,4 @@
-/*	$OpenBSD: ffs_softdep.c,v 1.81 2007/01/15 11:18:17 pedro Exp $	*/
+/*	$OpenBSD: ffs_softdep.c,v 1.84 2007/03/15 10:22:30 art Exp $	*/
 
 /*
  * Copyright 1998, 2000 Marshall Kirk McKusick. All Rights Reserved.
@@ -2390,21 +2390,28 @@ handle_workitem_freeblocks(freeblks)
 	struct freeblks *freeblks;
 {
 	struct inode tip;
-	struct ufs1_dinode dtip1;
 	daddr_t bn;
+	union {
+		struct ufs1_dinode di1;
+		struct ufs2_dinode di2;
+	} di;
 	struct fs *fs;
 	int i, level, bsize;
 	long nblocks, blocksreleased = 0;
 	int error, allerror = 0;
 	ufs_lbn_t baselbns[NIADDR], tmpval;
 
-	tip.i_din1 = &dtip1;
+	if (VFSTOUFS(freeblks->fb_mnt)->um_fstype == UM_UFS1)
+		tip.i_din1 = &di.di1;
+	else
+		tip.i_din2 = &di.di2;
+
 	tip.i_fs = fs = VFSTOUFS(freeblks->fb_mnt)->um_fs;
 	tip.i_number = freeblks->fb_previousinum;
 	tip.i_ump = VFSTOUFS(freeblks->fb_mnt);
 	tip.i_dev = freeblks->fb_devvp->v_rdev;
-	tip.i_ffs1_size = freeblks->fb_oldsize;
-	tip.i_ffs1_uid = freeblks->fb_uid;
+	DIP_ASSIGN(&tip, size, freeblks->fb_oldsize);
+	DIP_ASSIGN(&tip, uid, freeblks->fb_uid);
 	tip.i_vnode = NULL;
 	tmpval = 1;
 	baselbns[0] = NDADDR;
@@ -4712,8 +4719,7 @@ softdep_fsync_mountdev(vp, waitfor)
 		 */
 		nbp = LIST_FIRST(&vp->v_dirtyblkhd);
 	}
-	if (waitfor == MNT_WAIT)
-		drain_output(vp, 1);
+	drain_output(vp, 1);
 	FREE_LOCK(&lk);
 }
 
@@ -5278,12 +5284,12 @@ request_cleanup(resource, islocked)
 	 * to avoid recursively processing the worklist.
 	 */
 	if (num_on_worklist > max_softdeps / 10) {
-		p->p_flag |= P_SOFTDEP;
+		atomic_setbits_int(&p->p_flag, P_SOFTDEP);
 		if (islocked)
 			FREE_LOCK(&lk);
 		process_worklist_item(NULL, LK_NOWAIT);
 		process_worklist_item(NULL, LK_NOWAIT);
-		p->p_flag &= ~P_SOFTDEP;
+		atomic_clearbits_int(&p->p_flag, P_SOFTDEP);
 		stat_worklist_push += 2;
 		if (islocked)
 			ACQUIRE_LOCK(&lk);

@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_exit.c,v 1.61 2006/06/15 20:08:01 miod Exp $	*/
+/*	$OpenBSD: kern_exit.c,v 1.70 2007/04/11 14:27:08 tedu Exp $	*/
 /*	$NetBSD: kern_exit.c,v 1.39 1996/04/22 01:38:25 christos Exp $	*/
 
 /*
@@ -119,36 +119,40 @@ exit1(struct proc *p, int rv, int flags)
 		panic("init died (signal %d, exit %d)",
 		    WTERMSIG(rv), WEXITSTATUS(rv));
 	
+	/* unlink ourselves from the active threads */
+	TAILQ_REMOVE(&p->p_p->ps_threads, p, p_thr_link);
 #ifdef RTHREADS
+	if (TAILQ_EMPTY(&p->p_p->ps_threads))
+		wakeup(&p->p_p->ps_threads);
 	/*
 	 * if one thread calls exit, we take down everybody.
 	 * we have to be careful not to get recursively caught.
 	 * this is kinda sick.
 	 */
-	if (flags == EXIT_NORMAL && p != p->p_thrparent &&
-	    (p->p_thrparent->p_flag & P_WEXIT) == 0) {
+	if (flags == EXIT_NORMAL && p->p_p->ps_mainproc != p &&
+	    (p->p_p->ps_mainproc->p_flag & P_WEXIT) == 0) {
 		/*
 		 * we are one of the threads.  we SIGKILL the parent,
 		 * it will wake us up again, then we proceed.
 		 */
-		p->p_thrparent->p_flag |= P_IGNEXITRV;
-		p->p_thrparent->p_xstat = rv;
-		psignal(p->p_thrparent, SIGKILL);
-		tsleep(&p->p_thrparent->p_thrchildren, PUSER, "thrdying", 0);
-	} else if (p == p->p_thrparent) {
-		p->p_flag |= P_WEXIT;
+		atomic_setbits_int(&p->p_p->ps_mainproc->p_flag, P_IGNEXITRV);
+		p->p_p->ps_mainproc->p_xstat = rv;
+		psignal(p->p_p->ps_mainproc, SIGKILL);
+		tsleep(p->p_p, PUSER, "thrdying", 0);
+	} else if (p == p->p_p->ps_mainproc) {
+		atomic_setbits_int(&p->p_flag, P_WEXIT);
 		if (flags == EXIT_NORMAL) {
-			q = LIST_FIRST(&p->p_thrchildren);
+			q = TAILQ_FIRST(&p->p_p->ps_threads);
 			for (; q != NULL; q = nq) {
-				nq = LIST_NEXT(q, p_thrsib);
-				q->p_flag |= P_IGNEXITRV;
+				nq = TAILQ_NEXT(q, p_thr_link);
+				atomic_setbits_int(&q->p_flag, P_IGNEXITRV);
 				q->p_xstat = rv;
 				psignal(q, SIGKILL);
 			}
 		}
-		wakeup(&p->p_thrchildren);
-		while (!LIST_EMPTY(&p->p_thrchildren))
-			tsleep(&p->p_thrchildren, PUSER, "thrdeath", 0);
+		wakeup(p->p_p);
+		while (!TAILQ_EMPTY(&p->p_p->ps_threads))
+			tsleep(&p->p_p->ps_threads, PUSER, "thrdeath", 0);
 	}
 #endif
 
@@ -159,10 +163,10 @@ exit1(struct proc *p, int rv, int flags)
 	 * If parent is waiting for us to exit or exec, P_PPWAIT is set; we
 	 * wake up the parent early to avoid deadlock.
 	 */
-	p->p_flag |= P_WEXIT;
-	p->p_flag &= ~P_TRACED;
+	atomic_setbits_int(&p->p_flag, P_WEXIT);
+	atomic_clearbits_int(&p->p_flag, P_TRACED);
 	if (p->p_flag & P_PPWAIT) {
-		p->p_flag &= ~P_PPWAIT;
+		atomic_clearbits_int(&p->p_flag, P_PPWAIT);
 		wakeup(p->p_pptr);
 	}
 	p->p_sigignore = ~0;
@@ -258,19 +262,11 @@ exit1(struct proc *p, int rv, int flags)
 		 * since their existence means someone is screwing up.
 		 */
 		if (q->p_flag & P_TRACED) {
-			q->p_flag &= ~P_TRACED;
+			atomic_clearbits_int(&q->p_flag, P_TRACED);
 			psignal(q, SIGKILL);
 		}
 	}
 
-#ifdef RTHREADS
-	/* unlink oursleves from the active threads */
-	if (p != p->p_thrparent) {
-		LIST_REMOVE(p, p_thrsib);
-		if (LIST_EMPTY(&p->p_thrparent->p_thrchildren))
-			wakeup(&p->p_thrparent->p_thrchildren);
-	}
-#endif
 
 	/*
 	 * Save exit status and final rusage info, adding in child rusage
@@ -329,8 +325,6 @@ exit1(struct proc *p, int rv, int flags)
 	 * Other substructures are freed from wait().
 	 */
 	curproc = NULL;
-	limfree(p->p_limit);
-	p->p_limit = NULL;
 
 	/*
 	 * If emulation has process exit hook, call it now.
@@ -523,7 +517,7 @@ loop:
 		}
 		if (p->p_stat == SSTOP && (p->p_flag & P_WAITED) == 0 &&
 		    (p->p_flag & P_TRACED || SCARG(uap, options) & WUNTRACED)) {
-			p->p_flag |= P_WAITED;
+			atomic_setbits_int(&p->p_flag, P_WAITED);
 			retval[0] = p->p_pid;
 
 			if (SCARG(uap, status)) {
@@ -535,7 +529,7 @@ loop:
 			return (error);
 		}
 		if ((SCARG(uap, options) & WCONTINUED) && (p->p_flag & P_CONTINUED)) {
-			p->p_flag &= ~P_CONTINUED;
+			atomic_clearbits_int(&p->p_flag, P_CONTINUED);
 			retval[0] = p->p_pid;
 
 			if (SCARG(uap, status)) {
@@ -597,18 +591,26 @@ proc_zap(struct proc *p)
 	(void)chgproccnt(p->p_cred->p_ruid, -1);
 
 	/*
-	 * Free up credentials.
-	 */
-	if (--p->p_cred->p_refcnt == 0) {
-		crfree(p->p_cred->pc_ucred);
-		pool_put(&pcred_pool, p->p_cred);
-	}
-
-	/*
 	 * Release reference to text vnode
 	 */
 	if (p->p_textvp)
 		vrele(p->p_textvp);
+
+	/*
+	 * Remove us from our process list, possibly killing the process
+	 * in the process (pun intended).
+	 */
+#if 0
+	TAILQ_REMOVE(&p->p_p->ps_threads, p, p_thr_link);
+#endif
+	if (TAILQ_EMPTY(&p->p_p->ps_threads)) {
+		limfree(p->p_p->ps_limit);
+		if (--p->p_p->ps_cred->p_refcnt == 0) {
+			crfree(p->p_p->ps_cred->pc_ucred);
+			pool_put(&pcred_pool, p->p_p->ps_cred);
+		}
+		pool_put(&process_pool, p->p_p);
+	}
 
 	pool_put(&proc_pool, p);
 	nprocs--;

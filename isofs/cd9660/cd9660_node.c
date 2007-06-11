@@ -1,4 +1,4 @@
-/*	$OpenBSD: cd9660_node.c,v 1.15 2005/11/19 02:18:01 pedro Exp $	*/
+/*	$OpenBSD: cd9660_node.c,v 1.17 2007/03/21 17:29:31 thib Exp $	*/
 /*	$NetBSD: cd9660_node.c,v 1.17 1997/05/05 07:13:57 mycroft Exp $	*/
 
 /*-
@@ -163,9 +163,8 @@ loop:
        for (ip = isohashtbl[INOHASH(dev, inum)]; ip; ip = ip->i_next) {
                if (inum == ip->i_number && dev == ip->i_dev) {
                        vp = ITOV(ip);
-                       simple_lock(&vp->v_interlock);
                        simple_unlock(&cd9660_ihash_slock);
-                       if (vget(vp, LK_EXCLUSIVE | LK_INTERLOCK, p))
+                       if (vget(vp, LK_EXCLUSIVE, p))
                                goto loop;
                        return (vp);
 	       }
@@ -256,7 +255,7 @@ cd9660_inactive(v)
 	 * so that it can be reused immediately.
 	 */
 	if (ip->inode.iso_mode == 0)
-		vrecycle(vp, (struct simplelock *)0, p);
+		vrecycle(vp, p);
 
 	return (error);
 }

@@ -1,4 +1,4 @@
-/*	$OpenBSD: rtw.c,v 1.56 2006/11/26 17:20:33 jsg Exp $	*/
+/*	$OpenBSD: rtw.c,v 1.59 2007/04/02 08:41:04 claudio Exp $	*/
 /*	$NetBSD: rtw.c,v 1.29 2004/12/27 19:49:16 dyoung Exp $ */
 
 /*-
@@ -78,8 +78,6 @@
 #include <dev/ic/smc93cx6var.h>
 
 int rtw_rfprog_fallback = 0;
-int rtw_host_rfio = 0;
-int rtw_xmtr_restart = 0;
 int rtw_do_chip_reset = 0;
 int rtw_dwelltime = 200;	/* milliseconds per channel */
 int rtw_macbangbits_timeout = 100;
@@ -142,9 +140,7 @@ void	 rtw_txsofts_release(bus_dma_tag_t, struct ieee80211com *,
 	    struct rtw_txsoft_blk *);
 void	 rtw_hwring_setup(struct rtw_softc *);
 int	 rtw_swring_setup(struct rtw_softc *);
-void	 rtw_txdesc_blk_reset(struct rtw_txdesc_blk *);
 void	 rtw_txdescs_reset(struct rtw_softc *);
-void	 rtw_rxdescs_reset(struct rtw_softc *);
 void	 rtw_rfmd_pwrstate(struct rtw_regs *, enum rtw_pwrstate, int, int);
 int	 rtw_pwrstate(struct rtw_softc *, enum rtw_pwrstate);
 int	 rtw_tune(struct rtw_softc *);
@@ -243,7 +239,6 @@ int	 rtw_grf5101_txpower(struct rtw_softc *, u_int8_t);
 int	 rtw_grf5101_tune(struct rtw_softc *, u_int);
 int	 rtw_rf_hostwrite(struct rtw_softc *, u_int, u_int32_t);
 int	 rtw_rf_macwrite(struct rtw_softc *, u_int, u_int32_t);
-u_int8_t rtw_bbp_read(struct rtw_regs *, u_int);
 int	 rtw_bbp_write(struct rtw_regs *, u_int, u_int);
 u_int32_t rtw_grf5101_host_crypt(u_int, u_int32_t);
 u_int32_t rtw_maxim_swizzle(u_int, uint32_t);
@@ -1348,6 +1343,14 @@ next:
 
 	KASSERT(rdb->rdb_next < rdb->rdb_ndesc);
 
+	/*
+	 * In HostAP mode, ieee80211_input() will enqueue packets in if_snd
+	 * without calling if_start().
+	 */
+	if (!IFQ_IS_EMPTY(&sc->sc_if.if_snd) &&
+	    !(sc->sc_if.if_flags & IFF_OACTIVE))
+		(*sc->sc_if.if_start)(&sc->sc_if);
+
 	return;
 #undef IS_BEACON
 }
@@ -1954,6 +1957,7 @@ rtw_stop(struct ifnet *ifp, int disable)
 	return;
 }
 
+#ifdef RTW_DEBUG
 const char *
 rtw_pwrstate_string(enum rtw_pwrstate power)
 {
@@ -1968,6 +1972,7 @@ rtw_pwrstate_string(enum rtw_pwrstate power)
 		return "unknown";
 	}
 }
+#endif
 
 /* XXX For Maxim, I am using the RFMD settings gleaned from the
  * reference driver, plus a magic Maxim "ON" value that comes from
@@ -4609,18 +4614,6 @@ rtw_phy_init(struct rtw_softc *sc)
  * Generic PHY I/O functions
  */
 
-
-u_int8_t
-rtw_bbp_read(struct rtw_regs *regs, u_int addr)
-{
-	KASSERT((addr & ~PRESHIFT(RTW_BB_ADDR_MASK)) == 0);
-	RTW_WRITE(regs, RTW_BB,
-	    LSHIFT(addr, RTW_BB_ADDR_MASK) | RTW_BB_RD_MASK | RTW_BB_WR_MASK);
-	delay(10);	/* XXX */
-	RTW_WBR(regs, RTW_BB, RTW_BB);
-	return MASK_AND_RSHIFT(RTW_READ(regs, RTW_BB), RTW_BB_RD_MASK);
-}
-
 int
 rtw_bbp_write(struct rtw_regs *regs, u_int addr, u_int val)
 {
@@ -5013,6 +5006,6 @@ void
 rtw_barrier(void *arg, u_int32_t reg0, u_int32_t reg1, int flags)
 {
 	struct rtw_regs *regs = (struct rtw_regs *)arg;
-	bus_space_barrier(regs->r_bh, regs->r_bt, MIN(reg0, reg1),
+	bus_space_barrier(regs->r_bt, regs->r_bh, MIN(reg0, reg1),
 	    MAX(reg0, reg1) - MIN(reg0, reg1) + 4, flags);
 }

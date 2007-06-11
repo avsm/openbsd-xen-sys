@@ -1,4 +1,4 @@
-/*	$OpenBSD: vnd.c,v 1.66 2006/12/24 09:39:27 pedro Exp $	*/
+/*	$OpenBSD: vnd.c,v 1.71 2007/03/25 18:02:37 tedu Exp $	*/
 /*	$NetBSD: vnd.c,v 1.26 1996/03/30 23:06:11 christos Exp $	*/
 
 /*
@@ -76,6 +76,7 @@
 #include <sys/mount.h>
 #include <sys/vnode.h>
 #include <sys/file.h>
+#include <sys/rwlock.h>
 #include <sys/uio.h>
 #include <sys/conf.h>
 
@@ -130,20 +131,17 @@ struct vnd_softc {
 	size_t		 sc_size;		/* size of vnd in blocks */
 	struct vnode	*sc_vp;			/* vnode */
 	struct ucred	*sc_cred;		/* credentials */
-	int		 sc_maxactive;		/* max # of active requests */
 	struct buf	 sc_tab;		/* transfer queue */
 	blf_ctx		*sc_keyctx;		/* key context */
+	struct rwlock	 sc_rwlock;
 };
 
 /* sc_flags */
 #define	VNF_ALIVE	0x0001
 #define	VNF_INITED	0x0002
-#define	VNF_WANTED	0x0040
-#define	VNF_LOCKED	0x0080
 #define	VNF_LABELLING	0x0100
 #define	VNF_WLABEL	0x0200
 #define	VNF_HAVELABEL	0x0400
-#define	VNF_BUSY	0x0800
 #define	VNF_SIMPLE	0x1000
 #define	VNF_READONLY	0x2000
 
@@ -160,14 +158,13 @@ void	vndattach(int);
 void	vndclear(struct vnd_softc *);
 void	vndstart(struct vnd_softc *);
 int	vndsetcred(struct vnd_softc *, struct ucred *);
-void	vndthrottle(struct vnd_softc *, struct vnode *);
 void	vndiodone(struct buf *);
 void	vndshutdown(void);
 void	vndgetdisklabel(dev_t, struct vnd_softc *);
 void	vndencrypt(struct vnd_softc *, caddr_t, size_t, daddr_t, int);
 
-int	vndlock(struct vnd_softc *);
-void	vndunlock(struct vnd_softc *);
+#define vndlock(sc) rw_enter(&sc->sc_rwlock, RW_WRITE|RW_INTR)
+#define vndunlock(sc) rw_exit_write(&sc->sc_rwlock)
 
 void
 vndencrypt(struct vnd_softc *vnd, caddr_t addr, size_t size, daddr_t off,
@@ -196,6 +193,7 @@ vndattach(int num)
 {
 	char *mem;
 	u_long size;
+	int i;
 
 	if (num <= 0)
 		return;
@@ -207,6 +205,9 @@ vndattach(int num)
 	}
 	bzero(mem, size);
 	vnd_softc = (struct vnd_softc *)mem;
+	for (i = 0; i < num; i++) {
+		rw_init(&vnd_softc[i].sc_rwlock, "vndlock");
+	}
 	numvnd = num;
 
 	pool_init(&vndbufpl, sizeof(struct vndbuf), 0, 0, 0, "vndbufpl", NULL);
@@ -378,9 +379,7 @@ vndclose(dev_t dev, int flags, int mode, struct proc *p)
  *
  * Latter method:
  * Repack the buffer into an uio structure and use VOP_READ/VOP_WRITE to
- * access the underlying file.  Things are complicated by the fact that we
- * might get recursively called due to buffer flushes.  In those cases we
- * queue one write.
+ * access the underlying file.
  */
 void
 vndstrategy(struct buf *bp)
@@ -440,25 +439,6 @@ vndstrategy(struct buf *bp)
 
 	/* No bypassing of buffer cache?  */
 	if (vndsimple(bp->b_dev)) {
-		/*
-		 * In order to avoid "locking against myself" panics, we
-		 * must be prepared to queue operations during another I/O
-		 * operation.  This situation comes up where a dirty cache
-		 * buffer needs to be flushed in order to provide the current
-		 * operation with a fresh buffer.
-		 *
-		 * XXX do we really need to protect stuff relating to this with
-		 * splbio?
-		 */
-		if (vnd->sc_flags & VNF_BUSY) {
-			s = splbio();
-			bp->b_actf = vnd->sc_tab.b_actf;
-			vnd->sc_tab.b_actf = bp;
-			vnd->sc_tab.b_active++;
-			splx(s);
-			return;
-		}
-
 		/* Loop until all queued requests are handled.  */
 		for (;;) {
 			int part = DISKPART(bp->b_dev);
@@ -473,7 +453,6 @@ vndstrategy(struct buf *bp)
 			auio.uio_procp = p;
 
 			vn_lock(vnd->sc_vp, LK_EXCLUSIVE | LK_RETRY, p);
-			vnd->sc_flags |= VNF_BUSY;
 			if (bp->b_flags & B_READ) {
 				auio.uio_rw = UIO_READ;
 				bp->b_error = VOP_READ(vnd->sc_vp, &auio, 0,
@@ -486,14 +465,17 @@ vndstrategy(struct buf *bp)
 					vndencrypt(vnd, bp->b_data,
 					   bp->b_bcount, bp->b_blkno, 1);
 				auio.uio_rw = UIO_WRITE;
-				bp->b_error = VOP_WRITE(vnd->sc_vp, &auio, 0,
-				    vnd->sc_cred);
+				/*
+				 * Upper layer has already checked I/O for
+				 * limits, so there is no need to do it again.
+				 */
+				bp->b_error = VOP_WRITE(vnd->sc_vp, &auio,
+				    IO_NOLIMIT, vnd->sc_cred);
 				/* Data in buffer cache needs to be in clear */
 				if (vnd->sc_keyctx)
 					vndencrypt(vnd, bp->b_data,
 					   bp->b_bcount, bp->b_blkno, 0);
 			}
-			vnd->sc_flags &= ~VNF_BUSY;
 			VOP_UNLOCK(vnd->sc_vp, 0, p);
 			if (bp->b_error)
 				bp->b_flags |= B_ERROR;
@@ -604,12 +586,9 @@ vndstrategy(struct buf *bp)
 		nbp->vb_buf.b_cylinder = nbp->vb_buf.b_blkno;
 		s = splbio();
 		disksort(&vnd->sc_tab, &nbp->vb_buf);
-		if (vnd->sc_tab.b_active < vnd->sc_maxactive) {
-			vnd->sc_tab.b_active++;
-			vndstart(vnd);
-		}
+		vnd->sc_tab.b_active++;
+		vndstart(vnd);
 		splx(s);
-
 		bn += sz;
 		addr += sz;
 	}
@@ -672,9 +651,7 @@ vndiodone(struct buf *bp)
 	if (vnd->sc_tab.b_active) {
 		disk_unbusy(&vnd->sc_dk, (pbp->b_bcount - pbp->b_resid),
 		    (pbp->b_flags & B_READ));
-		if (vnd->sc_tab.b_actf)
-			vndstart(vnd);
-		else
+		if (!vnd->sc_tab.b_actf)
 			vnd->sc_tab.b_active--;
 	}
 	if (pbp->b_resid == 0) {
@@ -804,7 +781,7 @@ vndioctl(dev_t dev, u_long cmd, caddr_t addr, int flag, struct proc *p)
 		}
 
 		if (vio->vnd_keylen > 0) {
-			char key[128];
+			char key[BLF_MAXUTILIZED];
 
 			if (vio->vnd_keylen > sizeof(key))
 				vio->vnd_keylen = sizeof(key);
@@ -824,7 +801,6 @@ vndioctl(dev_t dev, u_long cmd, caddr_t addr, int flag, struct proc *p)
 		} else
 			vnd->sc_keyctx = NULL;
 
-		vndthrottle(vnd, vnd->sc_vp);
 		vio->vnd_size = dbtob((off_t)vnd->sc_size);
 		vnd->sc_flags |= VNF_INITED;
 
@@ -999,22 +975,6 @@ vndsetcred(struct vnd_softc *vnd, struct ucred *cred)
 	return (error);
 }
 
-/*
- * Set maxactive based on FS type
- */
-void
-vndthrottle(struct vnd_softc *vnd, struct vnode *vp)
-{
-#ifdef NFSCLIENT
-	extern int (**nfsv2_vnodeop_p)(void *);
-
-	if (vp->v_op == nfsv2_vnodeop_p)
-		vnd->sc_maxactive = 2;
-	else
-#endif
-		vnd->sc_maxactive = 8;
-}
-
 void
 vndshutdown(void)
 {
@@ -1060,38 +1020,4 @@ vnddump(dev_t dev, daddr_t blkno, caddr_t va, size_t size)
 
 	/* Not implemented. */
 	return (ENXIO);
-}
-
-/*
- * Wait interruptibly for an exclusive lock.
- *
- * XXX
- * Several drivers do this; it should be abstracted and made MP-safe.
- */
-int
-vndlock(struct vnd_softc *sc)
-{
-	int error;
-
-	while ((sc->sc_flags & VNF_LOCKED) != 0) {
-		sc->sc_flags |= VNF_WANTED;
-		if ((error = tsleep(sc, PRIBIO | PCATCH, "vndlck", 0)) != 0)
-			return (error);
-	}
-	sc->sc_flags |= VNF_LOCKED;
-	return (0);
-}
-
-/*
- * Unlock and wake up any waiters.
- */
-void
-vndunlock(struct vnd_softc *sc)
-{
-
-	sc->sc_flags &= ~VNF_LOCKED;
-	if ((sc->sc_flags & VNF_WANTED) != 0) {
-		sc->sc_flags &= ~VNF_WANTED;
-		wakeup(sc);
-	}
 }

@@ -1,4 +1,4 @@
-#	$OpenBSD: files.i386,v 1.151 2006/10/26 08:37:14 tom Exp $
+#	$OpenBSD: files.i386,v 1.156 2007/03/19 09:29:33 art Exp $
 #
 # new style config file for i386 architecture
 #
@@ -24,15 +24,14 @@ file	arch/i386/i386/in_cksum.s	inet
 file	arch/i386/i386/ipx_cksum.c	ipx
 file	arch/i386/i386/machdep.c
 file	arch/i386/i386/via.c		i686_cpu
+file	arch/i386/i386/amd64errata.c	i686_cpu
 file	arch/i386/i386/kgdb_machdep.c	kgdb
 file	arch/i386/i386/longrun.c	!small_kernel & i586_cpu
 file	arch/i386/i386/mem.c
 file	arch/i386/i386/i686_mem.c	mtrr
 file	arch/i386/i386/k6_mem.c		mtrr
-file	arch/i386/i386/microtime.s
 file	arch/i386/i386/p4tcc.c		!small_kernel & i686_cpu
 file	arch/i386/i386/pmap.c
-file	arch/i386/i386/pmapae.c		!small_kernel
 file	arch/i386/i386/powernow.c	!small_kernel & i586_cpu
 file	arch/i386/i386/powernow-k7.c	!small_kernel & i686_cpu
 file	arch/i386/i386/powernow-k8.c	!small_kernel & i686_cpu
@@ -425,13 +424,9 @@ device	esm
 attach	esm at mainbus
 file	arch/i386/i386/esm.c			esm needs-flag
 
-
 #
 # VESA
 #
 include "dev/vesa/files.vesa"
 
-
 #include "dev/rasops/files.rasops"
-
-

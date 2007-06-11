@@ -1,4 +1,4 @@
-/*	$OpenBSD: exec_elf.c,v 1.55 2006/11/14 18:00:27 jmc Exp $	*/
+/*	$OpenBSD: exec_elf.c,v 1.59 2007/03/20 12:32:07 thib Exp $	*/
 
 /*
  * Copyright (c) 1996 Per Fogelstrom
@@ -159,7 +159,7 @@ ELFNAME(copyargs)(struct exec_package *pack, struct ps_strings *arginfo,
 	 */
 	if (pack->ep_interp != NULL) {
 		pack->ep_emul_argp = stack;
-		(char *)stack += ELF_AUX_ENTRIES * sizeof (AuxInfo);
+		stack = (char *)stack + ELF_AUX_ENTRIES * sizeof (AuxInfo);
 	}
 	return (stack);
 }
@@ -197,6 +197,7 @@ ELFNAME(check_header)(Elf_Ehdr *ehdr, int type)
 	return (0);
 }
 
+#ifndef	SMALL_KERNEL
 /*
  * Check header for validity; return 0 for ok, ENOEXEC if error.
  * Remember OS tag for callers sake.
@@ -242,6 +243,7 @@ os_ok:
 	*os = ehdr->e_ident[OI_OS];
 	return (0);
 }
+#endif	/* !SMALL_KERNEL */
 
 /*
  * Load a psection at the appropriate address
@@ -352,10 +354,11 @@ ELFNAME(load_file)(struct proc *p, char *path, struct exec_package *epp,
 	Elf_Ehdr eh;
 	Elf_Phdr *ph = NULL;
 	u_long phsize;
-	char *bp = NULL;
 	Elf_Addr addr;
 	struct vnode *vp;
+#ifndef SMALL_KERNEL
 	u_int8_t os;			/* Just a dummy in this routine */
+#endif
 	Elf_Phdr *base_ph = NULL;
 	struct interp_ld_sec {
 		Elf_Addr vaddr;
@@ -365,7 +368,6 @@ ELFNAME(load_file)(struct proc *p, char *path, struct exec_package *epp,
 	Elf_Addr pos = *last;
 	int file_align;
 
-	bp = path;
 	NDINIT(&nd, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, path, p);
 	if ((error = namei(&nd)) != 0) {
 		return (error);
@@ -387,8 +389,11 @@ ELFNAME(load_file)(struct proc *p, char *path, struct exec_package *epp,
 				    (caddr_t)&eh, sizeof(eh))) != 0)
 		goto bad1;
 
-	if (ELFNAME(check_header)(&eh, ET_DYN) &&
-	    ELFNAME(olf_check_header)(&eh, ET_DYN, &os)) {
+	if (ELFNAME(check_header)(&eh, ET_DYN)
+#ifndef SMALL_KERNEL
+	    && ELFNAME(olf_check_header)(&eh, ET_DYN, &os)
+#endif
+	    ) {
 		error = ENOEXEC;
 		goto bad1;
 	}
@@ -545,8 +550,11 @@ ELFNAME2(exec,makecmds)(struct proc *p, struct exec_package *epp)
 	if (epp->ep_hdrvalid < sizeof(Elf_Ehdr))
 		return (ENOEXEC);
 
-	if (ELFNAME(check_header)(eh, ET_EXEC) &&
-	    ELFNAME(olf_check_header)(eh, ET_EXEC, &os))
+	if (ELFNAME(check_header)(eh, ET_EXEC)
+#ifndef SMALL_KERNEL
+	    && ELFNAME(olf_check_header)(eh, ET_EXEC, &os)
+#endif
+	    )
 		return (ENOEXEC);
 
 	/*
@@ -731,7 +739,7 @@ native:
 
 	/*
 	 * Check if we found a dynamically linked binary and arrange to load
-	 * it's interpreter when the exec file is released.
+	 * its interpreter when the exec file is released.
 	 */
 	if (interp) {
 		struct elf_args *ap;

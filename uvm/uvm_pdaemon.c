@@ -1,4 +1,4 @@
-/*	$OpenBSD: uvm_pdaemon.c,v 1.29 2006/07/13 22:51:26 deraadt Exp $	*/
+/*	$OpenBSD: uvm_pdaemon.c,v 1.31 2007/04/04 17:44:45 art Exp $	*/
 /*	$NetBSD: uvm_pdaemon.c,v 1.23 2000/08/20 10:24:14 bjh21 Exp $	*/
 
 /* 
@@ -473,7 +473,7 @@ uvmpd_scan_inactive(pglst)
 			 */
 
 			/* is page part of an anon or ownerless ? */
-			if ((p->pqflags & PQ_ANON) || p->uobject == NULL) {
+			if ((p->pg_flags & PQ_ANON) || p->uobject == NULL) {
 				anon = p->uanon;
 				KASSERT(anon != NULL);
 				if (!simple_lock_try(&anon->an_lock)) {
@@ -486,13 +486,14 @@ uvmpd_scan_inactive(pglst)
 				 * name of "anon"!
 				 */
 
-				if ((p->pqflags & PQ_ANON) == 0) {
+				if ((p->pg_flags & PQ_ANON) == 0) {
 					KASSERT(p->loan_count > 0);
 					p->loan_count--;
-					p->pqflags |= PQ_ANON;
+					atomic_setbits_int(&p->pg_flags,
+					    PQ_ANON);
 					/* anon now owns it */
 				}
-				if (p->flags & PG_BUSY) {
+				if (p->pg_flags & PG_BUSY) {
 					simple_unlock(&anon->an_lock);
 					uvmexp.pdbusy++;
 					/* someone else owns page, skip it */
@@ -506,7 +507,7 @@ uvmpd_scan_inactive(pglst)
 					/* lock failed, skip this page */
 					continue;
 				}
-				if (p->flags & PG_BUSY) {
+				if (p->pg_flags & PG_BUSY) {
 					simple_unlock(&uobj->vmobjlock);
 					uvmexp.pdbusy++;
 					/* someone else owns page, skip it */
@@ -521,8 +522,8 @@ uvmpd_scan_inactive(pglst)
 			 * can free it now and continue.
 			 */
 
-			if (p->flags & PG_CLEAN) {
-				if (p->pqflags & PQ_SWAPBACKED) {
+			if (p->pg_flags & PG_CLEAN) {
+				if (p->pg_flags & PQ_SWAPBACKED) {
 					/* this page now lives only in swap */
 					simple_lock(&uvm.swap_data_lock);
 					uvmexp.swpgonly++;
@@ -576,7 +577,7 @@ uvmpd_scan_inactive(pglst)
 			 */
 
 			KASSERT(uvmexp.swpgonly <= uvmexp.swpages);
-			if ((p->pqflags & PQ_SWAPBACKED) &&
+			if ((p->pg_flags & PQ_SWAPBACKED) &&
 			    uvmexp.swpgonly == uvmexp.swpages) {
 				dirtyreacts++;
 				uvm_pageactivate(p);
@@ -595,15 +596,15 @@ uvmpd_scan_inactive(pglst)
 			 */
 
 			KASSERT(uvmexp.swpginuse <= uvmexp.swpages);
-			if ((p->pqflags & PQ_SWAPBACKED) &&
+			if ((p->pg_flags & PQ_SWAPBACKED) &&
 			    uvmexp.swpginuse == uvmexp.swpages) {
 
-				if ((p->pqflags & PQ_ANON) &&
+				if ((p->pg_flags & PQ_ANON) &&
 				    p->uanon->an_swslot) {
 					uvm_swap_free(p->uanon->an_swslot, 1);
 					p->uanon->an_swslot = 0;
 				}
-				if (p->pqflags & PQ_AOBJ) {
+				if (p->pg_flags & PQ_AOBJ) {
 					uao_dropswap(p->uobject,
 						     p->offset >> PAGE_SHIFT);
 				}
@@ -618,8 +619,8 @@ uvmpd_scan_inactive(pglst)
 			 * in I/O.
 			 */
 
-			swap_backed = ((p->pqflags & PQ_SWAPBACKED) != 0);
-			p->flags |= PG_BUSY;		/* now we own it */
+			swap_backed = ((p->pg_flags & PQ_SWAPBACKED) != 0);
+			atomic_setbits_int(&p->pg_flags, PG_BUSY);
 			UVM_PAGE_OWN(p, "scan_inactive");
 			pmap_page_protect(p, VM_PROT_READ);
 			uvmexp.pgswapout++;
@@ -656,7 +657,9 @@ uvmpd_scan_inactive(pglst)
 					    TRUE);
 					if (swslot == 0) {
 						/* no swap?  give up! */
-						p->flags &= ~PG_BUSY;
+						atomic_clearbits_int(
+						    &p->pg_flags,
+						    PG_BUSY);
 						UVM_PAGE_OWN(p, NULL);
 						if (anon)
 							simple_unlock(
@@ -784,7 +787,7 @@ uvmpd_scan_inactive(pglst)
 			uvm_lock_pageq();
 			uvmexp.pdpending++;
 			if (p) {
-				if (p->pqflags & PQ_INACTIVE)
+				if (p->pg_flags & PQ_INACTIVE)
 					nextpg = TAILQ_NEXT(p, pageq);
 				else
 					nextpg = TAILQ_FIRST(pglst);
@@ -846,15 +849,15 @@ uvmpd_scan_inactive(pglst)
 #endif
 
 			/* handle PG_WANTED now */
-			if (p->flags & PG_WANTED)
+			if (p->pg_flags & PG_WANTED)
 				/* still holding object lock */
 				wakeup(p);
 
-			p->flags &= ~(PG_BUSY|PG_WANTED);
+			atomic_clearbits_int(&p->pg_flags, PG_BUSY|PG_WANTED);
 			UVM_PAGE_OWN(p, NULL);
 
 			/* released during I/O? */
-			if (p->flags & PG_RELEASED) {
+			if (p->pg_flags & PG_RELEASED) {
 				if (anon) {
 					/* remove page so we can get nextpg */
 					anon->u.an_page = NULL;
@@ -903,7 +906,8 @@ uvmpd_scan_inactive(pglst)
 					/* pageout was a success... */
 					pmap_clear_reference(p);
 					pmap_clear_modify(p);
-					p->flags |= PG_CLEAN;
+					atomic_setbits_int(&p->pg_flags,
+					    PG_CLEAN);
 				}
 			}
 
@@ -937,7 +941,7 @@ uvmpd_scan_inactive(pglst)
 			uvm_lock_pageq();
 		}
 
-		if (nextpg && (nextpg->pqflags & PQ_INACTIVE) == 0) {
+		if (nextpg && (nextpg->pg_flags & PQ_INACTIVE) == 0) {
 			nextpg = TAILQ_FIRST(pglst);	/* reload! */
 		}
 	}
@@ -1035,23 +1039,23 @@ uvmpd_scan()
 	     p != NULL && (inactive_shortage > 0 || swap_shortage > 0);
 	     p = nextpg) {
 		nextpg = TAILQ_NEXT(p, pageq);
-		if (p->flags & PG_BUSY)
+		if (p->pg_flags & PG_BUSY)
 			continue;	/* quick check before trying to lock */
 
 		/*
 		 * lock the page's owner.
 		 */
 		/* is page anon owned or ownerless? */
-		if ((p->pqflags & PQ_ANON) || p->uobject == NULL) {
+		if ((p->pg_flags & PQ_ANON) || p->uobject == NULL) {
 			KASSERT(p->uanon != NULL);
 			if (!simple_lock_try(&p->uanon->an_lock))
 				continue;
 
 			/* take over the page? */
-			if ((p->pqflags & PQ_ANON) == 0) {
+			if ((p->pg_flags & PQ_ANON) == 0) {
 				KASSERT(p->loan_count > 0);
 				p->loan_count--;
-				p->pqflags |= PQ_ANON;
+				atomic_setbits_int(&p->pg_flags, PQ_ANON);
 			}
 		} else {
 			if (!simple_lock_try(&p->uobject->vmobjlock))
@@ -1062,8 +1066,8 @@ uvmpd_scan()
 		 * skip this page if it's busy.
 		 */
 
-		if ((p->flags & PG_BUSY) != 0) {
-			if (p->pqflags & PQ_ANON)
+		if ((p->pg_flags & PG_BUSY) != 0) {
+			if (p->pg_flags & PQ_ANON)
 				simple_unlock(&p->uanon->an_lock);
 			else
 				simple_unlock(&p->uobject->vmobjlock);
@@ -1076,18 +1080,19 @@ uvmpd_scan()
 		 */
 
 		if (swap_shortage > 0) {
-			if ((p->pqflags & PQ_ANON) && p->uanon->an_swslot) {
+			if ((p->pg_flags & PQ_ANON) && p->uanon->an_swslot) {
 				uvm_swap_free(p->uanon->an_swslot, 1);
 				p->uanon->an_swslot = 0;
-				p->flags &= ~PG_CLEAN;
+				atomic_clearbits_int(&p->pg_flags, PG_CLEAN);
 				swap_shortage--;
 			}
-			if (p->pqflags & PQ_AOBJ) {
+			if (p->pg_flags & PQ_AOBJ) {
 				int slot = uao_set_swslot(p->uobject,
 					p->offset >> PAGE_SHIFT, 0);
 				if (slot) {
 					uvm_swap_free(slot, 1);
-					p->flags &= ~PG_CLEAN;
+					atomic_clearbits_int(&p->pg_flags,
+					    PG_CLEAN);
 					swap_shortage--;
 				}
 			}
@@ -1105,7 +1110,7 @@ uvmpd_scan()
 			uvmexp.pddeact++;
 			inactive_shortage--;
 		}
-		if (p->pqflags & PQ_ANON)
+		if (p->pg_flags & PQ_ANON)
 			simple_unlock(&p->uanon->an_lock);
 		else
 			simple_unlock(&p->uobject->vmobjlock);

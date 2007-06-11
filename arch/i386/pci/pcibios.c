@@ -1,4 +1,4 @@
-/*	$OpenBSD: pcibios.c,v 1.34 2006/09/19 11:06:34 jsg Exp $	*/
+/*	$OpenBSD: pcibios.c,v 1.36 2007/02/20 21:15:01 tom Exp $	*/
 /*	$NetBSD: pcibios.c,v 1.5 2000/08/01 05:23:59 uch Exp $	*/
 
 /*
@@ -266,7 +266,7 @@ pcibios_pir_init(struct pcibios_softc *sc)
 		for (i = 0; i < pirh->tablesize; i++)
 			cksum += p[i];
 
-		printf("%s: PCI IRQ Routing Table rev %d.%d @ 0x%llx/%d "
+		printf("%s: PCI IRQ Routing Table rev %d.%d @ 0x%lx/%d "
 		    "(%d entries)\n", sc->sc_dev.dv_xname,
 		    pirh->version >> 8, pirh->version & 0xff, pa,
 		    pirh->tablesize, (pirh->tablesize - sizeof(*pirh)) / 16);
@@ -371,7 +371,7 @@ pcibios_get_status(struct pcibios_softc *sc, u_int32_t *rev_maj,
 		return (PCIBIOS_SERVICE_NOT_PRESENT);	/* XXX */
 
 	/*
-	 * Fill in the various pieces if info we're looking for.
+	 * Fill in the various pieces of info we're looking for.
 	 */
 	*mech1 = ax & 1;
 	*mech2 = ax & (1 << 1);

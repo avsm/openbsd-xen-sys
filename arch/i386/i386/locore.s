@@ -1,4 +1,4 @@
-/*	$OpenBSD: locore.s,v 1.104 2006/11/26 15:13:21 dim Exp $	*/
+/*	$OpenBSD: locore.s,v 1.107 2007/04/03 10:14:47 art Exp $	*/
 /*	$NetBSD: locore.s,v 1.145 1996/05/03 19:41:19 christos Exp $	*/
 
 /*-
@@ -125,10 +125,14 @@
 
 #define	CHECK_ASTPENDING(treg)				\
 	GET_CPUINFO(treg)			;	\
-	cmpl	$0,CPU_INFO_ASTPENDING(treg)
+	movl	CPU_INFO_CURPROC(treg), treg	;	\
+	cmpl	$0, treg			;	\
+	je	1f				;	\
+	cmpl	$0,P_MD_ASTPENDING(treg)	;	\
+	1:
 
-#define	CLEAR_ASTPENDING(cireg)				\
-	movl	$0,CPU_INFO_ASTPENDING(cireg)
+#define	CLEAR_ASTPENDING(cpreg)				\
+	movl	$0,P_MD_ASTPENDING(cpreg)
 
 /*
  * These are used on interrupt or trap entry or exit.
@@ -201,7 +205,6 @@
 	.globl	_C_LABEL(cpu_cache_ecx), _C_LABEL(cpu_cache_edx)
 	.globl	_C_LABEL(cold), _C_LABEL(cnvmem), _C_LABEL(extmem)
 	.globl	_C_LABEL(esym)
-	.globl	_C_LABEL(nkptp_max)
 	.globl	_C_LABEL(boothowto), _C_LABEL(bootdev), _C_LABEL(atdevbase)
 	.globl	_C_LABEL(proc0paddr), _C_LABEL(PTDpaddr), _C_LABEL(PTDsize)
 	.globl	_C_LABEL(gdt)
@@ -531,13 +534,13 @@ try586:	/* Use the `cpuid' instruction. */
 /*
  * Virtual address space of kernel:
  *
- * text | data | bss | [syms] | page dir | proc0 kstack | Sysmap
- *			      0          1       2      3
+ * text | data | bss | [syms] | proc0 stack | page dir     | Sysmap
+ *			      0             1       2      3
  */
-#define	PROC0PDIR	((0)		* NBPG)
-#define	PROC0STACK	((4)		* NBPG)
-#define	SYSMAP		((4+UPAGES)	* NBPG)
-#define	TABLESIZE	((4+UPAGES) * NBPG) /* + _C_LABEL(nkpde) * NBPG */
+#define	PROC0STACK	((0)		* NBPG)
+#define	PROC0PDIR	((  UPAGES)	* NBPG)
+#define	SYSMAP		((1+UPAGES)	* NBPG)
+#define	TABLESIZE	((1+UPAGES) * NBPG) /* + _C_LABEL(nkpde) * NBPG */
 
 	/* Find end of kernel image. */
 	movl	$RELOC(_C_LABEL(end)),%edi
@@ -565,9 +568,9 @@ try586:	/* Use the `cpuid' instruction. */
 	jge	1f
 	movl	$NKPTP_MIN,%ecx			# set at min
 	jmp	2f
-1:	cmpl	RELOC(_C_LABEL(nkptp_max)),%ecx	# larger than max?
+1:	cmpl	$NKPTP_MAX,%ecx			# larger than max?
 	jle	2f
-	movl	RELOC(_C_LABEL(nkptp_max)),%ecx
+	movl	$NKPTP_MAX,%ecx
 2:	movl	%ecx,RELOC(_C_LABEL(nkpde))	# and store it back
 
 	/* Clear memory for bootstrap tables. */
@@ -600,7 +603,7 @@ try586:	/* Use the `cpuid' instruction. */
 	leal	(RELOC(_C_LABEL(etext))+PGOFSET),%edx
 	andl	$~PGOFSET,%edx
 
-	/* Skip over the first 1MB. */
+	/* Skip over the first 2MB. */
 	movl	$RELOC(KERNTEXTOFF),%eax
 	movl	%eax,%ecx
 	shrl	$PGSHIFT,%ecx
@@ -652,14 +655,12 @@ try586:	/* Use the `cpuid' instruction. */
 	/* Install a PDE recursively mapping page directory as a page table! */
 	leal	(PROC0PDIR+PG_V|PG_KW)(%esi),%eax	# pte for ptd
 	movl	%eax,(PROC0PDIR+PDSLOT_PTE*4)(%esi)	# recursive PD slot
-	addl	$NBPG, %eax				# pte for ptd[1]
-	movl	%eax,(PROC0PDIR+(PDSLOT_PTE+1)*4)(%esi)	# recursive PD slot
 
 	/* Save phys. addr of PTD, for libkvm. */
-	movl	%esi,RELOC(_C_LABEL(PTDpaddr))
+	leal	(PROC0PDIR)(%esi),%eax		# phys address of ptd in proc 0
+	movl	%eax,RELOC(_C_LABEL(PTDpaddr))
 
 	/* Load base of page directory and enable mapping. */
-	movl	%esi,%eax		# phys address of ptd in proc 0
 	movl	%eax,%cr3		# load ptd addr into mmu
 	movl	%cr0,%eax		# get control word
 					# enable paging & NPX emulation
@@ -689,7 +690,8 @@ begin:
 	leal	(PROC0STACK+KERNBASE)(%esi),%eax
 	movl	%eax,_C_LABEL(proc0paddr)
 	leal	(USPACE-FRAMESIZE)(%eax),%esp
-	movl	%esi,PCB_CR3(%eax)	# pcb->pcb_cr3
+	leal	(PROC0PDIR)(%esi),%ebx	# phys address of ptd in proc 0
+	movl	%ebx,PCB_CR3(%eax)	# pcb->pcb_cr3
 	xorl	%ebp,%ebp		# mark end of frames
 
 	movl	_C_LABEL(nkpde),%eax
@@ -2304,42 +2306,6 @@ ENTRY(i686_pagezero)
 	popl	%edi
 	ret
 #endif
-
-#ifndef SMALL_KERNEL
-/*
- * int cpu_paenable(void *);
- */
-ENTRY(cpu_paenable)
-	movl	$-1, %eax
-	testl	$CPUID_PAE, _C_LABEL(cpu_feature)
-	jz	1f
-
-	pushl	%esi
-	pushl	%edi
-	movl	12(%esp), %esi
-	movl	%cr3, %edi
-	orl	$0xfe0, %edi	/* PDPT will be in the last four slots! */
-	movl	%edi, %cr3
-	addl	$KERNBASE, %edi	/* and make it back virtual again */
-	movl	$8, %ecx
-	cld
-	rep
-	movsl
-	movl	%cr4, %eax
-	orl	$CR4_PAE, %eax
-	movl	%eax, %cr4	/* BANG!!! */
-	movl	12(%esp), %eax
-	subl	$KERNBASE, %eax
-	movl	%eax, %cr3	/* reload real PDPT */
-	movl	$4*NBPG, %eax
-	movl	%eax, _C_LABEL(PTDsize)
-
-	xorl	%eax, %eax
-	popl	%edi
-	popl	%esi
-1:
-	ret
-#endif /* !SMALL_KERNEL */
 
 #if NLAPIC > 0
 #include <i386/i386/apicvec.s>

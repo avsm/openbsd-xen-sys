@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_bnx.c,v 1.41 2007/01/21 01:08:03 mcbride Exp $	*/
+/*	$OpenBSD: if_bnx.c,v 1.47 2007/03/03 11:17:48 reyk Exp $	*/
 
 /*-
  * Copyright (c) 2006 Broadcom Corporation
@@ -738,6 +738,15 @@ bnx_attach(struct device *parent, struct device *self, void *aux)
 
 	printf(": %s\n", intrstr);
 
+	/* Hookup IRQ last. */
+	sc->bnx_intrhand = pci_intr_establish(pc, sc->bnx_ih, IPL_NET,
+	    bnx_intr, sc, sc->bnx_dev.dv_xname);
+	if (sc->bnx_intrhand == NULL) {
+		printf("%s: couldn't establish interrupt\n",
+		    sc->bnx_dev.dv_xname);
+		goto bnx_attach_fail;
+	}
+
 	mountroothook_establish(bnx_attachhook, sc);
 	return;
 
@@ -751,7 +760,6 @@ bnx_attachhook(void *xsc)
 {
 	struct bnx_softc *sc = xsc;
 	struct pci_attach_args *pa = &sc->bnx_pa;
-	pci_chipset_tag_t	pc = pa->pa_pc;
 	struct ifnet		*ifp;
 	u_int32_t		val;
 	int error;
@@ -862,7 +870,6 @@ bnx_attachhook(void *xsc)
                 ifp->if_baudrate = IF_Gbps(2.5);
         else
                 ifp->if_baudrate = IF_Gbps(1);
-	ifp->if_hardmtu = BNX_MAX_JUMBO_MTU;
 	IFQ_SET_MAXLEN(&ifp->if_snd, USABLE_TX_BD - 1);
 	IFQ_SET_READY(&ifp->if_snd);
 	bcopy(sc->eaddr, sc->arpcom.ac_enaddr, ETHER_ADDR_LEN);
@@ -914,14 +921,8 @@ bnx_attachhook(void *xsc)
 	/* Get the firmware running so ASF still works. */
 	bnx_mgmt_init(sc);
 
-	/* Hookup IRQ last. */
-	sc->bnx_intrhand = pci_intr_establish(pc, sc->bnx_ih, IPL_NET,
-	    bnx_intr, sc, sc->bnx_dev.dv_xname);
-	if (sc->bnx_intrhand == NULL) {
-		printf("%s: couldn't establish interrupt\n",
-		    sc->bnx_dev.dv_xname);
-		goto bnx_attach_fail;
-	}
+	/* Handle interrupts */
+	sc->bnx_flags |= BNX_ACTIVE_FLAG;
 
 	goto bnx_attach_exit;
 
@@ -2904,9 +2905,7 @@ void
 bnx_stop(struct bnx_softc *sc)
 {
 	struct ifnet		*ifp = &sc->arpcom.ac_if;
-	struct ifmedia_entry	*ifm;
 	struct mii_data		*mii = NULL;
-	int			mtmp, itmp;
 
 	DBPRINT(sc, BNX_VERBOSE_RESET, "Entering %s()\n", __FUNCTION__);
 
@@ -2932,26 +2931,6 @@ bnx_stop(struct bnx_softc *sc)
 	/* Free TX buffers. */
 	bnx_free_tx_chain(sc);
 
-	/*
-	 * Isolate/power down the PHY, but leave the media selection
-	 * unchanged so that things will be put back to normal when
-	 * we bring the interface back up.
-	 */
-
-	itmp = ifp->if_flags;
-	ifp->if_flags |= IFF_UP;
-	/*
-	 * If we are called from bnx_detach(), mii is already NULL.
-	 */
-	if (mii != NULL) {
-		ifm = mii->mii_media.ifm_cur;
-		mtmp = ifm->ifm_media;
-		ifm->ifm_media = IFM_ETHER|IFM_NONE;
-		mii_mediachg(mii);
-		ifm->ifm_media = mtmp;
-	}
-
-	ifp->if_flags = itmp;
 	ifp->if_timer = 0;
 
 	sc->bnx_link = 0;
@@ -3263,8 +3242,9 @@ bnx_get_buf(struct bnx_softc *sc, struct mbuf *m, u_int16_t *prod,
 	int			i, rc = 0;
 	u_int32_t		addr;
 #ifdef BNX_DEBUG
-	u_int16_t debug_chain_prod =	*chain_prod;
+	u_int16_t		debug_chain_prod = *chain_prod;
 #endif
+	u_int16_t		first_chain_prod;
 
 	DBPRINT(sc, (BNX_VERBOSE_RESET | BNX_VERBOSE_RECV), "Entering %s()\n", 
 	    __FUNCTION__);
@@ -3300,7 +3280,7 @@ bnx_get_buf(struct bnx_softc *sc, struct mbuf *m, u_int16_t *prod,
 		}
 
 		DBRUNIF(1, sc->rx_mbuf_alloc++);
-		MEXTMALLOC(m_new, sc->mbuf_alloc_size, M_DONTWAIT);
+		MCLGET(m_new, M_DONTWAIT);
 		if (!(m_new->m_flags & M_EXT)) {
 			DBPRINT(sc, BNX_WARN,
 			    "%s(%d): RX mbuf chain allocation failed!\n", 
@@ -3324,6 +3304,7 @@ bnx_get_buf(struct bnx_softc *sc, struct mbuf *m, u_int16_t *prod,
 
 	/* Map the mbuf cluster into device memory. */
 	map = sc->rx_mbuf_map[*chain_prod];
+	first_chain_prod = *chain_prod;
 	if (bus_dmamap_load_mbuf(sc->bnx_dmatag, map, m_new, BUS_DMA_NOWAIT)) {
 		BNX_PRINTF(sc, "%s(%d): Error mapping mbuf into RX chain!\n",
 		    __FILE__, __LINE__);
@@ -3373,8 +3354,14 @@ bnx_get_buf(struct bnx_softc *sc, struct mbuf *m, u_int16_t *prod,
 
 	rxbd->rx_bd_flags |= htole32(RX_BD_FLAGS_END);
 
-	/* Save the mbuf and update our counter. */
+	/*
+	 * Save the mbuf, adjust the map pointer (swap map for first and
+	 * last rx_bd entry so that rx_mbuf_ptr and rx_mbuf_map matches)
+	 * and update our counter.
+	 */
 	sc->rx_mbuf_ptr[*chain_prod] = m_new;
+	sc->rx_mbuf_map[first_chain_prod] = sc->rx_mbuf_map[*chain_prod];
+	sc->rx_mbuf_map[*chain_prod] = map;
 	sc->free_rx_bd -= map->dm_nsegs;
 
 	DBRUN(BNX_VERBOSE_RECV, bnx_dump_rx_mbuf_chain(sc, debug_chain_prod, 
@@ -3973,11 +3960,8 @@ bnx_rx_intr(struct bnx_softc *sc)
 				vh.evl_tag = l2fhdr->l2_fhdr_vlan_tag;
 				vh.evl_encap_proto = htons(ETHERTYPE_VLAN);
 				m_adj(m, ETHER_HDR_LEN);
-				if ((m = m_prepend(m, sizeof(vh), M_DONTWAIT)) == NULL)
-					goto bnx_rx_int_next_rx;
-				m->m_pkthdr.len += sizeof(vh);
-				if (m->m_len < sizeof(vh) &&
-				    (m = m_pullup(m, sizeof(vh))) == NULL)
+				M_PREPEND(m, sizeof(vh), M_DONTWAIT);
+				if (m == NULL)
 					goto bnx_rx_int_next_rx;
 				m_copyback(m, 0, sizeof(vh), &vh);
 #else
@@ -4231,7 +4215,7 @@ bnx_init(void *xsc)
 	bnx_set_mac_addr(sc);
 
 	/* Calculate and program the Ethernet MRU size. */
-	ether_mtu = BNX_MAX_JUMBO_ETHER_MTU_VLAN;
+	ether_mtu = BNX_MAX_STD_ETHER_MTU_VLAN;
 
 	DBPRINT(sc, BNX_INFO, "%s(): setting MRU = %d\n",
 	    __FUNCTION__, ether_mtu);
@@ -4670,6 +4654,9 @@ bnx_intr(void *xsc)
 	u_int32_t		status_attn_bits;
 
 	sc = xsc;
+	if ((sc->bnx_flags & BNX_ACTIVE_FLAG) == 0)
+		return (0);
+
 	ifp = &sc->arpcom.ac_if;
 
 	DBRUNIF(1, sc->interrupts_generated++);
@@ -4784,7 +4771,7 @@ bnx_set_rx_mode(struct bnx_softc *sc)
 	struct ifnet		*ifp = &ac->ac_if;
 	struct ether_multi	*enm;
 	struct ether_multistep	step;
-	u_int32_t		hashes[4] = { 0, 0, 0, 0 };
+	u_int32_t		hashes[NUM_MC_HASH_REGISTERS] = { 0, 0, 0, 0, 0, 0, 0, 0 };
 	u_int32_t		rx_mode, sort_mode;
 	int			h, i;
 
@@ -4831,12 +4818,12 @@ allmulti:
 				goto allmulti;
 			}
 			h = ether_crc32_le(enm->enm_addrlo, ETHER_ADDR_LEN) &
-			    0x7F;
-			hashes[(h & 0x60) >> 5] |= 1 << (h & 0x1F);
+			    0xFF;
+			hashes[(h & 0xE0) >> 5] |= 1 << (h & 0x1F);
 			ETHER_NEXT_MULTI(step, enm);
 		}
 
-		for (i = 0; i < 4; i++)
+		for (i = 0; i < NUM_MC_HASH_REGISTERS; i++)
 			REG_WR(sc, BNX_EMAC_MULTICAST_HASH0 + (i * 4),
 			    hashes[i]);
 

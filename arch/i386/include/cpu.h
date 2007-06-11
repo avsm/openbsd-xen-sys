@@ -1,4 +1,4 @@
-/*	$OpenBSD: cpu.h,v 1.85 2006/12/20 17:50:40 gwk Exp $	*/
+/*	$OpenBSD: cpu.h,v 1.90 2007/04/03 10:14:47 art Exp $	*/
 /*	$NetBSD: cpu.h,v 1.35 1996/05/05 19:29:26 christos Exp $	*/
 
 /*-
@@ -124,7 +124,6 @@ struct cpu_info {
 	void (*cpu_setup)(struct cpu_info *);	/* proc-dependant init */
 
 	int		ci_want_resched;
-	int		ci_astpending;
 
 	union descriptor *ci_gdt;
 	union descriptor *ci_ldt;	/* per-cpu default LDT */
@@ -202,7 +201,6 @@ extern void cpu_init_idle_pcbs(void);
 #define curpcb			curcpu()->ci_curpcb
 
 #define want_resched (curcpu()->ci_want_resched)
-#define astpending (curcpu()->ci_astpending)
 
 /*
  * Preempt the current process if in interrupt from user mode,
@@ -219,48 +217,35 @@ extern void need_resched(struct cpu_info *);
  */
 #define	PROC_PC(p)		((p)->p_md.md_regs->tf_eip)
 
+void aston(struct proc *);
+
 /*
  * Give a profiling tick to the current process when the user profiling
  * buffer pages are invalid.  On the i386, request an ast to send us
  * through trap(), marking the proc as needing a profiling tick.
  */
-#define	need_proftick(p)	((p)->p_flag |= P_OWEUPC, setsoftast())
+#define	need_proftick(p)	aston(p)
 
 /*
  * Notify the current process (p) that it has a signal pending,
  * process as soon as possible.
  */
-#define	signotify(p)		setsoftast()
+#define signotify(p)		aston(p)
 
 /*
  * We need a machine-independent name for this.
  */
 extern void (*delay_func)(int);
 struct timeval;
-extern void (*microtime_func)(struct timeval *);
 
 #define	DELAY(x)		(*delay_func)(x)
 #define delay(x)		(*delay_func)(x)
-#define microtime(tv)		(*microtime_func)(tv)
 
 #if defined(I586_CPU) || defined(I686_CPU)
 /*
  * High resolution clock support (Pentium only)
  */
 void	calibrate_cyclecounter(void);
-#ifndef	HZ
-extern u_quad_t pentium_base_tsc;
-#define CPU_CLOCKUPDATE()						\
-	do {								\
-		if (cpuspeed) {						\
-			__asm __volatile("cli\n"			\
-					 "rdtsc\n"			\
-					 : "=A" (pentium_base_tsc)	\
-					 : );				\
-			__asm __volatile("sti"); 			\
-		}							\
-	} while (0)
-#endif
 #endif
 
 /*
@@ -357,8 +342,10 @@ void	initrtclock(void);
 void	startrtclock(void);
 void	rtcdrain(void *);
 void	i8254_delay(int);
-void	i8254_microtime(struct timeval *);
 void	i8254_initclocks(void);
+void	i8254_inittimecounter(void);
+void	i8254_inittimecounter_simple(void);
+
 
 /* est.c */
 #if !defined(SMALL_KERNEL) && defined(I686_CPU)
@@ -419,10 +406,6 @@ int	kvtop(caddr_t);
 /* vm86.c */
 void	vm86_gpfault(struct proc *, int);
 #endif /* VM86 */
-
-#ifndef SMALL_KERNEL
-int	cpu_paenable(void *);
-#endif /* !SMALL_KERNEL */
 
 #ifdef GENERIC
 /* swapgeneric.c */

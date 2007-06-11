@@ -1,4 +1,4 @@
-/*	$OpenBSD: machdep.c,v 1.32 2006/05/07 18:58:53 robert Exp $ */
+/*	$OpenBSD: machdep.c,v 1.34 2007/02/26 21:30:18 miod Exp $ */
 
 /*
  * Copyright (c) 2003-2004 Opsycon AB  (www.opsycon.se / www.opsycon.com)
@@ -91,7 +91,9 @@ extern char kernel_text[];
 extern int makebootdev(const char *, int);
 extern void stacktrace(void);
 
+#ifdef DEBUG
 void dump_tlb(void);
+#endif
 
 /* the following is used externally (sysctl_hw) */
 char	machine[] = MACHINE;		/* machine "architecture" */
@@ -801,6 +803,8 @@ setregs(p, pack, stack, retval)
 	p->p_md.md_pc_ctrl = 0;
 	p->p_md.md_watch_1 = 0;
 	p->p_md.md_watch_2 = 0;
+
+	retval[1] = 0;
 }
 
 
@@ -1117,6 +1121,7 @@ rm7k_watchintr(trapframe)
 	return(0);
 }
 
+#ifdef DEBUG
 /*
  *	Dump TLB contents.
  */
@@ -1164,3 +1169,4 @@ char *attr[] = {
 		bios_printf("\n");
 	}
 }
+#endif

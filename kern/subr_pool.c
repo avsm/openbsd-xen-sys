@@ -1,4 +1,4 @@
-/*	$OpenBSD: subr_pool.c,v 1.47 2006/05/20 18:29:23 mickey Exp $	*/
+/*	$OpenBSD: subr_pool.c,v 1.49 2007/04/11 12:10:42 art Exp $	*/
 /*	$NetBSD: subr_pool.c,v 1.61 2001/09/26 07:14:56 chs Exp $	*/
 
 /*-
@@ -100,7 +100,11 @@ struct pool_item {
 #ifdef DIAGNOSTIC
 	int pi_magic;
 #endif
+#ifdef DEADBEEF1
+#define	PI_MAGIC DEADBEEF1
+#else
 #define	PI_MAGIC 0xdeafbeef
+#endif
 	/* Other entries use only this list entry */
 	TAILQ_ENTRY(pool_item)	pi_list;
 };
@@ -2032,8 +2036,7 @@ pool_page_alloc_kmem(struct pool *pp, int flags)
 {
 	boolean_t waitok = (flags & PR_WAITOK) ? TRUE : FALSE;
 
-	return ((void *)uvm_km_alloc_poolpage1(kmem_map, uvmexp.kmem_object,
-	    waitok));
+	return ((void *)uvm_km_alloc_poolpage1(kmem_map, NULL, waitok));
 }
 
 void

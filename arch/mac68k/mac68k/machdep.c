@@ -1,4 +1,4 @@
-/*	$OpenBSD: machdep.c,v 1.133 2006/06/11 20:49:27 miod Exp $	*/
+/*	$OpenBSD: machdep.c,v 1.135 2007/03/03 21:21:25 miod Exp $	*/
 /*	$NetBSD: machdep.c,v 1.207 1998/07/08 04:39:34 thorpej Exp $	*/
 
 /*
@@ -775,7 +775,7 @@ dumpconf()
 		dumplo = ctod(1);
 
 	/* Put dump at end of partition, and make it fit. */
-	if (dumpsize < dtoc(nblks - dumplo))
+	if (dumpsize > dtoc(nblks - dumplo))
 		dumpsize = dtoc(nblks - dumplo);
 	if (dumplo < nblks - ctod(dumpsize))
 		dumplo = nblks - ctod(dumpsize);
@@ -2135,6 +2135,7 @@ get_mapping(void)
 	return load_addr;	/* Return physical address of logical 0 */
 }
 
+#ifdef DEBUG
 /*
  * Debugging code for locore page-traversal routine.
  */
@@ -2158,6 +2159,7 @@ printstar(void)
 				movl sp@+,a1;
 				movl sp@+,a0");
 }
+#endif
 
 /*
  * Console bell callback; modularizes the console terminal emulator

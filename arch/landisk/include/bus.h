@@ -1,4 +1,4 @@
-/*	$OpenBSD: bus.h,v 1.1.1.1 2006/10/06 21:16:15 miod Exp $	*/
+/*	$OpenBSD: bus.h,v 1.3 2007/04/10 18:02:48 miod Exp $	*/
 /*	$NetBSD: bus.h,v 1.1 2006/09/01 21:26:18 uwe Exp $	*/
 
 /*-
@@ -73,39 +73,6 @@
 #define	_LANDISK_BUS_H_
 
 #include <sys/types.h>
-
-#ifdef _KERNEL
-/*
- * Turn on BUS_SPACE_DEBUG if the global DEBUG option is enabled.
- */
-#if defined(DEBUG) && !defined(BUS_SPACE_DEBUG)
-#define	BUS_SPACE_DEBUG
-#endif
-
-#ifdef BUS_SPACE_DEBUG
-#include <sys/systm.h> /* for printf() prototype */
-/*
- * Macros for checking the aligned-ness of pointers passed to bus
- * space ops.  Strict alignment is required by the SuperH architecture,
- * and a trap will occur if unaligned access is performed.  These
- * may aid in the debugging of a broken device driver by displaying
- * useful information about the problem.
- */
-#define	__BUS_SPACE_ALIGNED_ADDRESS(p, t)				\
-	((((u_long)(p)) & (sizeof(t)-1)) == 0)
-
-#define	__BUS_SPACE_ADDRESS_SANITY(p, t, d)				\
-({									\
-	if (__BUS_SPACE_ALIGNED_ADDRESS((p), t) == 0) {			\
-		printf("%s 0x%lx not aligned to %lu bytes %s:%d\n",	\
-		    d, (u_long)(p), (u_long)sizeof(t), __FILE__, __LINE__);	\
-	}								\
-	(void) 0;							\
-})
-#else
-#define	__BUS_SPACE_ADDRESS_SANITY(p, t, d)	(void) 0
-#endif /* BUS_SPACE_DEBUG */
-#endif /* _KERNEL */
 
 typedef	u_long	bus_addr_t;
 typedef	u_long	bus_size_t;
@@ -262,34 +229,19 @@ struct _bus_space {
 #define	__bs_opname(op,size)	__bs_c(__bs_c(__bs_c(bs_,op),_),size)
 
 #define	__bs_rs(sz, tn, t, h, o)					\
-	(__BUS_SPACE_ADDRESS_SANITY((h) + (o), tn, "bus addr"),		\
-	 (*(t)->__bs_opname(r,sz))((t)->bs_cookie, h, o))
+	(*(t)->__bs_opname(r,sz))((t)->bs_cookie, h, o)
 
 #define	__bs_ws(sz, tn, t, h, o, v)					\
-do {									\
-	__BUS_SPACE_ADDRESS_SANITY((h) + (o), tn, "bus addr");		\
-	(*(t)->__bs_opname(w,sz))((t)->bs_cookie, h, o, v);		\
-} while (0)
+	(*(t)->__bs_opname(w,sz))((t)->bs_cookie, h, o, v)
 
 #define	__bs_nonsingle(type, sz, tn, t, h, o, a, c)			\
-do {									\
-	__BUS_SPACE_ADDRESS_SANITY((a), tn, "buffer");			\
-	__BUS_SPACE_ADDRESS_SANITY((h) + (o), tn, "bus addr");		\
-	(*(t)->__bs_opname(type,sz))((t)->bs_cookie, h, o, a, c);	\
-} while (0)
+	(*(t)->__bs_opname(type,sz))((t)->bs_cookie, h, o, a, c)
 
 #define	__bs_set(type, sz, tn, t, h, o, v, c)				\
-do {									\
-	__BUS_SPACE_ADDRESS_SANITY((h) + (o), tn, "bus addr");		\
-	(*(t)->__bs_opname(type,sz))((t)->bs_cookie, h, o, v, c);	\
-} while (0)
+	(*(t)->__bs_opname(type,sz))((t)->bs_cookie, h, o, v, c)
 
 #define	__bs_copy(sz, tn, t, h1, o1, h2, o2, cnt)			\
-do {									\
-	__BUS_SPACE_ADDRESS_SANITY((h1) + (o1), tn, "bus addr 1");	\
-	__BUS_SPACE_ADDRESS_SANITY((h2) + (o2), tn, "bus addr 2");	\
-	(*(t)->__bs_opname(c,sz))((t)->bs_cookie, h1, o1, h2, o2, cnt); \
-} while (0)
+	(*(t)->__bs_opname(c,sz))((t)->bs_cookie, h1, o1, h2, o2, cnt)
 
 
 /*

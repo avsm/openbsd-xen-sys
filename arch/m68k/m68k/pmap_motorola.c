@@ -1,4 +1,4 @@
-/*	$OpenBSD: pmap_motorola.c,v 1.46 2006/06/24 13:22:15 miod Exp $ */
+/*	$OpenBSD: pmap_motorola.c,v 1.51 2007/04/04 17:44:45 art Exp $ */
 
 /*
  * Copyright (c) 1999 The NetBSD Foundation, Inc.
@@ -301,13 +301,14 @@ void		 pmap_free_pv(struct pv_entry *);
 #ifdef COMPAT_HPUX
 int		 pmap_mapmulti(pmap_t, vaddr_t);
 #endif
+void		 pmap_remove_flags(pmap_t, vaddr_t, vaddr_t, int);
 void		 pmap_remove_mapping(pmap_t, vaddr_t, pt_entry_t *, int);
 boolean_t	 pmap_testbit(struct vm_page *, int);
 void		 pmap_changebit(struct vm_page *, int, int);
 int		 pmap_enter_ptpage(pmap_t, vaddr_t);
 void		 pmap_ptpage_addref(vaddr_t);
 int		 pmap_ptpage_delref(vaddr_t);
-void		 pmap_collect1(pmap_t, paddr_t, paddr_t);
+void		 pmap_collect1(paddr_t, paddr_t);
 
 
 #ifdef PMAP_DEBUG
@@ -316,9 +317,10 @@ void pmap_check_wiring(char *, vaddr_t);
 #endif
 
 /* pmap_remove_mapping flags */
-#define	PRM_TFLUSH	1
-#define	PRM_CFLUSH	2
-#define	PRM_KEEPPTPAGE	4
+#define	PRM_TFLUSH	0x01
+#define	PRM_CFLUSH	0x02
+#define	PRM_KEEPPTPAGE	0x04
+#define	PRM_SKIPWIRED	0x08
 
 static struct pv_entry *pa_to_pvh(paddr_t);
 static struct pv_entry *pg_to_pvh(struct vm_page *);
@@ -763,21 +765,31 @@ pmap_remove(pmap, sva, eva)
 	pmap_t pmap;
 	vaddr_t sva, eva;
 {
-	vaddr_t nssva;
-	pt_entry_t *pte;
-#ifdef M68K_MMU_HP
-	boolean_t firstpage, needcflush;
-#endif
 	int flags;
 
 	PMAP_DPRINTF(PDB_FOLLOW|PDB_REMOVE|PDB_PROTECT,
 	    ("pmap_remove(%p, %lx, %lx)\n", pmap, sva, eva));
 
+	flags = active_pmap(pmap) ? PRM_TFLUSH : 0;
+	pmap_remove_flags(pmap, sva, eva, flags);
+}
+
+void
+pmap_remove_flags(pmap, sva, eva, flags)
+	pmap_t pmap;
+	vaddr_t sva, eva;
+	int flags;
+{
+	vaddr_t nssva;
+	pt_entry_t *pte;
+#ifdef M68K_MMU_HP
+	boolean_t firstpage, needcflush;
+#endif
+
 #ifdef M68K_MMU_HP
 	firstpage = TRUE;
 	needcflush = FALSE;
 #endif
-	flags = active_pmap(pmap) ? PRM_TFLUSH : 0;
 	while (sva < eva) {
 		nssva = m68k_trunc_seg(sva) + NBSEG;
 		if (nssva == 0 || nssva > eva)
@@ -800,6 +812,9 @@ pmap_remove(pmap, sva, eva)
 				break;
 			}
 			if (pmap_pte_v(pte)) {
+				if ((flags & PRM_SKIPWIRED) &&
+				    pmap_pte_w(pte))
+					goto skip;
 #ifdef M68K_MMU_HP
 				if (pmap_aliasmask) {
 					/*
@@ -822,6 +837,7 @@ pmap_remove(pmap, sva, eva)
 				}
 #endif
 				pmap_remove_mapping(pmap, sva, pte, flags);
+skip:
 			}
 			pte++;
 			sva += PAGE_SIZE;
@@ -1611,6 +1627,14 @@ pmap_extract(pmap, va, pap)
 	PMAP_DPRINTF(PDB_FOLLOW,
 	    ("pmap_extract(%p, %lx) -> ", pmap, va));
 
+#ifdef __HAVE_PMAP_DIRECT
+	if (pmap == pmap_kernel() && trunc_page(va) > VM_MAX_KERNEL_ADDRESS) {
+		if (pap != NULL)
+			*pap = va;
+		return (TRUE);
+	}
+#endif
+
 	if (pmap_ste_v(pmap, va)) {
 		pte = pmap_pte(pmap, va);
 		if (pmap_pte_v(pte)) {
@@ -1645,6 +1669,7 @@ void
 pmap_collect(pmap)
 	pmap_t		pmap;
 {
+	int flags;
 
 	PMAP_DPRINTF(PDB_FOLLOW, ("pmap_collect(%p)\n", pmap));
 
@@ -1658,7 +1683,7 @@ pmap_collect(pmap)
 
 		s = splvm();
 		for (bank = 0; bank < vm_nphysseg; bank++)
-			pmap_collect1(pmap, ptoa(vm_physmem[bank].start),
+			pmap_collect1(ptoa(vm_physmem[bank].start),
 			    ptoa(vm_physmem[bank].end));
 		splx(s);
 	} else {
@@ -1668,7 +1693,9 @@ pmap_collect(pmap)
 		 * entire address space.  Note: pmap_remove() performs
 		 * all necessary locking.
 		 */
-		pmap_remove(pmap, VM_MIN_ADDRESS, VM_MAX_ADDRESS);
+		flags = active_pmap(pmap) ? PRM_TFLUSH : 0;
+		pmap_remove_flags(pmap, VM_MIN_ADDRESS, VM_MAX_ADDRESS,
+		    flags | PRM_SKIPWIRED);
 		pmap_update(pmap);
 	}
 }
@@ -1683,8 +1710,7 @@ pmap_collect(pmap)
  *	WAY OF HANDLING PT PAGES!
  */
 void
-pmap_collect1(pmap, startpa, endpa)
-	pmap_t		pmap;
+pmap_collect1(startpa, endpa)
 	paddr_t		startpa, endpa;
 {
 	paddr_t pa;
@@ -1743,8 +1769,8 @@ ok:
 		 * We call pmap_remove_entry to take care of invalidating
 		 * ST and Sysptmap entries.
 		 */
-		pmap_extract(pmap, pv->pv_va, &kpa);
-		pmap_remove_mapping(pmap, pv->pv_va, PT_ENTRY_NULL,
+		pmap_extract(pmap_kernel(), pv->pv_va, &kpa);
+		pmap_remove_mapping(pmap_kernel(), pv->pv_va, PT_ENTRY_NULL,
 				    PRM_TFLUSH|PRM_CFLUSH);
 		/*
 		 * Use the physical address to locate the original
@@ -2653,7 +2679,7 @@ pmap_enter_ptpage(pmap, va)
 		    UVM_PGA_ZERO)) == NULL) {
 			uvm_wait("ptpage");
 		}
-		pg->flags &= ~(PG_BUSY|PG_FAKE);
+		atomic_clearbits_int(&pg->pg_flags, PG_BUSY|PG_FAKE);
 		UVM_PAGE_OWN(pg, NULL);
 		ptpa = VM_PAGE_TO_PHYS(pg);
 		pmap_enter(pmap_kernel(), va, ptpa,

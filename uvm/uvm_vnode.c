@@ -1,4 +1,4 @@
-/*	$OpenBSD: uvm_vnode.c,v 1.42 2006/07/26 23:15:55 mickey Exp $	*/
+/*	$OpenBSD: uvm_vnode.c,v 1.45 2007/04/04 17:44:45 art Exp $	*/
 /*	$NetBSD: uvm_vnode.c,v 1.36 2000/11/24 20:34:01 chs Exp $	*/
 
 /*
@@ -592,7 +592,7 @@ uvm_vnp_terminate(vp)
 #ifdef DEBUG
 		struct vm_page *pp;
 		TAILQ_FOREACH(pp, &uvn->u_obj.memq, listq) {
-			if ((pp->flags & PG_BUSY) == 0)
+			if ((pp->pg_flags & PG_BUSY) == 0)
 				panic("uvm_vnp_terminate: detected unbusy pg");
 		}
 		if (uvn->u_nio == 0)
@@ -676,7 +676,7 @@ uvn_releasepg(pg, nextpgp)
 {
 	struct uvm_vnode *uvn = (struct uvm_vnode *) pg->uobject;
 #ifdef DIAGNOSTIC
-	if ((pg->flags & PG_RELEASED) == 0)
+	if ((pg->pg_flags & PG_RELEASED) == 0)
 		panic("uvn_releasepg: page not released!");
 #endif
 
@@ -745,8 +745,7 @@ uvn_releasepg(pg, nextpgp)
  * so the current pager needs:
  *   int uvn_aiodone(struct uvm_aiodesc *)
  *
- * => return KERN_SUCCESS (aio finished, free it).  otherwise requeue for
- *	later collection.
+ * => return 0 (aio finished, free it). otherwise requeue for later collection.
  * => called with pageq's locked by the daemon.
  *
  * general outline:
@@ -874,7 +873,8 @@ uvn_flush(uobj, start, stop, flags)
 				if (!all &&
 				    (pp->offset < start || pp->offset >= stop))
 					continue;
-				pp->flags &= ~PG_CLEANCHK;
+				atomic_clearbits_int(&pp->pg_flags,
+				    PG_CLEANCHK);
 			}
 
 		} else {   /* by hash */
@@ -882,7 +882,8 @@ uvn_flush(uobj, start, stop, flags)
 			    curoff += PAGE_SIZE) {
 				pp = uvm_pagelookup(uobj, curoff);
 				if (pp)
-					pp->flags &= ~PG_CLEANCHK;
+					atomic_clearbits_int(&pp->pg_flags,
+					    PG_CLEANCHK);
 			}
 		}
 	}
@@ -946,9 +947,9 @@ uvn_flush(uobj, start, stop, flags)
 		 * confuse pagedaemon).
 		 */
 
-		if ((flags & PGO_CLEANIT) == 0 || (pp->flags & PG_BUSY) != 0) {
+		if ((flags & PGO_CLEANIT) == 0 || (pp->pg_flags & PG_BUSY) != 0) {
 			needs_clean = FALSE;
-			if ((pp->flags & PG_BUSY) != 0 &&
+			if ((pp->pg_flags & PG_BUSY) != 0 &&
 			    (flags & (PGO_CLEANIT|PGO_SYNCIO)) ==
 			             (PGO_CLEANIT|PGO_SYNCIO))
 				need_iosync = TRUE;
@@ -957,16 +958,16 @@ uvn_flush(uobj, start, stop, flags)
 			 * freeing: nuke all mappings so we can sync
 			 * PG_CLEAN bit with no race
 			 */
-			if ((pp->flags & PG_CLEAN) != 0 &&
+			if ((pp->pg_flags & PG_CLEAN) != 0 &&
 			    (flags & PGO_FREE) != 0 &&
-			    (pp->pqflags & PQ_ACTIVE) != 0)
+			    (pp->pg_flags & PQ_ACTIVE) != 0)
 				pmap_page_protect(pp, VM_PROT_NONE);
-			if ((pp->flags & PG_CLEAN) != 0 &&
+			if ((pp->pg_flags & PG_CLEAN) != 0 &&
 			    pmap_is_modified(pp))
-				pp->flags &= ~(PG_CLEAN);
-			pp->flags |= PG_CLEANCHK;	/* update "hint" */
+				atomic_clearbits_int(&pp->pg_flags, PG_CLEAN);
+			atomic_setbits_int(&pp->pg_flags, PG_CLEANCHK);
 
-			needs_clean = ((pp->flags & PG_CLEAN) == 0);
+			needs_clean = ((pp->pg_flags & PG_CLEAN) == 0);
 		}
 
 		/*
@@ -983,16 +984,17 @@ uvn_flush(uobj, start, stop, flags)
 
 			/* now dispose of pp */
 			if (flags & PGO_DEACTIVATE) {
-				if ((pp->pqflags & PQ_INACTIVE) == 0 &&
+				if ((pp->pg_flags & PQ_INACTIVE) == 0 &&
 				    pp->wire_count == 0) {
 					pmap_page_protect(pp, VM_PROT_NONE);
 					uvm_pagedeactivate(pp);
 				}
 
 			} else if (flags & PGO_FREE) {
-				if (pp->flags & PG_BUSY) {
+				if (pp->pg_flags & PG_BUSY) {
 					/* release busy pages */
-					pp->flags |= PG_RELEASED;
+					atomic_setbits_int(&pp->pg_flags,
+					    PG_RELEASED);
 				} else {
 					pmap_page_protect(pp, VM_PROT_NONE);
 					/* removed page from object */
@@ -1012,10 +1014,10 @@ uvn_flush(uobj, start, stop, flags)
 		 * note: locked: uobj and page queues.
 		 */
 
-		pp->flags |= PG_BUSY;	/* we 'own' page now */
+		atomic_setbits_int(&pp->pg_flags, PG_BUSY);
 		UVM_PAGE_OWN(pp, "uvn_flush");
 		pmap_page_protect(pp, VM_PROT_READ);
-		pp_version = pp->version;
+		pp_version = pp->pg_version;
 ReTry:
 		ppsp = pps;
 		npages = sizeof(pps) / sizeof(struct vm_page *);
@@ -1079,7 +1081,7 @@ ReTry:
 				 * no per-page ops: refresh ppnext and continue
 				 */
 				if (by_list) {
-					if (pp->version == pp_version)
+					if (pp->pg_version == pp_version)
 						ppnext = TAILQ_NEXT(pp, listq);
 					else
 						/* reset */
@@ -1118,7 +1120,7 @@ ReTry:
 
 				/* set up next page for outer loop */
 				if (by_list) {
-					if (pp->version == pp_version)
+					if (pp->pg_version == pp_version)
 						ppnext = TAILQ_NEXT(pp, listq);
 					else
 						/* reset */
@@ -1144,13 +1146,14 @@ ReTry:
 			 */
 
 			if (result != VM_PAGER_PEND) {
-				if (ptmp->flags & PG_WANTED)
+				if (ptmp->pg_flags & PG_WANTED)
 					/* still holding object lock */
 					wakeup(ptmp);
 
-				ptmp->flags &= ~(PG_WANTED|PG_BUSY);
+				atomic_clearbits_int(&ptmp->pg_flags,
+				    PG_WANTED|PG_BUSY);
 				UVM_PAGE_OWN(ptmp, NULL);
-				if (ptmp->flags & PG_RELEASED) {
+				if (ptmp->pg_flags & PG_RELEASED) {
 
 					/* pgo_releasepg wants this */
 					uvm_unlock_pageq();
@@ -1161,7 +1164,8 @@ ReTry:
 					continue;		/* next page */
 
 				} else {
-					ptmp->flags |= (PG_CLEAN|PG_CLEANCHK);
+					atomic_setbits_int(&ptmp->pg_flags,
+					    PG_CLEAN|PG_CLEANCHK);
 					if ((flags & PGO_FREE) == 0)
 						pmap_clear_modify(ptmp);
 				}
@@ -1172,7 +1176,7 @@ ReTry:
 			 */
 
 			if (flags & PGO_DEACTIVATE) {
-				if ((pp->pqflags & PQ_INACTIVE) == 0 &&
+				if ((pp->pg_flags & PQ_INACTIVE) == 0 &&
 				    pp->wire_count == 0) {
 					pmap_page_protect(ptmp, VM_PROT_NONE);
 					uvm_pagedeactivate(ptmp);
@@ -1180,9 +1184,11 @@ ReTry:
 
 			} else if (flags & PGO_FREE) {
 				if (result == VM_PAGER_PEND) {
-					if ((ptmp->flags & PG_BUSY) != 0)
+					if ((ptmp->pg_flags & PG_BUSY) != 0)
 						/* signal for i/o done */
-						ptmp->flags |= PG_RELEASED;
+						atomic_setbits_int(
+						    &ptmp->pg_flags,
+						    PG_RELEASED);
 				} else {
 					if (result != VM_PAGER_OK) {
 						printf("uvn_flush: obj=%p, "
@@ -1350,7 +1356,7 @@ uvn_get(uobj, offset, pps, npagesp, centeridx, access_type, advice, flags)
 
 			/* to be useful must get a non-busy, non-released pg */
 			if (ptmp == NULL ||
-			    (ptmp->flags & (PG_BUSY|PG_RELEASED)) != 0) {
+			    (ptmp->pg_flags & (PG_BUSY|PG_RELEASED)) != 0) {
 				if (lcv == centeridx || (flags & PGO_ALLPAGES)
 				    != 0)
 				done = FALSE;	/* need to do a wait or I/O! */
@@ -1361,7 +1367,7 @@ uvn_get(uobj, offset, pps, npagesp, centeridx, access_type, advice, flags)
 			 * useful page: busy/lock it and plug it in our
 			 * result array
 			 */
-			ptmp->flags |= PG_BUSY;		/* loan up to caller */
+			atomic_setbits_int(&ptmp->pg_flags, PG_BUSY);
 			UVM_PAGE_OWN(ptmp, "uvn_get1");
 			pps[lcv] = ptmp;
 			gotpages++;
@@ -1456,8 +1462,8 @@ uvn_get(uobj, offset, pps, npagesp, centeridx, access_type, advice, flags)
 			}
 
 			/* page is there, see if we need to wait on it */
-			if ((ptmp->flags & (PG_BUSY|PG_RELEASED)) != 0) {
-				ptmp->flags |= PG_WANTED;
+			if ((ptmp->pg_flags & (PG_BUSY|PG_RELEASED)) != 0) {
+				atomic_setbits_int(&ptmp->pg_flags, PG_WANTED);
 				UVM_UNLOCK_AND_WAIT(ptmp,
 				    &uobj->vmobjlock, FALSE, "uvn_get",0);
 				simple_lock(&uobj->vmobjlock);
@@ -1470,7 +1476,7 @@ uvn_get(uobj, offset, pps, npagesp, centeridx, access_type, advice, flags)
 			 * now (so we own it) and set pps[lcv] (so that we
 			 * exit the while loop).
 			 */
-			ptmp->flags |= PG_BUSY;
+			atomic_setbits_int(&ptmp->pg_flags, PG_BUSY);
 			UVM_PAGE_OWN(ptmp, "uvn_get2");
 			pps[lcv] = ptmp;
 		}
@@ -1502,11 +1508,12 @@ uvn_get(uobj, offset, pps, npagesp, centeridx, access_type, advice, flags)
 		/* lock object.   check for errors.   */
 		simple_lock(&uobj->vmobjlock);
 		if (result != VM_PAGER_OK) {
-			if (ptmp->flags & PG_WANTED)
+			if (ptmp->pg_flags & PG_WANTED)
 				/* object lock still held */
 				wakeup(ptmp);
 
-			ptmp->flags &= ~(PG_WANTED|PG_BUSY);
+			atomic_clearbits_int(&ptmp->pg_flags,
+			    PG_WANTED|PG_BUSY);
 			UVM_PAGE_OWN(ptmp, NULL);
 			uvm_lock_pageq();
 			uvm_pagefree(ptmp);
@@ -1526,7 +1533,8 @@ uvn_get(uobj, offset, pps, npagesp, centeridx, access_type, advice, flags)
 		 * => activate the page
 		 */
 
-		ptmp->flags &= ~PG_FAKE;		/* data is valid ... */
+		/* data is valid ... */
+		atomic_clearbits_int(&ptmp->pg_flags, PG_FAKE);
 		pmap_clear_modify(ptmp);		/* ... and clean */
 		pps[lcv] = ptmp;
 

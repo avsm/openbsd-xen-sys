@@ -1,4 +1,4 @@
-/*	$OpenBSD: in6_gif.c,v 1.21 2002/05/30 04:19:44 itojun Exp $	*/
+/*	$OpenBSD: in6_gif.c,v 1.23 2007/02/10 15:34:22 claudio Exp $	*/
 /*	$KAME: in6_gif.c,v 1.43 2001/01/22 07:27:17 itojun Exp $	*/
 
 /*
@@ -69,11 +69,10 @@
 #endif
 
 int
-in6_gif_output(ifp, family, m, rt)
+in6_gif_output(ifp, family, m)
 	struct ifnet *ifp;
 	int family; /* family of the packet to be encapsulate. */
 	struct mbuf *m;
-	struct rtentry *rt;
 {
 	struct gif_softc *sc = (struct gif_softc*)ifp;
         struct sockaddr_in6 *dst = (struct sockaddr_in6 *)&sc->gif_ro6.ro_dst;
@@ -82,7 +81,6 @@ in6_gif_output(ifp, family, m, rt)
 	struct tdb tdb;
 	struct xformsw xfs;
 	int error;
-	int hlen, poff;
 	struct mbuf *mp;
 
 	if (sin6_src == NULL || sin6_dst == NULL ||
@@ -107,24 +105,11 @@ in6_gif_output(ifp, family, m, rt)
 	switch (family) {
 #ifdef INET
 	case AF_INET:
-	    {
-		if (m->m_len < sizeof(struct ip)) {
-			m = m_pullup(m, sizeof(struct ip));
-			if (m == NULL)
-				return ENOBUFS;
-		}
-		hlen = (mtod(m, struct ip *)->ip_hl) << 2;
-		poff = offsetof(struct ip, ip_p);
 		break;
-	    }
 #endif
 #ifdef INET6
 	case AF_INET6:
-	    {
-		hlen = sizeof(struct ip6_hdr);
-		poff = offsetof(struct ip6_hdr, ip6_nxt);
 		break;
-	    }
 #endif
 #if NBRIDGE > 0
 	case AF_LINK:
@@ -139,23 +124,14 @@ in6_gif_output(ifp, family, m, rt)
 		return EAFNOSUPPORT;
 	}
 	
-#if NBRIDGE > 0
-	if (family == AF_LINK) {
-	        mp = NULL;
-		error = etherip_output(m, &tdb, &mp, 0, 0);
-		if (error)
-		        return error;
-		else if (mp == NULL)
-		        return EFAULT;
-
-		m = mp;
-		goto sendit;
-	}
-#endif /* NBRIDGE */
-
 	/* encapsulate into IPv6 packet */
 	mp = NULL;
-	error = ipip_output(m, &tdb, &mp, hlen, poff);
+#if NBRIDGE > 0
+	if (family == AF_LINK)
+		error = etherip_output(m, &tdb, &mp, 0, 0);
+	else
+#endif /* NBRIDGE */
+	error = ipip_output(m, &tdb, &mp, 0, 0);
 	if (error)
 	        return error;
 	else if (mp == NULL)
@@ -163,9 +139,6 @@ in6_gif_output(ifp, family, m, rt)
 
 	m = mp;
 
-#if NBRIDGE > 0
- sendit:
-#endif /* NBRIDGE */
 	/* See if out cached route remains the same */
 	if (dst->sin6_family != sin6_dst->sin6_family ||
 	     !IN6_ARE_ADDR_EQUAL(&dst->sin6_addr, &sin6_dst->sin6_addr)) {

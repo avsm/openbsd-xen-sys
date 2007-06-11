@@ -1,4 +1,4 @@
-/*	$OpenBSD: subr_disk.c,v 1.31 2005/12/09 09:09:52 jsg Exp $	*/
+/*	$OpenBSD: subr_disk.c,v 1.33 2007/03/27 18:04:01 thib Exp $	*/
 /*	$NetBSD: subr_disk.c,v 1.17 1996/03/16 23:17:08 christos Exp $	*/
 
 /*
@@ -261,8 +261,7 @@ disk_find(char *name)
 int
 disk_construct(struct disk *diskp, char *lockname)
 {
-	lockinit(&diskp->dk_lock, PRIBIO | PCATCH, lockname,
-		 0, LK_CANRECURSE);
+	rw_init(&diskp->dk_lock, lockname);
 	
 	diskp->dk_flags |= DKF_CONSTRUCTED;
 	    
@@ -382,7 +381,7 @@ disk_lock(struct disk *dk)
 {
 	int error;
 
-	error = lockmgr(&dk->dk_lock, LK_EXCLUSIVE, NULL);
+	error = rw_enter(&dk->dk_lock, RW_WRITE|RW_INTR);
 
 	return (error);
 }
@@ -390,7 +389,7 @@ disk_lock(struct disk *dk)
 void
 disk_unlock(struct disk *dk)
 {
-	lockmgr(&dk->dk_lock, LK_RELEASE, NULL);
+	rw_exit(&dk->dk_lock);
 }
 
 /*
@@ -464,14 +463,6 @@ dk_mountroot(void)
 		{
 		extern int ffs_mountroot(void);
 		mountrootfn = ffs_mountroot;
-		}
-		break;
-#endif
-#ifdef LFS
-	case FS_BSDLFS:
-		{
-		extern int lfs_mountroot(void);
-		mountrootfn = lfs_mountroot;
 		}
 		break;
 #endif

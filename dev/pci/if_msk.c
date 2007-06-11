@@ -1,4 +1,4 @@
-/*	$OpenBSD: if_msk.c,v 1.41 2007/01/13 21:05:55 kettenis Exp $	*/
+/*	$OpenBSD: if_msk.c,v 1.49 2007/02/13 20:10:33 kettenis Exp $	*/
 
 /*
  * Copyright (c) 1997, 1998, 1999, 2000
@@ -133,9 +133,11 @@
 
 int mskc_probe(struct device *, void *, void *);
 void mskc_attach(struct device *, struct device *self, void *aux);
+void mskc_reset(struct sk_softc *);
 void mskc_shutdown(void *);
 int msk_probe(struct device *, void *, void *);
 void msk_attach(struct device *, struct device *self, void *aux);
+void msk_reset(struct sk_if_softc *);
 int mskcprint(void *, const char *);
 int msk_intr(void *);
 void msk_intr_yukon(struct sk_if_softc *);
@@ -151,7 +153,6 @@ void msk_stop(struct sk_if_softc *);
 void msk_watchdog(struct ifnet *);
 int msk_ifmedia_upd(struct ifnet *);
 void msk_ifmedia_sts(struct ifnet *, struct ifmediareq *);
-void msk_reset(struct sk_softc *);
 int msk_newbuf(struct sk_if_softc *, int, struct mbuf *, bus_dmamap_t);
 int msk_alloc_jumbo_mem(struct sk_if_softc *);
 void *msk_jalloc(struct sk_if_softc *);
@@ -184,14 +185,18 @@ void msk_dump_bytes(const char *, int);
 /* supported device vendors */
 const struct pci_matchid mskc_devices[] = {
 	{ PCI_VENDOR_DLINK,		PCI_PRODUCT_DLINK_DGE550SX },
+	{ PCI_VENDOR_DLINK,		PCI_PRODUCT_DLINK_DGE550T_B1 },
 	{ PCI_VENDOR_DLINK,		PCI_PRODUCT_DLINK_DGE560SX },
 	{ PCI_VENDOR_DLINK,		PCI_PRODUCT_DLINK_DGE560T },
-	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_1 },
 	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_C032 },
 	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_C033 },
 	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_C034 },
 	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_C036 },
 	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_C042 },
+	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8021CU },
+	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8021X },
+	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8022CU },
+	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8022X },
 	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8035 },
 	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8036 },
 	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8038 },
@@ -201,14 +206,13 @@ const struct pci_matchid mskc_devices[] = {
 	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8053 },
 	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8055 },
 	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8056 },
-	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKONII_8021CU },
-	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKONII_8021X },
-	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKONII_8022CU },
-	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKONII_8022X },
-	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKONII_8061CU },
-	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKONII_8061X },
-	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKONII_8062CU },
-	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKONII_8062X },
+	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8058 },
+	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8061CU },
+	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8061X },
+	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8062CU },
+	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8062X },
+	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8070 },
+	{ PCI_VENDOR_MARVELL,		PCI_PRODUCT_MARVELL_YUKON_8071 },
 	{ PCI_VENDOR_SCHNEIDERKOCH,	PCI_PRODUCT_SCHNEIDERKOCH_SK9Sxx },
 	{ PCI_VENDOR_SCHNEIDERKOCH,	PCI_PRODUCT_SCHNEIDERKOCH_SK9Exx }
 };
@@ -348,8 +352,6 @@ msk_miibus_statchg(struct device *dev)
 		     SK_YU_READ_2(((struct sk_if_softc *)dev), YUKON_GPCR)));
 }
 
-#define HASH_BITS	6
-  
 void
 msk_setfilt(struct sk_if_softc *sc_if, caddr_t addr, int slot)
 {
@@ -392,7 +394,7 @@ allmulti:
 				goto allmulti;
 			}
 			h = ether_crc32_be(enm->enm_addrlo, ETHER_ADDR_LEN) &
-			    ((1 << HASH_BITS) - 1);
+			    ((1 << SK_HASH_BITS) - 1);
 			if (h < 32)
 				hashes[0] |= (1 << h);
 			else
@@ -681,14 +683,14 @@ msk_jfree(caddr_t buf, u_int size, void	*arg)
 	sc = (struct sk_if_softc *)arg;
 
 	if (sc == NULL)
-		panic("sk_jfree: can't find softc pointer!");
+		panic("msk_jfree: can't find softc pointer!");
 
 	/* calculate the slot this buffer belongs to */
 	i = ((vaddr_t)buf
 	     - (vaddr_t)sc->sk_cdata.sk_jumbo_buf) / SK_JLEN;
 
 	if ((i < 0) || (i >= MSK_JSLOTS))
-		panic("sk_jfree: asked to free buffer that we don't manage!");
+		panic("msk_jfree: asked to free buffer that we don't manage!");
 
 	entry = LIST_FIRST(&sc->sk_jinuse_listhead);
 	if (entry == NULL)
@@ -817,12 +819,13 @@ mskc_probe(struct device *parent, void *match, void *aux)
 /*
  * Force the GEnesis into reset, then bring it out of reset.
  */
-void msk_reset(struct sk_softc *sc)
+void
+mskc_reset(struct sk_softc *sc)
 {
 	u_int32_t imtimer_ticks, reg1;
 	int reg;
 
-	DPRINTFN(2, ("msk_reset\n"));
+	DPRINTFN(2, ("mskc_reset\n"));
 
 	CSR_WRITE_1(sc, SK_CSR, SK_CSR_SW_RESET);
 	CSR_WRITE_1(sc, SK_CSR, SK_CSR_MASTER_RESET);
@@ -859,8 +862,8 @@ void msk_reset(struct sk_softc *sc)
 
 	sk_win_write_1(sc, SK_TESTCTL1, 1);
 
-	DPRINTFN(2, ("sk_reset: sk_csr=%x\n", CSR_READ_1(sc, SK_CSR)));
-	DPRINTFN(2, ("msk_reset: sk_link_ctrl=%x\n",
+	DPRINTFN(2, ("mskc_reset: sk_csr=%x\n", CSR_READ_1(sc, SK_CSR)));
+	DPRINTFN(2, ("mskc_reset: sk_link_ctrl=%x\n",
 		     CSR_READ_2(sc, SK_LINK_CTRL)));
 
 	/* Disable ASF */
@@ -952,12 +955,25 @@ msk_probe(struct device *parent, void *match, void *aux)
 	switch (sa->skc_type) {
 	case SK_YUKON_XL:
 	case SK_YUKON_EC_U:
+	case SK_YUKON_EX:
 	case SK_YUKON_EC:
 	case SK_YUKON_FE:
 		return (1);
 	}
 
 	return (0);
+}
+
+void
+msk_reset(struct sk_if_softc *sc_if)
+{
+	/* GMAC and GPHY Reset */
+	SK_IF_WRITE_4(sc_if, 0, SK_GMAC_CTRL, SK_GMAC_RESET_SET);
+	SK_IF_WRITE_4(sc_if, 0, SK_GPHY_CTRL, SK_GPHY_RESET_SET);
+	DELAY(1000);
+	SK_IF_WRITE_4(sc_if, 0, SK_GPHY_CTRL, SK_GPHY_RESET_CLEAR);
+	SK_IF_WRITE_4(sc_if, 0, SK_GMAC_CTRL, SK_GMAC_LOOP_OFF |
+		      SK_GMAC_PAUSE_ON | SK_GMAC_RESET_CLEAR);
 }
 
 /*
@@ -975,6 +991,7 @@ msk_attach(struct device *parent, struct device *self, void *aux)
 	bus_dma_segment_t seg;
 	int i, rseg;
 	u_int32_t chunk, val;
+	int mii_flags;
 
 	sc_if->sk_port = sa->skc_port;
 	sc_if->sk_softc = sc;
@@ -1071,6 +1088,8 @@ msk_attach(struct device *parent, struct device *self, void *aux)
 
 	ifp->if_capabilities = IFCAP_VLAN_MTU;
 
+	msk_reset(sc_if);
+
 	/*
 	 * Do miibus setup.
 	 */
@@ -1085,8 +1104,11 @@ msk_attach(struct device *parent, struct device *self, void *aux)
 
 	ifmedia_init(&sc_if->sk_mii.mii_media, 0,
 	    msk_ifmedia_upd, msk_ifmedia_sts);
+	mii_flags = MIIF_DOPAUSE;
+	if (sc->sk_fibertype)
+		mii_flags |= MIIF_HAVEFIBER;
 	mii_attach(self, &sc_if->sk_mii, 0xffffffff, MII_PHY_ANY,
-	    MII_OFFSET_ANY, MIIF_DOPAUSE|MIIF_FORCEANEG);
+	    MII_OFFSET_ANY, mii_flags);
 	if (LIST_FIRST(&sc_if->sk_mii.mii_phys) == NULL) {
 		printf("%s: no PHY found!\n", sc_if->sk_dev.dv_xname);
 		ifmedia_add(&sc_if->sk_mii.mii_media, IFM_ETHER|IFM_MANUAL,
@@ -1146,7 +1168,7 @@ mskc_attach(struct device *parent, struct device *self, void *aux)
 	pci_intr_handle_t ih;
 	const char *intrstr = NULL;
 	bus_size_t size;
-	u_int8_t hw, skrs;
+	u_int8_t hw, pmd, skrs;
 	char *revstr = NULL;
 	caddr_t kva;
 	bus_dma_segment_t seg;
@@ -1262,7 +1284,7 @@ mskc_attach(struct device *parent, struct device *self, void *aux)
 	    MSK_STATUS_RING_CNT * sizeof(struct msk_status_desc));
 
 	/* Reset the adapter. */
-	msk_reset(sc);
+	mskc_reset(sc);
 
 	skrs = sk_win_read_1(sc, SK_EPROM0);
 	if (skrs == 0x00)
@@ -1275,12 +1297,19 @@ mskc_attach(struct device *parent, struct device *self, void *aux)
 		     sc->sk_ramsize, sc->sk_ramsize / 1024,
 		     sc->sk_rboff));
 
+	pmd = sk_win_read_1(sc, SK_PMDTYPE);
+	if (pmd == 'L' || pmd == 'S' || pmd == 'P')
+		sc->sk_fibertype = 1;
+
 	switch (sc->sk_type) {
 	case SK_YUKON_XL:
 		sc->sk_name = "Yukon-2 XL";
 		break;
 	case SK_YUKON_EC_U:
 		sc->sk_name = "Yukon-2 EC Ultra";
+		break;
+	case SK_YUKON_EX:
+		sc->sk_name = "Yukon-2 Extreme";
 		break;
 	case SK_YUKON_EC:
 		sc->sk_name = "Yukon-2 EC";
@@ -1550,7 +1579,8 @@ msk_watchdog(struct ifnet *ifp)
 		ifp->if_oerrors++;
 
 		/* XXX Resets both ports; we shouldn't do that. */
-		msk_reset(sc_if->sk_softc);
+		mskc_reset(sc_if->sk_softc);
+		msk_reset(sc_if);
 		msk_init(sc_if);
 	}
 }
@@ -1569,7 +1599,7 @@ mskc_shutdown(void *v)
 	 * Reset the GEnesis controller. Doing this should also
 	 * assert the resets on the attached XMAC(s).
 	 */
-	msk_reset(sc);
+	mskc_reset(sc);
 }
 
 __inline int
@@ -1735,7 +1765,7 @@ msk_intr_yukon(struct sk_if_softc *sc_if)
 	}
 	/* TX underrun */
 	if ((status & SK_GMAC_INT_TX_UNDER) != 0) {
-		SK_IF_WRITE_1(sc_if, 0, SK_RXMF1_CTRL_TEST,
+		SK_IF_WRITE_1(sc_if, 0, SK_TXMF1_CTRL_TEST,
 		    SK_TFCTL_TX_FIFO_UNDER);
 	}
 
@@ -1837,17 +1867,6 @@ msk_init_yukon(struct sk_if_softc *sc_if)
 		     CSR_READ_4(sc_if->sk_softc, SK_CSR)));
 
 	DPRINTFN(6, ("msk_init_yukon: 1\n"));
-
-	/* GMAC and GPHY Reset */
-	SK_IF_WRITE_4(sc_if, 0, SK_GMAC_CTRL, SK_GMAC_RESET_SET);
-	SK_IF_WRITE_4(sc_if, 0, SK_GPHY_CTRL, SK_GPHY_RESET_SET);
-	DELAY(1000);
-
-	DPRINTFN(6, ("msk_init_yukon: 2\n"));
-
-	SK_IF_WRITE_4(sc_if, 0, SK_GPHY_CTRL, SK_GPHY_RESET_CLEAR);
-	SK_IF_WRITE_4(sc_if, 0, SK_GMAC_CTRL, SK_GMAC_LOOP_OFF |
-		      SK_GMAC_PAUSE_ON | SK_GMAC_RESET_CLEAR);
 
 	DPRINTFN(3, ("msk_init_yukon: gmac_ctrl=%#x\n",
 		     SK_IF_READ_4(sc_if, 0, SK_GMAC_CTRL)));

@@ -1,4 +1,4 @@
-/*	$OpenBSD: hdvar.h,v 1.7 2005/11/14 20:20:30 miod Exp $	*/
+/*	$OpenBSD: hdvar.h,v 1.9 2007/02/21 11:01:10 mickey Exp $	*/
 /*	$NetBSD: rdvar.h,v 1.6 1997/01/30 09:14:19 thorpej Exp $	*/
 
 /*
@@ -51,7 +51,6 @@ struct	hdidentinfo {
 
 struct hdstats {
 	long	hdretries;
-	long	hdresets;
 	long	hdtimeouts;
 	long	hdpolltries;
 	long	hdpollwaits;
@@ -66,26 +65,25 @@ struct	hd_softc {
 	short	sc_type;
 	char	*sc_addr;
 	int	sc_resid;
+	int	sc_errcnt;
 	struct	hpibqueue sc_hq;	/* hpib job queue entry */
 	struct	hd_iocmd sc_ioc;
 	struct	hd_rscmd sc_rsc;
 	struct	hd_stat sc_stat;
-	struct	hd_ssmcmd sc_ssmc;
-	struct	hd_srcmd sc_src;
-	struct	hd_clearcmd sc_clear;
 	struct	buf sc_tab;		/* buffer queue */
+#ifdef DEBUG
 	struct	hdstats sc_stats;
+#endif
 	struct	timeout sc_timeout;
 };
 
 /* sc_flags values */
-#define	HDF_ALIVE	0x01
-#define	HDF_SEEK	0x02
-#define HDF_SWAIT	0x04
-#define HDF_OPENING	0x08
-#define HDF_CLOSING	0x10
-#define HDF_WANTED	0x20
-#define HDF_WLABEL	0x40
+#define	HDF_SEEK	0x01
+#define HDF_SWAIT	0x02
+#define HDF_OPENING	0x04
+#define HDF_CLOSING	0x08
+#define HDF_WANTED	0x10
+#define HDF_WLABEL	0x20
 
 #ifdef _KERNEL
 extern	const struct hdidentinfo hdidentinfo[];

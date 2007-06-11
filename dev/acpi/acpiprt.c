@@ -1,4 +1,4 @@
-/*	$OpenBSD: acpiprt.c,v 1.12 2007/01/18 19:49:52 kettenis Exp $	*/
+/*	$OpenBSD: acpiprt.c,v 1.15 2007/02/21 19:17:23 kettenis Exp $	*/
 /*
  * Copyright (c) 2006 Mark Kettenis <kettenis@openbsd.org>
  *
@@ -43,6 +43,8 @@
 int	acpiprt_match(struct device *, void *, void *);
 void	acpiprt_attach(struct device *, struct device *, void *);
 int	acpiprt_getirq(union acpi_resource *crs, void *arg);
+int	acpiprt_getminbus(union acpi_resource *, void *);
+
 
 struct acpiprt_softc {
 	struct device		sc_dev;
@@ -100,6 +102,7 @@ acpiprt_attach(struct device *parent, struct device *self, void *aux)
 
 	if (res.type != AML_OBJTYPE_PACKAGE) {
 		printf(": _PRT is not a package\n");
+		aml_freevalue(&res);
 		return;
 	}
 
@@ -110,6 +113,8 @@ acpiprt_attach(struct device *parent, struct device *self, void *aux)
 
 	for (i = 0; i < res.length; i++)
 		acpiprt_prt_add(sc, res.v_package[i]);
+
+	aml_freevalue(&res);
 }
 
 int
@@ -138,16 +143,15 @@ acpiprt_prt_add(struct acpiprt_softc *sc, struct aml_value *v)
 	struct aml_node	*node;
 	struct aml_value res, *pp;
 	u_int64_t addr;
-	int pin, irq;
+	int pin, irq, sta;
 #if NIOAPIC > 0
 	struct mp_intr_map *map;
 	struct ioapic_softc *apic;
-#else
+#endif
 	pci_chipset_tag_t pc = NULL;
 	pcitag_t tag;
 	pcireg_t reg;
 	int bus, dev, func, nfuncs;
-#endif
 
 	if (v->type != AML_OBJTYPE_PACKAGE || v->length != 4) {
 		printf("invalid mapping object\n");
@@ -176,7 +180,10 @@ acpiprt_prt_add(struct acpiprt_softc *sc, struct aml_value *v)
 		node = pp->node;
 		if (aml_evalname(sc->sc_acpi, node, "_STA", 0, NULL, &res))
 			printf("no _STA method\n");
-		if ((aml_val2int(&res) & STA_ENABLED) == 0)
+
+		sta = aml_val2int(&res) & STA_ENABLED;
+		aml_freevalue(&res);
+		if (sta == 0)
 			return;
 
 		if (aml_evalname(sc->sc_acpi, node, "_CRS", 0, NULL, &res))
@@ -184,10 +191,12 @@ acpiprt_prt_add(struct acpiprt_softc *sc, struct aml_value *v)
 
 		if (res.type != AML_OBJTYPE_BUFFER || res.length < 6) {
 			printf("invalid _CRS object\n");
+			aml_freevalue(&res);
 			return;
 		}
 		aml_parse_resource(res.length, res.v_buffer,
 		    acpiprt_getirq, &irq);
+		aml_freevalue(&res);
 	} else {
 		irq = aml_val2int(v->v_package[3]);
 	}
@@ -198,32 +207,37 @@ acpiprt_prt_add(struct acpiprt_softc *sc, struct aml_value *v)
 #endif
 
 #if NIOAPIC > 0
-	apic = ioapic_find_bybase(irq);
-	if (apic == NULL) {
-		printf("%s: no apic found for irq %d\n", DEVNAME(sc), irq);
+	if (nioapics > 0) {
+		apic = ioapic_find_bybase(irq);
+		if (apic == NULL) {
+			printf("%s: no apic found for irq %d\n", DEVNAME(sc), irq);
+			return;
+		}
+
+		map = malloc(sizeof (struct mp_intr_map), M_DEVBUF, M_NOWAIT);
+		if (map == NULL)
+			return;
+
+		memset(map, 0, sizeof *map);
+		map->ioapic = apic;
+		map->ioapic_pin = irq - apic->sc_apic_vecbase;
+		map->bus_pin = ((addr >> 14) & 0x7c) | (pin & 0x3);
+		map->redir = IOAPIC_REDLO_ACTLO | IOAPIC_REDLO_LEVEL;
+		map->redir |= (IOAPIC_REDLO_DEL_LOPRI << IOAPIC_REDLO_DEL_SHIFT);
+
+		map->ioapic_ih = APIC_INT_VIA_APIC |
+		    ((apic->sc_apicid << APIC_INT_APIC_SHIFT) |
+		    (map->ioapic_pin << APIC_INT_PIN_SHIFT));
+
+		apic->sc_pins[map->ioapic_pin].ip_map = map;
+
+		map->next = mp_busses[sc->sc_bus].mb_intrs;
+		mp_busses[sc->sc_bus].mb_intrs = map;
+
 		return;
 	}
+#endif
 
-	map = malloc(sizeof (struct mp_intr_map), M_DEVBUF, M_NOWAIT);
-	if (map == NULL)
-		return;
-
-	memset(map, 0, sizeof *map);
-	map->ioapic = apic;
-	map->ioapic_pin = irq - apic->sc_apic_vecbase;
-	map->bus_pin = ((addr >> 14) & 0x7c) | (pin & 0x3);
-	map->redir = IOAPIC_REDLO_ACTLO | IOAPIC_REDLO_LEVEL;
-	map->redir |= (IOAPIC_REDLO_DEL_LOPRI << IOAPIC_REDLO_DEL_SHIFT);
-
-	map->ioapic_ih = APIC_INT_VIA_APIC |
-	    ((apic->sc_apicid << APIC_INT_APIC_SHIFT) |
-	    (map->ioapic_pin << APIC_INT_PIN_SHIFT));
-
-	apic->sc_pins[map->ioapic_pin].ip_map = map;
-
-	map->next = mp_busses[sc->sc_bus].mb_intrs;
-	mp_busses[sc->sc_bus].mb_intrs = map;
-#else
 	bus = sc->sc_bus;
 	dev = ACPI_PCI_DEV(addr << 16);
 	tag = pci_make_tag(pc, bus, dev, 0);
@@ -243,7 +257,18 @@ acpiprt_prt_add(struct acpiprt_softc *sc, struct aml_value *v)
 			pci_conf_write(pc, tag, PCI_INTERRUPT_REG, reg);
 		}
 	}
-#endif
+}
+
+int
+acpiprt_getminbus(union acpi_resource *crs, void *arg)
+{
+	int *bbn = arg;
+	int typ = AML_CRSTYPE(crs);
+
+	/* Check for embedded bus number */
+	if (typ == LR_WORD && crs->lr_word.type == 2)
+		*bbn = crs->lr_word._min;
+	return 0;
 }
 
 int
@@ -254,7 +279,7 @@ acpiprt_getpcibus(struct acpiprt_softc *sc, struct aml_node *node)
 	pci_chipset_tag_t pc = NULL;
 	pcitag_t tag;
 	pcireg_t reg;
-	int bus, dev, func;
+	int bus, dev, func, rv;
 
 	if (parent == NULL)
 		return 0;
@@ -263,26 +288,38 @@ acpiprt_getpcibus(struct acpiprt_softc *sc, struct aml_node *node)
 		bus = acpiprt_getpcibus(sc, parent);
 		dev = ACPI_PCI_DEV(aml_val2int(&res) << 16);
 		func = ACPI_PCI_FN(aml_val2int(&res) << 16);
+		aml_freevalue(&res);
 
 		/*
 		 * Some systems return 255 as the device number for
 		 * devices that are not really there.
 		 */
 		if (dev >= pci_bus_maxdevs(pc, bus))
-			return -1;
+			return (-1);
 
 		tag = pci_make_tag(pc, bus, dev, func);
 		reg = pci_conf_read(pc, tag, PCI_CLASS_REG);
 		if (PCI_CLASS(reg) == PCI_CLASS_BRIDGE &&
 		    PCI_SUBCLASS(reg) == PCI_SUBCLASS_BRIDGE_PCI) {
 			reg = pci_conf_read(pc, tag, PPB_REG_BUSINFO);
-			return PPB_BUSINFO_SECONDARY(reg);
+			return (PPB_BUSINFO_SECONDARY(reg));
 		}
 	}
 
+	if (aml_evalname(sc->sc_acpi, parent, "_CRS", 0, NULL, &res) == 0) {
+		rv = -1;
+	  	if (res.type == AML_OBJTYPE_BUFFER)
+			aml_parse_resource(res.length, res.v_buffer, 
+			    acpiprt_getminbus, &rv);
+		aml_freevalue(&res);
+		if (rv != -1)
+			return rv;
+	}
 	if (aml_evalname(sc->sc_acpi, parent, "_BBN", 0, NULL, &res) == 0) {
-		return aml_val2int(&res);
+		rv = aml_val2int(&res);
+		aml_freevalue(&res);
+		return (rv);
 	}
 
-	return 0;
+	return (0);
 }

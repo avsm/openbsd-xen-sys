@@ -1,4 +1,4 @@
-/* $OpenBSD: acpitz.c,v 1.13 2006/12/23 17:46:39 deraadt Exp $ */
+/* $OpenBSD: acpitz.c,v 1.16 2007/03/22 16:55:31 deraadt Exp $ */
 /*
  * Copyright (c) 2006 Can Erkin Acar <canacar@openbsd.org>
  * Copyright (c) 2005 Marco Peereboom <marco@openbsd.org>
@@ -51,8 +51,8 @@ struct acpitz_softc {
 	int			sc_tc1;
 	int			sc_tc2;
 	int			sc_lasttmp;
-	struct sensor		sc_sens;
-	struct sensordev	sc_sensdev;
+	struct ksensor		sc_sens;
+	struct ksensordev	sc_sensdev;
 };
 
 int	acpitz_match(struct device *, void *, void *);
@@ -178,7 +178,7 @@ acpitz_setfan(struct acpitz_softc *sc, int i, char *method)
 
 	snprintf(name, sizeof name, "_AL%d", i);
 	if (aml_evalname(sc->sc_acpi, sc->sc_devnode, name, 0, NULL, &res0)) {
-		printf("%s: %s failed\n", DEVNAME(sc), name);
+		dnprintf(20, "%s: %s failed\n", DEVNAME(sc), name);
 		goto out;
 	}
 
@@ -224,8 +224,10 @@ acpitz_setfan(struct acpitz_softc *sc, int i, char *method)
 			    NULL, &res2))
 				printf("%s: %s[%d.%d] _STA fails\n",
 				    DEVNAME(sc), name, x, y);
-			else
+			else {
 				sc->sc_ac_stat[i] = aml_val2int(&res2);
+				aml_freevalue(&res2);
+			}
 		}
 		aml_freevalue(&res1);
 	}
